@@ -138,17 +138,65 @@ function Search({onAdd}:{onAdd:(c:ScryfallCard)=>Promise<void>}) {
   const [q,setQ]=useState("");const [results,setResults]=useState<ScryfallCard[]>([]);const [suggestions,setSuggestions]=useState<string[]>([]);const [busy,setBusy]=useState(false);
   useEffect(()=>{const t=setTimeout(()=>{if(q.length>=2) void autocomplete(q).then(setSuggestions).catch(()=>setSuggestions([]));else setSuggestions([])},300);return()=>clearTimeout(t)},[q]);
   const go=async()=>{setBusy(true);try{setResults(await searchCards(q))}catch(e:any){alert(e.message)}finally{setBusy(false)}};
-  return <section><div className="pagehead"><div><h2>Kartensuche</h2><p className="muted">Scryfall-Suche mit lokalem Sitzungscache.</p></div></div>
-    <div className="searchbar"><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="z. B. Lightning Bolt"/><button className="primary" onClick={go}>Suchen</button></div>
-    {suggestions.length>0&&<div className="suggestions">{suggestions.map(s=><button key={s} onClick={()=>{setQ(s);setSuggestions([])}}>{s}</button>)}</div>}
-    {busy?<div className="loading">Scryfall fragt Karten ab…</div>:<div className="card-grid">{results.map(c=><SearchCard
-  key={c.id}
-  card={c}
-  onAdd={onAdd}
-/>
-    </div>}
+return (
+  <section>
+    <div className="pagehead">
+      <div>
+        <h2>Kartensuche</h2>
+        <p className="muted">
+          Scryfall-Suche mit lokalem Sitzungscache.
+        </p>
+      </div>
+    </div>
+
+    <div className="searchbar">
+      <input
+        value={q}
+        onChange={e=>setQ(e.target.value)}
+        onKeyDown={e=>e.key==="Enter"&&go()}
+        placeholder="z. B. Lightning Bolt"
+      />
+
+      <button
+        className="primary"
+        onClick={go}
+      >
+        Suchen
+      </button>
+    </div>
+
+    {suggestions.length>0&&
+      <div className="suggestions">
+        {suggestions.map(s=>
+          <button
+            key={s}
+            onClick={()=>{
+              setQ(s);
+              setSuggestions([]);
+            }}
+          >
+            {s}
+          </button>
+        )}
+      </div>
+    }
+
+    {busy
+      ? <div className="loading">
+          Scryfall fragt Karten ab…
+        </div>
+      : <div className="card-grid">
+          {results.map(c=>
+            <SearchCard
+              key={c.id}
+              card={c}
+              onAdd={onAdd}
+            />
+          )}
+        </div>
+    }
   </section>
-}
+);
 function SearchCard({
   card,
   onAdd
