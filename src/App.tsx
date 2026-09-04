@@ -110,7 +110,23 @@ function Main({user,uid,demoMode,onExitDemo}:{user:User|null;uid:string;demoMode
     {toast&&<div className="toast">{toast}</div>}
     <main>{busy?<div className="loading">Daten werden geladen…</div>:
       page==="collection"?<Collection cards={collection} onChange={persistCard} onDelete={delCard} onImport={async(next)=>{for(const c of next)await saveCard(uid,c);setCollection(await loadCollection(uid));}} />:
-      page==="search"?<Search onAdd={async(c)=>{const existing=collection.find(x=>x.id===c.id);await persistCard(existing?{...existing,count:existing.count+1,updatedAt:Date.now()}:{...normalizeCard(c),count:1})}}/>:
+      page==="search"?<Search onAdd={async(c)=>{
+  const existing=collection.find(x=>x.id===c.id);
+
+  await persistCard(
+    existing
+      ? {...existing,count:existing.count+1,updatedAt:Date.now()}
+      : {...normalizeCard(c),count:1}
+  );
+
+  setToast(
+    existing
+      ? `${c.name}: Anzahl auf ${existing.count+1} erhöht.`
+      : `${c.name} wurde zur Sammlung hinzugefügt.`
+  );
+
+  setTimeout(()=>setToast(""),2200);
+}}/>:
       page==="builder"?<Builder pool={collection} onSave={persistDeck}/>:
       <Decks decks={decks} pool={collection} onDelete={delDeck} onSave={persistDeck}/>
     }</main>
