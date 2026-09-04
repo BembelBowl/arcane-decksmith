@@ -622,13 +622,262 @@ function Decks({decks,pool,onDelete,onSave}:{decks:DeckRecord[];pool:CardRecord[
   </section>
 }
 
-function DeckEditor({deck,pool,onBack,onSave}:{deck:DeckRecord;pool:CardRecord[];onBack:()=>void;onSave:(d:DeckRecord)=>Promise<void>}) {
+function DeckEditor({
+  deck,
+  pool,
+  onBack,
+  onSave
+}:{
+  deck:DeckRecord;
+  pool:CardRecord[];
+  onBack:()=>void;
+  onSave:(d:DeckRecord)=>Promise<void>;
+}) {
   const [d,setD]=useState(deck);
+
   const all=[...d.cards];
-  const add=(c:CardRecord)=>setD(x=>({...x,cards:x.cards.some(y=>y.id===c.id)?x.cards.map(y=>y.id===c.id?{...y,count:y.count+1,available:c.count}:y):[...x.cards,{id:c.id,name:c.name,count:1,manaValue:c.manaValue,typeLine:c.typeLine,role:"Manuell",reason:"Manuell hinzugefügt",available:c.count}]}));
-  return <section><div className="pagehead"><button className="secondary" onClick={onBack}>← Zurück</button><div><h2>{d.name}</h2><p className="muted">Manueller Deck-Editor</p></div><button className="primary" onClick={()=>onSave({...d,updatedAt:Date.now()})}>Speichern</button></div>
-    <div className="editor-grid"><div className="panel"><h3>Deck</h3>{all.map(c=><div className="edit-row" key={c.id}><span>{c.count}× {c.name}</span><div><button onClick={()=>setD(x=>({...x,cards:x.cards.map(y=>y.id===c.id?{...y,count:Math.max(0,y.count-1)}:y).filter(y=>y.count>0)}))}>−</button><button onClick={()=>{const src=pool.find(x=>x.id===c.id);if(src&&c.count<src.count)add(src)}}>+</button></div></div>)}</div><div className="panel"><h3>Karten hinzufügen</h3><input placeholder="Karte filtern…" onChange={e=>{const v=e.target.value.toLowerCase();document.querySelectorAll<HTMLElement>("[data-card]").forEach(x=>x.hidden=!x.dataset.card!.includes(v))}}/><div className="add-list">{pool.slice(0,200).map(c=><div data-card={c.name.toLowerCase()} key={c.id}><span>{c.name}</span><button onClick={()=>add(c)}>+1</button></div>)}</div></div></div>
-  </section>
+
+  const totalCards=all.reduce(
+    (sum,card)=>sum+card.count,
+    0
+  );
+
+  const add=(c:CardRecord)=>{
+    setD(x=>({
+      ...x,
+      cards:x.cards.some(y=>y.id===c.id)
+        ? x.cards.map(y=>
+            y.id===c.id
+              ? {
+                  ...y,
+                  count:y.count+1,
+                  available:c.count
+                }
+              : y
+          )
+        : [
+            ...x.cards,
+            {
+              id:c.id,
+              name:c.name,
+              count:1,
+              manaValue:c.manaValue,
+              typeLine:c.typeLine,
+              role:"Manuell",
+              reason:"Manuell hinzugefügt",
+              available:c.count
+            }
+          ]
+    }));
+  };
+
+  return (
+    <section>
+      <div className="pagehead">
+        <button
+          className="secondary"
+          onClick={onBack}
+        >
+          ← Zurück
+        </button>
+
+        <div>
+          <h2>{d.name}</h2>
+          <p className="muted">
+            Manueller Deck-Editor · {totalCards} Karten
+          </p>
+        </div>
+
+        <button
+          className="primary"
+          onClick={()=>onSave({
+            ...d,
+            updatedAt:Date.now()
+          })}
+        >
+          Speichern
+        </button>
+      </div>
+
+      <div className="panel">
+        <h3>Deck-Einstellungen</h3>
+
+        <div className="two">
+          <label>
+            Deckname
+
+            <input
+              value={d.name}
+              onChange={e=>
+                setD(x=>({
+                  ...x,
+                  name:e.target.value
+                }))
+              }
+              placeholder="Name des Decks"
+            />
+          </label>
+
+          <label>
+            Format
+
+            <select
+              value={d.format}
+              onChange={e=>
+                setD(x=>({
+                  ...x,
+                  format:e.target.value as Format
+                }))
+              }
+            >
+              <option value="standard">
+                Standard
+              </option>
+
+              <option value="commander">
+                Commander
+              </option>
+            </select>
+          </label>
+        </div>
+
+        <div className="stats">
+          <div>
+            <strong>{totalCards}</strong>
+            <span>Karten aktuell</span>
+          </div>
+
+          <div>
+            <strong>
+              {d.format==="commander" ? "100" : "60"}
+            </strong>
+            <span>Deckgröße</span>
+          </div>
+        </div>
+
+        {d.format==="standard"&&totalCards<60&&
+          <div className="notice">
+            Für ein Standard-Deck fehlen aktuell noch{" "}
+            {60-totalCards} Karten.
+          </div>
+        }
+
+        {d.format==="commander"&&totalCards<100&&
+          <div className="notice">
+            Für ein Commander-Deck fehlen aktuell noch{" "}
+            {100-totalCards} Karten.
+          </div>
+        }
+
+        {d.format==="standard"&&totalCards>=60&&
+          <div className="ai-box">
+            Die Mindestgröße von 60 Karten ist erreicht.
+          </div>
+        }
+
+        {d.format==="commander"&&totalCards>=100&&
+          <div className="ai-box">
+            Die Deckgröße von 100 Karten ist erreicht.
+          </div>
+        }
+      </div>
+
+      <div className="editor-grid">
+        <div className="panel">
+          <h3>Deck · {totalCards} Karten</h3>
+
+          {all.length===0&&
+            <p className="muted">
+              Das Deck ist noch leer. Füge rechts Karten aus deiner Sammlung hinzu.
+            </p>
+          }
+
+          {all.map(c=>
+            <div
+              className="edit-row"
+              key={c.id}
+            >
+              <span>
+                {c.count}× {c.name}
+              </span>
+
+              <div>
+                <button
+                  onClick={()=>
+                    setD(x=>({
+                      ...x,
+                      cards:x.cards
+                        .map(y=>
+                          y.id===c.id
+                            ? {
+                                ...y,
+                                count:Math.max(0,y.count-1)
+                              }
+                            : y
+                        )
+                        .filter(y=>y.count>0)
+                    }))
+                  }
+                >
+                  −
+                </button>
+
+                <button
+                  onClick={()=>{
+                    const src=pool.find(
+                      x=>x.id===c.id
+                    );
+
+                    if(src&&c.count<src.count){
+                      add(src);
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="panel">
+          <h3>Karten hinzufügen</h3>
+
+          <input
+            placeholder="Karte filtern…"
+            onChange={e=>{
+              const v=e.target.value.toLowerCase();
+
+              document
+                .querySelectorAll<HTMLElement>("[data-card]")
+                .forEach(x=>{
+                  x.hidden=!x.dataset.card!.includes(v);
+                });
+            }}
+          />
+
+          <div className="add-list">
+            {pool.slice(0,200).map(c=>
+              <div
+                data-card={c.name.toLowerCase()}
+                key={c.id}
+              >
+                <span>
+                  {c.name}
+                </span>
+
+                <button
+                  onClick={()=>add(c)}
+                >
+                  +1
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export default App;
