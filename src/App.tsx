@@ -637,10 +637,79 @@ function DeckEditor({
 
   const all=[...d.cards];
 
-  const totalCards=all.reduce(
+  /*
+   * Für die Commander-Auswahl erlauben wir zunächst alle fünf Farben.
+   * commanderCandidates() prüft anschließend, ob eine Karte grundsätzlich
+   * als Commander geeignet ist.
+   */
+  const availableCommanders=useMemo(
+    ()=>commanderCandidates(pool,COLORS),
+    [pool]
+  );
+
+  const selectedCommander=
+    d.format==="commander"
+      ? pool.find(c=>d.commanderIds?.includes(c.id))
+      : undefined;
+
+  /*
+   * Im Commander-Format zählt der Commander als eine eigene Karte.
+   * Das restliche Deck besteht aus 99 Karten.
+   */
+  const mainDeckCount=all.reduce(
     (sum,card)=>sum+card.count,
     0
   );
+
+  const totalCards=
+    mainDeckCount+
+    (d.format==="commander"&&selectedCommander ? 1 : 0);
+
+  /*
+   * Prüft, ob die Farbidentität einer Karte innerhalb der
+   * Farbidentität des ausgewählten Commanders liegt.
+   */
+  const commanderColorIdentity=
+    selectedCommander?.colorIdentity??[];
+
+  const isCommanderColorLegal=(card:CardRecord)=>{
+    if(!selectedCommander) return false;
+
+    return (card.colorIdentity??[]).every(
+      color=>commanderColorIdentity.includes(color)
+    );
+  };
+
+  /*
+   * Karten, die im Commander-Format verwendet werden dürfen.
+   */
+  const commanderLegalPool=
+    d.format==="commander"
+      ? pool.filter(card=>
+          card.id!==selectedCommander?.id &&
+          card.legalities?.commander!=="banned" &&
+          isCommanderColorLegal(card)
+        )
+      : pool;
+
+  /*
+   * Prüft bereits hinzugefügte Karten.
+   * Das ist beispielsweise wichtig, wenn zuerst Karten hinzugefügt
+   * und danach der Commander gewechselt wird.
+   */
+  const illegalCommanderCards=
+    d.format==="commander"&&selectedCommander
+      ? all.filter(deckCard=>{
+          const source=pool.find(c=>c.id===deckCard.id);
+
+          if(!source) return false;
+
+          return (
+            source.legalities?.commander==="banned" ||
+            !isCommanderColorLegal(source)
+          );
+        })
+      : [];
 
   const add=(c:CardRecord)=>{
     setD(x=>({
@@ -671,6 +740,39 @@ function DeckEditor({
     }));
   };
 
+  const chooseCommander=(id:string)=>{
+    if(!id){
+      setD(x=>({
+        ...x,
+        commanderIds:[],
+        colors:[]
+      }));
+
+      return;
+    }
+
+    const commander=pool.find(c=>c.id===id);
+
+    if(!commander) return;
+
+    setD(x=>({
+      ...x,
+      commanderIds:[commander.id],
+      colors:commander.colorIdentity??[]
+    }));
+  };
+
+  const changeFormat=(format:Format)=>{
+    setD(x=>({
+      ...x,
+      format,
+      commanderIds:
+        format==="commander"
+          ? x.commanderIds
+          : []
+    }));
+  };
+
   return (
     <section>
       <div className="pagehead">
@@ -683,6 +785,7 @@ function DeckEditor({
 
         <div>
           <h2>{d.name}</h2>
+
           <p className="muted">
             Manueller Deck-Editor · {totalCards} Karten
           </p>
@@ -724,10 +827,7 @@ function DeckEditor({
             <select
               value={d.format}
               onChange={e=>
-                setD(x=>({
-                  ...x,
-                  format:e.target.value as Format
-                }))
+                changeFormat(e.target.value as Format)
               }
             >
               <option value="standard">
@@ -741,6 +841,56 @@ function DeckEditor({
           </label>
         </div>
 
+        {d.format==="commander"&&
+          <label>
+            Commander
+
+            <select
+              value={selectedCommander?.id??""}
+              onChange={e=>chooseCommander(e.target.value)}
+            >
+              <option value="">
+                — Commander wählen —
+              </option>
+
+              {availableCommanders.map(c=>
+                <option
+                  key={c.id}
+                  value={c.id}
+                >
+                  {c.name}
+                </option>
+              )}
+            </select>
+          </label>
+        }
+
+        {d.format==="commander"&&
+          availableCommanders.length===0&&
+          <div className="notice">
+            In deiner Sammlung wurde aktuell keine Karte gefunden,
+            die als Commander verwendet werden kann.
+          </div>
+        }
+
+        {d.format==="commander"&&selectedCommander&&
+          <div className="ai-box">
+            <strong>Commander:</strong>{" "}
+            {selectedCommander.name}
+            <br />
+
+            <span>
+              Farbidentität:{" "}
+              {commanderColorIdentity.length
+                ? commanderColorIdentity
+                    .map(c=>COLOR_NAMES[c]??c)
+                    .join(", ")
+                : "Farblos"
+              }
+            </span>
+          </div>
+        }
+
         <div className="stats">
           <div>
             <strong>{totalCards}</strong>
@@ -753,6 +903,13 @@ function DeckEditor({
             </strong>
             <span>Deckgröße</span>
           </div>
+
+          {d.format==="commander"&&
+            <div>
+              <strong>{mainDeckCount}</strong>
+              <span>Karten ohne Commander</span>
+            </div>
+          }
         </div>
 
         {d.format==="standard"&&totalCards<60&&
@@ -762,9 +919,18 @@ function DeckEditor({
           </div>
         }
 
-        {d.format==="commander"&&totalCards<100&&
+        {d.format==="commander"&&!selectedCommander&&
           <div className="notice">
-            Für ein Commander-Deck fehlen aktuell noch{" "}
+            Wähle zuerst einen Commander. Danach werden nur Karten
+            angezeigt, die zu seiner Farbidentität passen.
+          </div>
+        }
+
+        {d.format==="commander"&&
+          selectedCommander&&
+          totalCards<100&&
+          <div className="notice">
+            Für das Commander-Deck fehlen aktuell noch{" "}
             {100-totalCards} Karten.
           </div>
         }
@@ -775,16 +941,64 @@ function DeckEditor({
           </div>
         }
 
-        {d.format==="commander"&&totalCards>=100&&
+        {d.format==="commander"&&
+          selectedCommander&&
+          totalCards===100&&
           <div className="ai-box">
             Die Deckgröße von 100 Karten ist erreicht.
+          </div>
+        }
+
+        {d.format==="commander"&&
+          selectedCommander&&
+          totalCards>100&&
+          <div className="error">
+            Das Deck enthält {totalCards} Karten.
+            Ein Commander-Deck darf insgesamt nur 100 Karten enthalten.
+          </div>
+        }
+
+        {illegalCommanderCards.length>0&&
+          <div className="error">
+            <strong>
+              {illegalCommanderCards.length} Karten passen nicht
+              zum ausgewählten Commander:
+            </strong>
+
+            <div>
+              {illegalCommanderCards
+                .map(c=>c.name)
+                .join(", ")
+              }
+            </div>
           </div>
         }
       </div>
 
       <div className="editor-grid">
         <div className="panel">
-          <h3>Deck · {totalCards} Karten</h3>
+          <h3>
+            {d.format==="commander"
+              ? `Deck · ${mainDeckCount}/99 Karten`
+              : `Deck · ${totalCards} Karten`
+            }
+          </h3>
+
+          {d.format==="commander"&&selectedCommander&&
+            <div className="commander-card">
+              <strong>
+                Commander
+              </strong>
+
+              <span>
+                {selectedCommander.name}
+              </span>
+
+              <small>
+                {selectedCommander.typeLine}
+              </small>
+            </div>
+          }
 
           {all.length===0&&
             <p className="muted">
@@ -792,88 +1006,109 @@ function DeckEditor({
             </p>
           }
 
-          {all.map(c=>
-            <div
-              className="edit-row"
-              key={c.id}
-            >
-              <span>
-                {c.count}× {c.name}
-              </span>
+          {all.map(c=>{
+            const illegal=
+              illegalCommanderCards.some(x=>x.id===c.id);
 
-              <div>
-                <button
-                  onClick={()=>
-                    setD(x=>({
-                      ...x,
-                      cards:x.cards
-                        .map(y=>
-                          y.id===c.id
-                            ? {
-                                ...y,
-                                count:Math.max(0,y.count-1)
-                              }
-                            : y
-                        )
-                        .filter(y=>y.count>0)
-                    }))
+            return (
+              <div
+                className="edit-row"
+                key={c.id}
+              >
+                <span>
+                  {c.count}× {c.name}
+
+                  {illegal&&
+                    <small className="illegal-card">
+                      {" "}· nicht erlaubt
+                    </small>
                   }
-                >
-                  −
-                </button>
+                </span>
 
-                <button
-                  onClick={()=>{
-                    const src=pool.find(
-                      x=>x.id===c.id
-                    );
-
-                    if(src&&c.count<src.count){
-                      add(src);
+                <div>
+                  <button
+                    onClick={()=>
+                      setD(x=>({
+                        ...x,
+                        cards:x.cards
+                          .map(y=>
+                            y.id===c.id
+                              ? {
+                                  ...y,
+                                  count:Math.max(0,y.count-1)
+                                }
+                              : y
+                          )
+                          .filter(y=>y.count>0)
+                      }))
                     }
-                  }}
-                >
-                  +
-                </button>
+                  >
+                    −
+                  </button>
+
+                  <button
+                    onClick={()=>{
+                      const src=pool.find(
+                        x=>x.id===c.id
+                      );
+
+                      if(src&&c.count<src.count){
+                        add(src);
+                      }
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })}
         </div>
 
         <div className="panel">
           <h3>Karten hinzufügen</h3>
 
-          <input
-            placeholder="Karte filtern…"
-            onChange={e=>{
-              const v=e.target.value.toLowerCase();
+          {d.format==="commander"&&!selectedCommander
+            ? <p className="muted">
+                Wähle zuerst einen Commander.
+              </p>
+            : <>
+                <input
+                  placeholder="Karte filtern…"
+                  onChange={e=>{
+                    const v=e.target.value.toLowerCase();
 
-              document
-                .querySelectorAll<HTMLElement>("[data-card]")
-                .forEach(x=>{
-                  x.hidden=!x.dataset.card!.includes(v);
-                });
-            }}
-          />
+                    document
+                      .querySelectorAll<HTMLElement>("[data-card]")
+                      .forEach(x=>{
+                        x.hidden=!x.dataset.card!.includes(v);
+                      });
+                  }}
+                />
 
-          <div className="add-list">
-            {pool.slice(0,200).map(c=>
-              <div
-                data-card={c.name.toLowerCase()}
-                key={c.id}
-              >
-                <span>
-                  {c.name}
-                </span>
+                <div className="add-list">
+                  {commanderLegalPool
+                    .slice(0,200)
+                    .map(c=>
+                      <div
+                        data-card={c.name.toLowerCase()}
+                        key={c.id}
+                      >
+                        <span>
+                          {c.name}
+                        </span>
 
-                <button
-                  onClick={()=>add(c)}
-                >
-                  +1
-                </button>
-              </div>
-            )}
-          </div>
+                        <button
+                          onClick={()=>add(c)}
+                        >
+                          +1
+                        </button>
+                      </div>
+                    )
+                  }
+                </div>
+              </>
+          }
         </div>
       </div>
     </section>
