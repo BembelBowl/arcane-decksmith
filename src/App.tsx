@@ -141,7 +141,12 @@ function Search({onAdd}:{onAdd:(c:ScryfallCard)=>Promise<void>}) {
   return <section><div className="pagehead"><div><h2>Kartensuche</h2><p className="muted">Scryfall-Suche mit lokalem Sitzungscache.</p></div></div>
     <div className="searchbar"><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="z. B. Lightning Bolt"/><button className="primary" onClick={go}>Suchen</button></div>
     {suggestions.length>0&&<div className="suggestions">{suggestions.map(s=><button key={s} onClick={()=>{setQ(s);setSuggestions([])}}>{s}</button>)}</div>}
-    {busy?<div className="loading">Scryfall fragt Karten ab…</div>:<div className="card-grid">{results.map(c=><SearchCard key={c.id} card={c} onAdd={()=>onAdd(c)}/>)}</div>}
+    {busy?<div className="loading">Scryfall fragt Karten ab…</div>:<div className="card-grid">{results.map(c=><SearchCard
+  key={c.id}
+  card={c}
+  onAdd={onAdd}
+/>
+    </div>}
   </section>
 }
 function SearchCard({
