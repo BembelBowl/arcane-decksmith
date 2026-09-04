@@ -6,7 +6,7 @@ import { loadCollection, loadDecks, removeCard, removeDeck, saveCard, saveDeck, 
 import { autocomplete, getCard, getPrintings, imageFor, searchCards, scryfallUrl, normalizeCard, type ScryfallCard } from "./scryfall";
 import { buildDeck, commanderCandidates, deckStats } from "./deckBuilder";
 import { deckText, download, parseList, toCsv } from "./importExport";
-import { generateLocalExplanation } from "./ai";
+import { generateDeckExplanation } from "./ai";
 import type { CardRecord, DeckRecord, Format, GroupBy, ViewMode } from "./types";
 import "./styles.css";
 
@@ -410,8 +410,7 @@ function Builder({pool,onSave}:{pool:CardRecord[];onSave:(d:DeckRecord)=>Promise
   const [max,setMax]=useState("");
   const [name,setName]=useState("Neues Deck");
   const [result,setResult]=useState<DeckRecord|null>(null);
-  const [aiText,setAiText]=useState("");
-  const [aiBusy,setAiBusy]=useState(false);
+  const [analysisText,setAnalysisText]=useState("");
 
   const commanders=useMemo(()=>commanderCandidates(pool,colors),[pool,colors]);
 
@@ -435,14 +434,13 @@ function Builder({pool,onSave}:{pool:CardRecord[];onSave:(d:DeckRecord)=>Promise
     setResult(d);
   };
 
-  const explain=async()=>{
-    if(!result)return;
-    setAiBusy(true);
-    setAiText(await generateLocalExplanation(
-      `Erkläre kurz dieses MTG-Deck: ${result.name}. Format ${result.format}. Kartenrollen: ${JSON.stringify(deckStats(result).roleCounts)}. Ziel-Mana-Value ${result.targetManaValue}.`
-    ));
-    setAiBusy(false);
-  };
+const explain=()=>{
+  if(!result) return;
+
+  setAnalysisText(
+    generateDeckExplanation(result)
+  );
+};
 
   return (
     <section>
@@ -521,9 +519,18 @@ function Builder({pool,onSave}:{pool:CardRecord[];onSave:(d:DeckRecord)=>Promise
             <div className="row">
               <button className="primary" onClick={()=>onSave(result)}>Deck speichern</button>
               <button className="secondary" onClick={()=>download(`${result.name}.txt`,deckText(result))}>Export</button>
-              <button className="secondary" onClick={explain} disabled={aiBusy}>{aiBusy?"Lokale KI lädt…":"Lokale KI-Erklärung"}</button>
+              <button
+  className="secondary"
+  onClick={explain}
+>
+  Deck analysieren
+</button>
             </div>
-            {aiText&&<div className="ai-box">{aiText}</div>}
+           {analysisText&&
+  <div className="ai-box analysis-box">
+    {analysisText}
+  </div>
+}
           </div>
           :
           <div className="panel empty">
