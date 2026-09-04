@@ -197,6 +197,7 @@ return (
     }
   </section>
 );
+}
 function SearchCard({
   card,
   onAdd
