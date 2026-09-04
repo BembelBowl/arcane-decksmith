@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "firebase/auth";
-import { subscribeAuth, register, login, logout, resetPassword, authMessage } from "./auth";
+import { subscribeAuth, login, logout, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
 import { loadCollection, loadDecks, removeCard, removeDeck, saveCard, saveDeck, uidFromEmail } from "./db";
 import { autocomplete, getCard, imageFor, searchCards, scryfallUrl, normalizeCard, type ScryfallCard } from "./scryfall";
@@ -25,22 +25,73 @@ function App() {
 }
 
 function Auth({onDemo}:{onDemo:(email:string)=>void}) {
-  const [mode,setMode]=useState<"login"|"register">("login");
-  const [email,setEmail]=useState(""); const [pw,setPw]=useState(""); const [busy,setBusy]=useState(false); const [msg,setMsg]=useState("");
-  const submit=async()=>{setBusy(true);setMsg("");try{mode==="login"?await login(email,pw):await register(email,pw)}catch(e:any){setMsg(authMessage(e?.code??""))}finally{setBusy(false)}};
-  const reset=async()=>{try{await resetPassword(email);setMsg("E-Mail zum Zurücksetzen wurde angefordert.")}catch(e:any){setMsg(authMessage(e?.code??""))}};
+  const [email,setEmail]=useState("");
+  const [pw,setPw]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [msg,setMsg]=useState("");
+
+  const submit=async()=>{
+    setBusy(true);
+    setMsg("");
+    try {
+      await login(email,pw);
+    } catch(e:any) {
+      setMsg(authMessage(e?.code??""));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return <div className="auth-shell"><div className="auth-card">
-    <div className="brand-mark">M</div><h1>Arcane Decksmith</h1><p className="muted">Deine Sammlung. Deine Karten. Dein Deck.</p>
-    {!firebaseConfigured && <div className="notice">Firebase ist noch nicht konfiguriert. Du kannst den lokalen Demo-Modus verwenden.</div>}
-    <label>E-Mail<input value={email} onChange={e=>setEmail(e.target.value)} type="email" autoComplete="email"/></label>
-    <label>Passwort<input value={pw} onChange={e=>setPw(e.target.value)} type="password" autoComplete={mode==="login"?"current-password":"new-password"}/></label>
+    <div className="brand-mark">M</div>
+    <h1>Arcane Decksmith</h1>
+    <p className="muted">Deine Sammlung. Deine Karten. Dein Deck.</p>
+
+    {!firebaseConfigured &&
+      <div className="notice">
+        Firebase ist noch nicht konfiguriert. Du kannst den lokalen Demo-Modus verwenden.
+      </div>
+    }
+
+    <label>
+      E-Mail
+      <input
+        value={email}
+        onChange={e=>setEmail(e.target.value)}
+        type="email"
+        autoComplete="email"
+      />
+    </label>
+
+    <label>
+      Passwort
+      <input
+        value={pw}
+        onChange={e=>setPw(e.target.value)}
+        type="password"
+        autoComplete="current-password"
+      />
+    </label>
+
     {msg&&<div className="error">{msg}</div>}
-    <button className="primary full" disabled={busy||!email||!pw} onClick={submit}>{busy?"…":mode==="login"?"Anmelden":"Konto erstellen"}</button>
-    {mode==="login"&&<button className="linkbtn" onClick={reset}>Passwort vergessen?</button>}
-    <button className="linkbtn" onClick={()=>setMode(mode==="login"?"register":"login")}>{mode==="login"?"Noch kein Konto? Registrieren":"Schon registriert? Anmelden"}</button>
+
+    <button
+      className="primary full"
+      disabled={busy||!email||!pw}
+      onClick={submit}
+    >
+      {busy?"…":"Anmelden"}
+    </button>
+
     <div className="divider">oder</div>
-    <button className="secondary full" onClick={()=>onDemo(email||"demo@example.com")}>Lokalen Demo-Modus verwenden</button>
-  </div></div>
+
+    <button
+      className="secondary full"
+      onClick={()=>onDemo(email||"demo@example.com")}
+    >
+      Lokalen Demo-Modus verwenden
+    </button>
+  </div></div>;
 }
 
 function Main({user,uid,demoMode,onExitDemo}:{user:User|null;uid:string;demoMode:boolean;onExitDemo:()=>void}) {
