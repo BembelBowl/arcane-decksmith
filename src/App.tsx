@@ -144,10 +144,184 @@ function Search({onAdd}:{onAdd:(c:ScryfallCard)=>Promise<void>}) {
     {busy?<div className="loading">Scryfall fragt Karten ab…</div>:<div className="card-grid">{results.map(c=><SearchCard key={c.id} card={c} onAdd={()=>onAdd(c)}/>)}</div>}
   </section>
 }
-function SearchCard({card,onAdd}:{card:ScryfallCard;onAdd:()=>void}) {
-  return <article className="card-tile"><img src={imageFor(card)} alt="" loading="lazy"/><div className="card-body"><h3>{card.name}</h3><div className="meta">{card.mana_cost??"—"} · MV {card.cmc??0} · {card.set.toUpperCase()}</div><p>{card.type_line}</p><p className="oracle">{card.oracle_text??card.card_faces?.map(f=>f.oracle_text).join(" / ")}</p><div className="row"><button className="primary" onClick={onAdd}>+ Sammlung</button><a href={scryfallUrl(card.id)} target="_blank" rel="noreferrer">Scryfall ↗</a></div></div></article>
-}
+function SearchCard({
+  card,
+  onAdd
+}:{
+  card:ScryfallCard;
+  onAdd:(card:ScryfallCard)=>void|Promise<void>;
+}) {
+  const [selectedCard,setSelectedCard]=useState<ScryfallCard>(card);
+  const [printings,setPrintings]=useState<ScryfallCard[]>([]);
+  const [showPrintings,setShowPrintings]=useState(false);
+  const [loadingPrintings,setLoadingPrintings]=useState(false);
+  const [printingError,setPrintingError]=useState("");
 
+  useEffect(()=>{
+    setSelectedCard(card);
+    setPrintings([]);
+    setShowPrintings(false);
+    setPrintingError("");
+  },[card.id]);
+
+  const loadPrintings=async()=>{
+    if(showPrintings){
+      setShowPrintings(false);
+      return;
+    }
+
+    setShowPrintings(true);
+
+    if(printings.length>0) return;
+
+    setLoadingPrintings(true);
+    setPrintingError("");
+
+    try{
+      const variants=await getPrintings(card);
+      setPrintings(variants);
+    }catch{
+      setPrintingError("Die Varianten konnten nicht von Scryfall geladen werden.");
+    }finally{
+      setLoadingPrintings(false);
+    }
+  };
+
+  return (
+    <article className="card-tile">
+      <img
+        src={imageFor(selectedCard)}
+        alt={selectedCard.name}
+        loading="lazy"
+      />
+
+      <div className="card-body">
+        <h3>{selectedCard.name}</h3>
+
+        <div className="meta">
+          {selectedCard.mana_cost??"—"} · MV {selectedCard.cmc??0} ·{" "}
+          {selectedCard.set.toUpperCase()} #{selectedCard.collector_number}
+        </div>
+
+        {selectedCard.set_name&&
+          <div className="meta">
+            {selectedCard.set_name}
+          </div>
+        }
+
+        <p>{selectedCard.type_line}</p>
+
+        <p className="oracle">
+          {selectedCard.oracle_text??
+            selectedCard.card_faces
+              ?.map(f=>f.oracle_text)
+              .filter(Boolean)
+              .join(" / ")
+          }
+        </p>
+
+        <div className="variant-actions">
+          <button
+            className="secondary"
+            onClick={loadPrintings}
+            disabled={loadingPrintings}
+          >
+            {loadingPrintings
+              ?"Varianten werden geladen…"
+              :showPrintings
+                ?"Varianten schließen"
+                :"Varianten / Drucke"}
+          </button>
+        </div>
+
+        {showPrintings&&
+          <div className="variant-box">
+            {printingError&&
+              <div className="error">{printingError}</div>
+            }
+
+            {!printingError&&loadingPrintings&&
+              <div className="muted">
+                Scryfall lädt verfügbare Drucke…
+              </div>
+            }
+
+            {!loadingPrintings&&printings.length>0&&<>
+              <label>
+                Ausgabe auswählen
+
+                <select
+                  className="variant-select"
+                  value={selectedCard.id}
+                  onChange={e=>{
+                    const chosen=printings.find(
+                      p=>p.id===e.target.value
+                    );
+
+                    if(chosen) setSelectedCard(chosen);
+                  }}
+                >
+                  {printings.map(p=>
+                    <option key={p.id} value={p.id}>
+                      {(p.set_name??p.set)}
+                      {" · "}
+                      {p.set.toUpperCase()}
+                      {" #"}
+                      {p.collector_number}
+                      {p.lang&&p.lang!=="en"
+                        ?` · ${p.lang.toUpperCase()}`
+                        :""
+                      }
+                    </option>
+                  )}
+                </select>
+              </label>
+
+              <div className="variant-info">
+                <strong>Gewählte Ausgabe:</strong>
+
+                <span>
+                  {selectedCard.set_name??selectedCard.set.toUpperCase()}
+                </span>
+
+                <span>
+                  Set: {selectedCard.set.toUpperCase()}
+                </span>
+
+                <span>
+                  Collector Nr.: {selectedCard.collector_number}
+                </span>
+
+                {selectedCard.rarity&&
+                  <span>
+                    Seltenheit: {selectedCard.rarity}
+                  </span>
+                }
+              </div>
+            </>}
+          </div>
+        }
+
+        <div className="row search-card-actions">
+          <button
+            className="primary"
+            onClick={()=>onAdd(selectedCard)}
+          >
+            + Sammlung
+          </button>
+
+          <a
+            href={scryfallUrl(selectedCard.id)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Scryfall ↗
+          </a>
+        </div>
+      </div>
+    </article>
+  );
+}
 function Collection({cards,onChange,onDelete,onImport}:{cards:CardRecord[];onChange:(c:CardRecord)=>Promise<void>;onDelete:(id:string)=>Promise<void>;onImport:(c:CardRecord[])=>Promise<void>}) {
   const [query,setQuery]=useState("");const [group,setGroup]=useState<GroupBy>("none");const [view,setView]=useState<ViewMode>("grid");const [sort,setSort]=useState("name");const [selected,setSelected]=useState<Set<string>>(new Set());
   const [importText,setImportText]=useState("");const [showImport,setShowImport]=useState(false);
