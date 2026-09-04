@@ -913,3 +913,8 @@ footer {
     grid-template-columns: 1fr;
   }
 }
+
+.analysis-box {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
