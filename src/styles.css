@@ -60,19 +60,23 @@ button {
   font-size: 18px;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
 }
 
-.logo span,
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: #f59e0b;
-  color: #111827;
-  font-weight: 900;
+.logo img {
+  display: block;
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.brand-logo {
+  display: block;
+  width: 110px;
+  height: 110px;
+  object-fit: contain;
+  margin: 0 auto 14px;
 }
 
 .topbar nav {
