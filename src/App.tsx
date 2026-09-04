@@ -3,7 +3,7 @@ import type { User } from "firebase/auth";
 import { subscribeAuth, login, logout, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
 import { loadCollection, loadDecks, removeCard, removeDeck, saveCard, saveDeck, uidFromEmail } from "./db";
-import { autocomplete, getCard, imageFor, searchCards, scryfallUrl, normalizeCard, type ScryfallCard } from "./scryfall";
+import { autocomplete, getCard, getPrintings, imageFor, searchCards, scryfallUrl, normalizeCard, type ScryfallCard } from "./scryfall";
 import { buildDeck, commanderCandidates, deckStats } from "./deckBuilder";
 import { deckText, download, parseList, toCsv } from "./importExport";
 import { generateLocalExplanation } from "./ai";
