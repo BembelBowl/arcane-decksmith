@@ -401,6 +401,141 @@ function CollectionCard({card,selected,toggle,onChange,onDelete}:{card:CardRecor
   return <article className="collection-card"><div className="select"><input type="checkbox" checked={selected} onChange={toggle}/></div>{card.imageUri&&<img src={card.imageUri} alt="" loading="lazy"/>}<div className="card-body"><h3>{card.name}</h3><div className="meta">{card.set.toUpperCase()} #{card.collectorNumber} · MV {card.manaValue}</div><p>{card.typeLine}</p><div className="quantity"><button onClick={()=>onChange({...card,count:Math.max(1,card.count-1),updatedAt:Date.now()})}>−</button><strong>{card.count}</strong><button onClick={()=>onChange({...card,count:card.count+1,updatedAt:Date.now()})}>+</button><button className="danger ghost" onClick={()=>onDelete(card.id)}>Löschen</button></div></div></article>
 }
 
+function Builder({pool,onSave}:{pool:CardRecord[];onSave:(d:DeckRecord)=>Promise<void>}) {
+  const [format,setFormat]=useState<Format>("commander");
+  const [colors,setColors]=useState<string[]>(["G"]);
+  const [commanderId,setCommanderId]=useState("");
+  const [target,setTarget]=useState(3);
+  const [min,setMin]=useState("");
+  const [max,setMax]=useState("");
+  const [name,setName]=useState("Neues Deck");
+  const [result,setResult]=useState<DeckRecord|null>(null);
+  const [aiText,setAiText]=useState("");
+  const [aiBusy,setAiBusy]=useState(false);
+
+  const commanders=useMemo(()=>commanderCandidates(pool,colors),[pool,colors]);
+
+  useEffect(()=>{
+    if(!commanders.some(c=>c.id===commanderId)){
+      setCommanderId(commanders[0]?.id??"");
+    }
+  },[commanders,commanderId]);
+
+  const build=()=>{
+    const cmd=commanders.find(c=>c.id===commanderId);
+    const d=buildDeck(pool,{
+      name,
+      format,
+      colors,
+      commander:format==="commander"?cmd:undefined,
+      targetManaValue:target,
+      minManaValue:min===""?undefined:Number(min),
+      maxManaValue:max===""?undefined:Number(max)
+    });
+    setResult(d);
+  };
+
+  const explain=async()=>{
+    if(!result)return;
+    setAiBusy(true);
+    setAiText(await generateLocalExplanation(
+      `Erkläre kurz dieses MTG-Deck: ${result.name}. Format ${result.format}. Kartenrollen: ${JSON.stringify(deckStats(result).roleCounts)}. Ziel-Mana-Value ${result.targetManaValue}.`
+    ));
+    setAiBusy(false);
+  };
+
+  return (
+    <section>
+      <div className="pagehead">
+        <div>
+          <h2>Deck automatisch bauen</h2>
+          <p className="muted">Der Optimierer verwendet ausschließlich Karten aus deiner Sammlung und erklärt jede Auswahl.</p>
+        </div>
+      </div>
+
+      <div className="builder-grid">
+        <div className="panel">
+          <label>
+            Name
+            <input value={name} onChange={e=>setName(e.target.value)}/>
+          </label>
+
+          <label>
+            Format
+            <select value={format} onChange={e=>setFormat(e.target.value as Format)}>
+              <option value="commander">Commander</option>
+              <option value="standard">Standard</option>
+            </select>
+          </label>
+
+          <label>
+            Deckfarben
+            <div className="color-pills">
+              {COLORS.map(c=><button key={c} className={colors.includes(c)?"color active":"color"} onClick={()=>setColors(x=>x.includes(c)?x.filter(v=>v!==c):[...x,c])}>{c}<span>{COLOR_NAMES[c]}</span></button>)}
+            </div>
+          </label>
+
+          {format==="commander"&&
+            <label>
+              Commander
+              <select value={commanderId} onChange={e=>setCommanderId(e.target.value)}>
+                <option value="">— wählen —</option>
+                {commanders.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
+          }
+
+          <label>
+            Ziel-Mana Value
+            <input type="number" min="0" max="15" step="0.1" value={target} onChange={e=>setTarget(Number(e.target.value))}/>
+          </label>
+
+          <div className="two">
+            <label>
+              Min. MV
+              <input type="number" min="0" value={min} onChange={e=>setMin(e.target.value)}/>
+            </label>
+            <label>
+              Max. MV
+              <input type="number" min="0" value={max} onChange={e=>setMax(e.target.value)}/>
+            </label>
+          </div>
+
+          <button className="primary full" onClick={build} disabled={!colors.length||pool.length===0}>Deck erstellen</button>
+          {pool.length===0&&<div className="notice">Deine Sammlung ist leer. Füge zuerst Karten über die Kartensuche hinzu.</div>}
+        </div>
+
+        {result?
+          <div className="panel">
+            <h3>{result.name}</h3>
+            <div className="stats">
+              {Object.entries(deckStats(result)).filter(([k])=>k!=="roleCounts").map(([k,v])=><div key={k}><strong>{String(v)}</strong><span>{k}</span></div>)}
+            </div>
+            <p>{result.notes}</p>
+            <div className="role-list">
+              {Object.entries(deckStats(result).roleCounts).map(([r,n])=><span key={r}>{r}: {n}</span>)}
+            </div>
+            <div className="deck-list">
+              {result.cards.map(c=><div key={c.id}><span><b>{c.count}×</b> {c.name}</span><small>{c.role} · {c.reason}</small></div>)}
+            </div>
+            <div className="row">
+              <button className="primary" onClick={()=>onSave(result)}>Deck speichern</button>
+              <button className="secondary" onClick={()=>download(`${result.name}.txt`,deckText(result))}>Export</button>
+              <button className="secondary" onClick={explain} disabled={aiBusy}>{aiBusy?"Lokale KI lädt…":"Lokale KI-Erklärung"}</button>
+            </div>
+            {aiText&&<div className="ai-box">{aiText}</div>}
+          </div>
+          :
+          <div className="panel empty">
+            <h3>Vorschau</h3>
+            <p>Hier erscheinen Deckgröße, Mana-Kurve, Rollen und Auswahlbegründungen.</p>
+          </div>
+        }
+      </div>
+    </section>
+  );
+}
+
 function Decks({
   decks,
   pool,
@@ -598,28 +733,6 @@ function Decks({
       </div>
     </section>
   );
-}
-
-function Decks({decks,pool,onDelete,onSave}:{decks:DeckRecord[];pool:CardRecord[];onDelete:(id:string)=>Promise<void>;onSave:(d:DeckRecord)=>Promise<void>}) {
-  const [editing,setEditing]=useState<DeckRecord|null>(null);
-  const [importText,setImportText]=useState("");
-  const [showImport,setShowImport]=useState(false);
-  const importDeck=async()=>{
-    const rows=parseList(importText);
-    const cards: DeckRecord["cards"]=[];
-    for(const r of rows){
-      const hit=pool.find(c=>c.name.toLowerCase()===r.name.toLowerCase()) ?? pool.find(c=>c.name.toLowerCase().includes(r.name.toLowerCase()));
-      if(hit) cards.push({id:hit.id,name:hit.name,count:Math.min(r.count,hit.count),manaValue:hit.manaValue,typeLine:hit.typeLine,role:"Import",reason:"Aus Deckliste importiert.",available:hit.count});
-    }
-    const d:DeckRecord={id:crypto.randomUUID(),name:"Importiertes Deck",format:"standard",commanderIds:[],cards,sideboard:[],colors:[],createdAt:Date.now(),updatedAt:Date.now(),notes:"Importierte Deckliste; bitte Format und Legalität im Editor prüfen."};
-    if(cards.length) await onSave(d);
-    setImportText("");setShowImport(false);
-  };
-  if(editing)return <DeckEditor deck={editing} pool={pool} onBack={()=>setEditing(null)} onSave={async d=>{await onSave(d);setEditing(null)}}/>;
-  return <section><div className="pagehead"><div><h2>Gespeicherte Decks</h2><p className="muted">{decks.length} Decks</p></div><div className="row"><button className="secondary" onClick={()=>setShowImport(!showImport)}>Deckliste importieren</button></div></div>
-    {showImport&&<div className="panel"><h3>Deckliste importieren</h3><p className="muted">Format: „4 Lightning Bolt“. Die Karten werden gegen deine Sammlung aufgelöst.</p><textarea value={importText} onChange={e=>setImportText(e.target.value)} rows={8} placeholder={"4 Lightning Bolt\n4 Counterspell\n20 Island"}/><div className="row"><button className="primary" onClick={importDeck}>Importieren</button><button className="secondary" onClick={()=>setShowImport(false)}>Abbrechen</button></div></div>}
-    <div className="deck-grid">{decks.map(d=><article className="panel" key={d.id}><h3>{d.name}</h3><div className="meta">{d.format} · Score {d.score??"—"} · {deckStats(d).total} Karten</div><p>MV {deckStats(d).averageManaValue} · Länder {deckStats(d).lands}</p><div className="row"><button className="primary" onClick={()=>setEditing(d)}>Bearbeiten</button><button className="secondary" onClick={()=>download(`${d.name}.txt`,deckText(d))}>Export</button><button className="danger ghost" onClick={()=>onDelete(d.id)}>Löschen</button></div></article>)}</div>
-  </section>
 }
 
 function DeckEditor({
