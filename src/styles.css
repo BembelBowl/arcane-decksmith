@@ -866,3 +866,50 @@ footer {
     text-align: center;
   }
 }
+
+.mv-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 18px 0;
+}
+
+.mv-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.mv-summary span {
+  padding: 10px;
+  text-align: center;
+  background: #0b1222;
+  border: 1px solid #34415e;
+  border-radius: 10px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.mv-summary strong {
+  display: block;
+  margin-top: 4px;
+  color: #fff;
+  font-size: 18px;
+}
+
+.mv-range {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.mv-range input[type="range"] {
+  width: 100%;
+  cursor: pointer;
+}
+
+@media (max-width: 650px) {
+  .mv-summary {
+    grid-template-columns: 1fr;
+  }
+}
