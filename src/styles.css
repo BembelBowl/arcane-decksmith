@@ -706,6 +706,61 @@ footer {
 }
 
 /* ========================================
+   Kartenvarianten / Drucke
+   ======================================== */
+
+.variant-actions {
+  margin: 12px 0;
+}
+
+.variant-actions button {
+  width: 100%;
+}
+
+.variant-box {
+  margin: 10px 0 14px;
+  padding: 12px;
+  background: #0b1222;
+  border: 1px solid #34415e;
+  border-radius: 10px;
+}
+
+.variant-box label {
+  display: block;
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.variant-select {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+  padding: 9px;
+  background: #151d33;
+  color: #fff;
+  border: 1px solid #34415e;
+  border-radius: 8px;
+}
+
+.variant-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.variant-info strong {
+  color: #e5e7eb;
+}
+
+.search-card-actions {
+  margin-top: 12px;
+}
+
+/* ========================================
    Tablet
    ======================================== */
 
