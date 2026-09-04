@@ -3,6 +3,7 @@ import type { CardRecord } from "./types";
 const API = "https://api.scryfall.com";
 const cache = new Map<string, CardRecord>();
 const searchCache = new Map<string, ScryfallCard[]>();
+const printingsCache = new Map<string, ScryfallCard[]>();
 let lastRequest = 0;
 
 export interface ScryfallCard {
@@ -33,6 +34,7 @@ export interface ScryfallCard {
   set_name?: string;
   prices?: Record<string, string | null>;
   scryfall_uri?: string;
+  prints_search_uri?: string;
 }
 
 interface SearchResponse {
@@ -101,6 +103,51 @@ export async function searchCards(query: string): Promise<ScryfallCard[]> {
   searchCache.set(key, result.data);
   result.data.forEach((c) => cache.set(c.id, normalizeCard(c)));
   return result.data;
+}
+
+export async function getPrintings(card: ScryfallCard): Promise<ScryfallCard[]> {
+  const cacheKey = card.oracle_id ?? card.name.toLowerCase();
+
+  const cached = printingsCache.get(cacheKey);
+  if (cached) return cached;
+
+  if (!card.prints_search_uri) {
+    return [card];
+  }
+
+  const cards: ScryfallCard[] = [];
+  let nextUrl: string | undefined = card.prints_search_uri;
+
+  while (nextUrl) {
+    const result: SearchResponse = await getJson<SearchResponse>(nextUrl);
+
+    cards.push(...result.data);
+
+    nextUrl =
+      result.has_more && result.next_page
+        ? result.next_page
+        : undefined;
+  }
+
+  const sorted = cards.sort((a, b) => {
+    const setCompare = (a.set_name ?? a.set).localeCompare(
+      b.set_name ?? b.set
+    );
+
+    if (setCompare !== 0) return setCompare;
+
+    return a.collector_number.localeCompare(
+      b.collector_number,
+      undefined,
+      { numeric: true }
+    );
+  });
+
+  printingsCache.set(cacheKey, sorted);
+
+  sorted.forEach(c => cache.set(c.id, normalizeCard(c)));
+
+  return sorted;
 }
 
 export async function autocomplete(query: string): Promise<string[]> {
