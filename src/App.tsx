@@ -43,7 +43,11 @@ function Auth({onDemo}:{onDemo:(email:string)=>void}) {
   };
 
   return <div className="auth-shell"><div className="auth-card">
-    <div className="brand-mark">M</div>
+   <img
+  className="brand-logo"
+  src="./ad_logo.png"
+  alt="Arcane Decksmith Logo"
+/>
     <h1>Arcane Decksmith</h1>
     <p className="muted">Deine Sammlung. Deine Karten. Dein Deck.</p>
 
@@ -103,7 +107,10 @@ function Main({user,uid,demoMode,onExitDemo}:{user:User|null;uid:string;demoMode
   const delCard=async(id:string)=>{await removeCard(uid,id);setCollection(await loadCollection(uid))};
   const delDeck=async(id:string)=>{await removeDeck(uid,id);setDecks(await loadDecks(uid))};
   return <div className="app">
-    <header className="topbar"><button className="logo" onClick={()=>setPage("collection")}><span>M</span> Arcane Decksmith</button>
+    <header className="topbar"><button className="logo" onClick={()=>setPage("collection")}>
+      <img src="./ad_logo.png" alt="Arcane Decksmith Logo" /> 
+      Arcane Decksmith
+    </button>
       <nav>{(["collection","search","builder","decks"] as const).map(p=><button key={p} className={page===p?"nav active":"nav"} onClick={()=>setPage(p)}>{p==="collection"?"Sammlung":p==="search"?"Kartensuche":p==="builder"?"Deck bauen":"Decks"}</button>)}</nav>
       <div className="userbox"><span>{demoMode?"Demo":user?.email}</span><button onClick={demoMode?onExitDemo:logout}>Abmelden</button></div>
     </header>
