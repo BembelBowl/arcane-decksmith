@@ -13,7 +13,6 @@
     "check": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
     "firebase": "^12.18.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
