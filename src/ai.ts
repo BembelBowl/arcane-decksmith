@@ -1,4 +1,5 @@
-import type { DeckRecord } from "./types";
+import { auth } from "./firebase";
+import { DeckRecord } from "./types";
 
 type RoleCounts = Record<string, number>;
 
@@ -338,4 +339,46 @@ export function generateDeckExplanation(
     "MÖGLICHE SCHWÄCHEN",
     ...weaknesses.map(text => `• ${text}`)
   ].join("\n");
+}
+
+const AI_WORKER_URL =
+  "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
+
+export async function generateAiDeckExplanation(
+  deck: DeckRecord
+): Promise<string> {
+  const user = auth?.currentUser;
+
+  if (!user) {
+    throw new Error("Du musst angemeldet sein, um die KI-Analyse zu verwenden.");
+  }
+
+  const idToken = await user.getIdToken();
+
+  const analysis = generateDeckExplanation(deck);
+
+  const response = await fetch(AI_WORKER_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${idToken}`
+    },
+    body: JSON.stringify({
+      analysis
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data?.error ?? "Die KI-Analyse ist fehlgeschlagen."
+    );
+  }
+
+  if (!data?.explanation) {
+    throw new Error("Die KI hat keine Erklärung zurückgegeben.");
+  }
+
+  return data.explanation;
 }
