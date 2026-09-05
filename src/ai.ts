@@ -806,6 +806,146 @@ function collectionContext(
   ].join("\n");
 }
 
+function replacementCandidateLine(
+  deckCard:
+    DeckRecord["cards"][number],
+  collection: CardRecord[]
+): string {
+  const source =
+    collectionCardForDeckCard(
+      deckCard,
+      collection
+    );
+
+  const parts = [
+    `${deckCard.count}x ${deckCard.name}`,
+    `MV ${
+      deckCard.manaValue ??
+      source?.manaValue ??
+      0
+    }`,
+    `Rolle ${
+      deckCard.role?.trim() ||
+      "Keine"
+    }`,
+    shorten(
+      source?.typeLine ??
+        deckCard.typeLine ??
+        "Unbekannt",
+      60
+    )
+  ];
+
+  const oracleText =
+    source?.oracleText?.trim();
+
+  if (oracleText) {
+    parts.push(
+      `Oracle ${
+        shorten(
+          oracleText,
+          220
+        )
+      }`
+    );
+  }
+
+  return parts.join(" | ");
+}
+
+function replacementCandidateContext(
+  deck: DeckRecord,
+  collection: CardRecord[],
+  maxLength: number
+): string {
+  const header = [
+    "MÖGLICHE AUSTAUSCHKANDIDATEN AUS DEM DECK",
+    "Die folgenden Karten befinden sich bereits im Deck und dürfen als mögliche zu entfernende Karten geprüft werden.",
+    "Entferne eine Karte nur, wenn der Austausch anhand der gelieferten Daten tatsächlich sinnvoll begründet werden kann.",
+    ""
+  ].join("\n");
+
+  if (maxLength <= header.length) {
+    return header;
+  }
+
+  const candidates =
+    [...deck.cards]
+      .filter(card =>
+        !deck.commanderIds.includes(
+          card.id
+        )
+      )
+      .sort((a, b) => {
+        const aRole =
+          a.role?.trim() || "";
+        const bRole =
+          b.role?.trim() || "";
+
+        const roleCompare =
+          aRole.localeCompare(
+            bRole,
+            "en",
+            {
+              sensitivity: "base"
+            }
+          );
+
+        if (roleCompare !== 0) {
+          return roleCompare;
+        }
+
+        return (
+          (b.manaValue ?? 0) -
+            (a.manaValue ?? 0) ||
+          a.name.localeCompare(
+            b.name,
+            "en",
+            {
+              sensitivity: "base"
+            }
+          )
+        );
+      });
+
+  const lines: string[] = [];
+  let length = header.length;
+  let complete = true;
+
+  for (const card of candidates) {
+    const line =
+      replacementCandidateLine(
+        card,
+        collection
+      );
+
+    if (
+      length +
+        line.length +
+        1 >
+      maxLength
+    ) {
+      complete = false;
+      break;
+    }
+
+    lines.push(line);
+    length += line.length + 1;
+  }
+
+  const status =
+    complete
+      ? "AUSTAUSCHKANDIDATENLISTE VOLLSTÄNDIG: JA"
+      : "AUSTAUSCHKANDIDATENLISTE VOLLSTÄNDIG: NEIN";
+
+  return [
+    header,
+    status,
+    "",
+    ...lines
+  ].join("\n");
+}
+
 function recommendationRules(): string {
   return [
     "EMPFEHLUNGSREGELN",
@@ -816,9 +956,9 @@ function recommendationRules(): string {
     "5. Karten außerhalb der Sammlungsliste dürfen in dieser Ausbaustufe NICHT als konkrete Kauf- oder Austauschkarte empfohlen werden.",
     "6. Erfinde keine Karten und keine Karteneigenschaften.",
     "7. Nutze Oracle-Text und Rolle als wichtigste Grundlage für die Funktion einer Karte. Erfinde keine Funktion, die daraus nicht hervorgeht.",
-    "8. Ein Verbesserungsvorschlag soll möglichst ein echtes Austauschpaar nennen: eine konkrete Karte AUS DEM DECK entfernen und eine konkrete freie Karte AUS DER SAMMLUNG einsetzen.",
-    "9. Begründe den Austausch anhand der übermittelten Rollen, Kartentypen, Mana Values und Oracle-Texte.",
-    "10. Gib 'Keine passende Ersatzkarte aus deiner Sammlung verfügbar.' nur aus, wenn du tatsächlich kein sinnvolles Austauschpaar aus den übermittelten Daten begründen kannst."
+    "8. Ein Verbesserungsvorschlag soll möglichst ein echtes Austauschpaar nennen: eine konkrete Karte aus der Sektion MÖGLICHE AUSTAUSCHKANDIDATEN AUS DEM DECK entfernen und eine konkrete freie Karte AUS DER SAMMLUNG einsetzen.",
+    "9. Begründe den Austausch anhand der übermittelten Rollen, Kartentypen, Mana Values und Oracle-Texte beider Karten.",
+    "10. Gib 'Keine passende Ersatzkarte aus deiner Sammlung verfügbar.' nur aus, wenn du trotz der übermittelten Austauschskandidaten kein sinnvolles Austauschpaar begründen kannst."
   ].join("\n");
 }
 
@@ -868,42 +1008,74 @@ function createAiAnalysis(
     )
   ].join("\n");
 
-  const collectionReserve =
-    2800;
+  const collectionReserve = 2400;
+  const replacementReserve = 2200;
 
   const base =
     detailedDeck.length +
       rules.length +
-      collectionReserve <=
+      collectionReserve +
+      replacementReserve <=
     MAX_ANALYSIS_LENGTH
       ? detailedDeck
       : compactDeck.length +
           rules.length +
-          collectionReserve <=
+          collectionReserve +
+          replacementReserve <=
         MAX_ANALYSIS_LENGTH
         ? compactDeck
         : minimalDeck;
 
-  const remainingForCollection =
+  const fixedLength =
+    base.length +
+    rules.length +
+    6;
+
+  const remaining =
     Math.max(
       0,
       MAX_ANALYSIS_LENGTH -
-        base.length -
-        rules.length -
-        4
+        fixedLength
+    );
+
+  const collectionBudget =
+    Math.min(
+      collectionReserve,
+      Math.floor(
+        remaining * 0.55
+      )
     );
 
   const collectionText =
     collectionContext(
       deck,
       collection,
-      remainingForCollection
+      collectionBudget
+    );
+
+  const remainingForCandidates =
+    Math.max(
+      0,
+      MAX_ANALYSIS_LENGTH -
+        base.length -
+        rules.length -
+        collectionText.length -
+        6
+    );
+
+  const replacementText =
+    replacementCandidateContext(
+      deck,
+      collection,
+      remainingForCandidates
     );
 
   const analysis = [
     base,
     "",
     collectionText,
+    "",
+    replacementText,
     "",
     rules
   ].join("\n");
