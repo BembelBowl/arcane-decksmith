@@ -106,7 +106,13 @@ button:disabled {
   position: relative;
   isolation: isolate;
   min-height: 100vh;
-  background:
+
+  background-image:
+    linear-gradient(
+      rgba(6, 11, 20, 0.82),
+      rgba(6, 11, 20, 0.82)
+    ),
+    url("/public/ad_logo.png"),
     radial-gradient(
       circle at 12% -10%,
       rgba(85, 215, 229, 0.12),
@@ -128,51 +134,46 @@ button:disabled {
       #0a1120 46%,
       #060b14 100%
     );
+
+  background-repeat:
+    no-repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat;
+
+  background-position:
+    center,
+    center 54%,
+    center,
+    center,
+    center,
+    center;
+
+  background-size:
+    cover,
+    min(58vw, 760px) auto,
+    cover,
+    cover,
+    cover,
+    cover;
+
+  background-attachment:
+    fixed,
+    fixed,
+    fixed,
+    fixed,
+    fixed,
+    fixed;
 }
 
 .app::before {
-  content: "";
-  position: fixed;
-
-  z-index: 0;
-
-  inset: 80px 0 30px;
-
-  pointer-events: none;
-
-  background-image:
-    url("../ad_logo.png");
-
-  background-repeat: no-repeat;
-
-  background-position:
-    center 46%;
-
-  background-size:
-    min(66vw, 760px);
-
-  opacity: 0.08;
-
-  filter:
-    grayscale(0.1)
-    saturate(0.9)
-    contrast(1.08);
+  display: none;
 }
 
 .app::after {
-  content: "";
-  position: fixed;
-  z-index: 0;
-  inset: 0;
-  pointer-events: none;
-
-  background:
-    linear-gradient(
-      90deg,
-      transparent 0%,
-      rgba(85, 215, 229, 0.018) 50%,
-      transparent 100%
-    );
+  display: none;
 }
 
 
@@ -1517,7 +1518,7 @@ h3 {
   inset: 0;
 
   background:
-    url("../ad_logo.png")
+    url("../public/ad_logo.png")
     center
     / min(70vw, 700px)
     auto
