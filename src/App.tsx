@@ -954,33 +954,41 @@ function Builder({
     setAnalysisText("");
   };
 
-  const explain=async()=>{
-    if(!result) {
-      return;
-    }
+ const explain=async()=>{
+  if(!result) {
+    return;
+  }
 
-    setAiBusy(true);
-    setAnalysisText("");
+  setAiBusy(true);
+  setAnalysisText("");
 
-    try {
-      const text=await generateAiDeckExplanation(result);
-      setAnalysisText(text);
-    } catch(error) {
-      console.error(
-        "KI-Analyse fehlgeschlagen:",
-        error
-      );
+  try {
+    const text=await generateAiDeckExplanation(result);
+    setAnalysisText(text);
+  } catch(error) {
+    console.error(
+      "KI-Analyse fehlgeschlagen:",
+      error
+    );
 
-      const fallback=generateDeckExplanation(result);
+    const fallback=generateDeckExplanation(result);
 
-      setAnalysisText(
-        fallback+
-        "\n\nHinweis: Die generative KI war gerade nicht erreichbar. Deshalb wird die lokale Deckanalyse angezeigt."
-      );
-    } finally {
-      setAiBusy(false);
-    }
-  };
+    const errorMessage=
+      error instanceof Error
+        ?error.message
+        :"Unbekannter Fehler bei der KI-Analyse.";
+
+    setAnalysisText(
+      fallback+
+      "\n\n---\n\n"+
+      "### ⚠️ Generative KI nicht verfügbar\n\n"+
+      errorMessage+
+      "\n\nDie lokale Deckanalyse wird deshalb als Fallback angezeigt."
+    );
+  } finally {
+    setAiBusy(false);
+  }
+};
 
   return (
     <section>
