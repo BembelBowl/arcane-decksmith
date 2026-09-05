@@ -7,6 +7,7 @@ export interface CardRecord {
   oracleId?: string;
   name: string;
   set: string;
+  setName?: string;
   collectorNumber: string;
   lang: string;
   foil: boolean;
