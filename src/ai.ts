@@ -5,35 +5,42 @@ const AI_WORKER_URL =
   "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
 
 /**
- * Zählt alle Karten eines Decks.
- * Die Kartenmenge einer Karte wird dabei berücksichtigt.
+ * Zählt die Gesamtzahl aller Karten im Hauptdeck.
  */
 function countCards(deck: DeckRecord): number {
   return deck.cards.reduce(
-    (total, entry) => total + entry.quantity,
+    (total, card) => total + card.count,
     0
   );
 }
 
 /**
- * Berechnet den durchschnittlichen Mana Value aller Nichtland-Karten.
+ * Erkennt Länder anhand der Typzeile.
+ */
+function isLand(typeLine: string | undefined): boolean {
+  return (typeLine ?? "").toLowerCase().includes("land");
+}
+
+/**
+ * Berechnet den durchschnittlichen Mana Value
+ * aller Nichtland-Karten.
  */
 function averageManaValue(deck: DeckRecord): number {
   let totalManaValue = 0;
   let cardCount = 0;
 
-  for (const entry of deck.cards) {
-    const card = entry.card;
-
-    if (card.typeLine?.includes("Land")) {
+  for (const card of deck.cards) {
+    if (isLand(card.typeLine)) {
       continue;
     }
 
     const manaValue =
-      typeof card.cmc === "number" ? card.cmc : 0;
+      typeof card.manaValue === "number"
+        ? card.manaValue
+        : 0;
 
-    totalManaValue += manaValue * entry.quantity;
-    cardCount += entry.quantity;
+    totalManaValue += manaValue * card.count;
+    cardCount += card.count;
   }
 
   if (cardCount === 0) {
@@ -44,26 +51,25 @@ function averageManaValue(deck: DeckRecord): number {
 }
 
 /**
- * Ermittelt eine einfache Mana-Kurve.
+ * Erstellt die Mana-Kurve.
  *
- * 0 = Mana Value 0
- * 1 = Mana Value 1
+ * Index:
+ * 0 = MV 0
+ * 1 = MV 1
  * ...
- * 7 = Mana Value 7 oder höher
+ * 7 = MV 7 oder höher
  */
 function manaCurve(deck: DeckRecord): number[] {
-  const curve = Array(8).fill(0) as number[];
+  const curve = Array<number>(8).fill(0);
 
-  for (const entry of deck.cards) {
-    const card = entry.card;
-
-    if (card.typeLine?.includes("Land")) {
+  for (const card of deck.cards) {
+    if (isLand(card.typeLine)) {
       continue;
     }
 
     const manaValue =
-      typeof card.cmc === "number"
-        ? Math.floor(card.cmc)
+      typeof card.manaValue === "number"
+        ? Math.floor(card.manaValue)
         : 0;
 
     const index = Math.min(
@@ -71,14 +77,14 @@ function manaCurve(deck: DeckRecord): number[] {
       7
     );
 
-    curve[index] += entry.quantity;
+    curve[index] += card.count;
   }
 
   return curve;
 }
 
 /**
- * Zählt wichtige Kartentypen.
+ * Zählt grundlegende Kartentypen.
  */
 function typeCounts(deck: DeckRecord) {
   let lands = 0;
@@ -89,36 +95,36 @@ function typeCounts(deck: DeckRecord) {
   let sorceries = 0;
   let planeswalkers = 0;
 
-  for (const entry of deck.cards) {
-    const typeLine = entry.card.typeLine ?? "";
-    const quantity = entry.quantity;
+  for (const card of deck.cards) {
+    const typeLine =
+      (card.typeLine ?? "").toLowerCase();
 
-    if (typeLine.includes("Land")) {
-      lands += quantity;
+    if (typeLine.includes("land")) {
+      lands += card.count;
     }
 
-    if (typeLine.includes("Creature")) {
-      creatures += quantity;
+    if (typeLine.includes("creature")) {
+      creatures += card.count;
     }
 
-    if (typeLine.includes("Artifact")) {
-      artifacts += quantity;
+    if (typeLine.includes("artifact")) {
+      artifacts += card.count;
     }
 
-    if (typeLine.includes("Enchantment")) {
-      enchantments += quantity;
+    if (typeLine.includes("enchantment")) {
+      enchantments += card.count;
     }
 
-    if (typeLine.includes("Instant")) {
-      instants += quantity;
+    if (typeLine.includes("instant")) {
+      instants += card.count;
     }
 
-    if (typeLine.includes("Sorcery")) {
-      sorceries += quantity;
+    if (typeLine.includes("sorcery")) {
+      sorceries += card.count;
     }
 
-    if (typeLine.includes("Planeswalker")) {
-      planeswalkers += quantity;
+    if (typeLine.includes("planeswalker")) {
+      planeswalkers += card.count;
     }
   }
 
@@ -134,121 +140,34 @@ function typeCounts(deck: DeckRecord) {
 }
 
 /**
- * Erkennt einfache strategische Rollen anhand des Oracle-Texts.
+ * Zählt die Rollen, die der Deckbuilder
+ * den Karten bereits zugewiesen hat.
  *
- * Das ist bewusst eine Heuristik:
- * Sie liefert der Gen-AI Fakten und Anhaltspunkte,
- * ohne die KI selbst Zahlen erraten zu lassen.
+ * Wir verwenden hier absichtlich die vorhandenen
+ * Rollen aus deckBuilder.ts und versuchen nicht,
+ * Kartentexte erneut zu erraten.
  */
-function roleCounts(deck: DeckRecord) {
-  let ramp = 0;
-  let draw = 0;
-  let interaction = 0;
-  let boardWipes = 0;
-  let graveyard = 0;
+function roleCounts(deck: DeckRecord): Record<string, number> {
+  const roles: Record<string, number> = {};
 
-  for (const entry of deck.cards) {
-    const text =
-      entry.card.oracleText?.toLowerCase() ?? "";
+  for (const card of deck.cards) {
+    const role =
+      card.role?.trim() || "Ohne Rolle";
 
-    const quantity = entry.quantity;
-
-    if (
-      text.includes("add {") ||
-      text.includes("search your library for a basic land") ||
-      text.includes("search your library for a land card")
-    ) {
-      ramp += quantity;
-    }
-
-    if (
-      text.includes("draw a card") ||
-      text.includes("draw two cards") ||
-      text.includes("draw three cards")
-    ) {
-      draw += quantity;
-    }
-
-    if (
-      text.includes("destroy target") ||
-      text.includes("exile target") ||
-      text.includes("counter target")
-    ) {
-      interaction += quantity;
-    }
-
-    if (
-      text.includes("destroy all") ||
-      text.includes("exile all")
-    ) {
-      boardWipes += quantity;
-    }
-
-    if (
-      text.includes("graveyard") ||
-      text.includes("from your graveyard")
-    ) {
-      graveyard += quantity;
-    }
+    roles[role] =
+      (roles[role] ?? 0) + card.count;
   }
 
-  return {
-    ramp,
-    draw,
-    interaction,
-    boardWipes,
-    graveyard
-  };
+  return roles;
 }
 
 /**
- * Erstellt eine kompakte Kartenliste für die KI.
- *
- * Oracle-Texte werden absichtlich mitgeschickt,
- * damit die KI echte Karteneffekte und Synergien
- * erklären kann, statt Karten zu erfinden.
+ * Erstellt eine lesbare Darstellung der Mana-Kurve.
  */
-function createCardList(deck: DeckRecord): string {
-  return deck.cards
-    .map(entry => {
-      const card = entry.card;
-
-      const oracleText =
-        card.oracleText
-          ?.replace(/\s+/g, " ")
-          .trim() || "Kein Oracle-Text vorhanden";
-
-      return [
-        `${entry.quantity}x ${card.name}`,
-        `Typ: ${card.typeLine ?? "Unbekannt"}`,
-        `Mana Value: ${card.cmc ?? 0}`,
-        `Text: ${oracleText}`
-      ].join(" | ");
-    })
-    .join("\n");
-}
-
-/**
- * Lokale, deterministische Deckanalyse.
- *
- * Diese Funktion benötigt keine externe KI.
- * Sie dient gleichzeitig als:
- *
- * 1. Faktenbasis für Groq
- * 2. Fallback, falls Groq oder Cloudflare ausfällt
- */
-export function generateDeckExplanation(
-  deck: DeckRecord
-): string {
-  const total = countCards(deck);
-  const types = typeCounts(deck);
-  const roles = roleCounts(deck);
+function manaCurveText(deck: DeckRecord): string {
   const curve = manaCurve(deck);
-  const avgMana = averageManaValue(deck);
 
-  const nonlands = total - types.lands;
-
-  const curveText = curve
+  return curve
     .map((count, index) => {
       const label =
         index === 7 ? "7+" : String(index);
@@ -256,16 +175,103 @@ export function generateDeckExplanation(
       return `MV ${label}: ${count}`;
     })
     .join(", ");
+}
 
-  const commanderText =
-    deck.commander?.name
-      ? deck.commander.name
-      : "Kein Commander angegeben";
+/**
+ * Erstellt eine lesbare Darstellung
+ * der vom Builder vergebenen Kartenrollen.
+ */
+function rolesText(deck: DeckRecord): string {
+  const roles = roleCounts(deck);
+  const entries = Object.entries(roles);
+
+  if (entries.length === 0) {
+    return "Keine Rollen vorhanden.";
+  }
+
+  return entries
+    .map(([role, count]) => `${role}: ${count}`)
+    .join("\n");
+}
+
+/**
+ * Gibt die Commander-IDs aus.
+ *
+ * DeckRecord speichert aktuell nur commanderIds.
+ * Deshalb erfinden wir hier keinen Commander-Namen.
+ */
+function commanderText(deck: DeckRecord): string {
+  if (
+    !deck.commanderIds ||
+    deck.commanderIds.length === 0
+  ) {
+    return "Kein Commander im Deckdatensatz angegeben.";
+  }
+
+  return deck.commanderIds.join(", ");
+}
+
+/**
+ * Erstellt die Kartenliste, die an die KI
+ * weitergegeben wird.
+ *
+ * Verwendet ausschließlich Felder, die in
+ * DeckCard tatsächlich vorhanden sind.
+ */
+function cardListText(deck: DeckRecord): string {
+  if (deck.cards.length === 0) {
+    return "Keine Karten im Deck.";
+  }
+
+  return deck.cards
+    .map((card) => {
+      const parts = [
+        `${card.count}x ${card.name}`,
+        `Typ: ${card.typeLine || "Unbekannt"}`,
+        `Mana Value: ${card.manaValue ?? 0}`,
+        `Rolle: ${card.role || "Keine"}`
+      ];
+
+      if (card.reason) {
+        parts.push(`Begründung: ${card.reason}`);
+      }
+
+      if (
+        typeof card.available === "number"
+      ) {
+        parts.push(
+          `In Sammlung verfügbar: ${card.available}`
+        );
+      }
+
+      return parts.join(" | ");
+    })
+    .join("\n");
+}
+
+/**
+ * Lokale, deterministische Deckanalyse.
+ *
+ * Diese Funktion benötigt weder Cloudflare
+ * noch Groq. Sie dient als Fallback,
+ * falls die generative KI nicht erreichbar ist.
+ */
+export function generateDeckExplanation(
+  deck: DeckRecord
+): string {
+  const total = countCards(deck);
+  const types = typeCounts(deck);
+  const nonlands = total - types.lands;
+  const averageMv = averageManaValue(deck);
+
+  const targetManaValue =
+    typeof deck.targetManaValue === "number"
+      ? deck.targetManaValue.toFixed(1)
+      : "Nicht angegeben";
 
   return [
     `Deck: ${deck.name}`,
     `Format: ${deck.format}`,
-    `Commander: ${commanderText}`,
     "",
     `Karten gesamt: ${total}`,
     `Länder: ${types.lands}`,
@@ -276,46 +282,54 @@ export function generateDeckExplanation(
     `Spontanzauber: ${types.instants}`,
     `Hexereien: ${types.sorceries}`,
     `Planeswalker: ${types.planeswalkers}`,
-    `Durchschnittlicher Mana Value: ${avgMana.toFixed(2)}`,
-    `Ziel-Mana-Value: ${deck.targetManaValue}`,
+    `Durchschnittlicher Mana Value: ${averageMv.toFixed(2)}`,
+    `Ziel-Mana-Value: ${targetManaValue}`,
     "",
     "Mana-Kurve:",
-    curveText,
+    manaCurveText(deck),
     "",
-    "Erkannte Kartenrollen:",
-    `Ramp: ${roles.ramp}`,
-    `Kartennachschub: ${roles.draw}`,
-    `Interaktion: ${roles.interaction}`,
-    `Boardwipes: ${roles.boardWipes}`,
-    `Friedhofsbezug: ${roles.graveyard}`
+    "Kartenrollen:",
+    rolesText(deck)
   ].join("\n");
 }
 
 /**
- * Erstellt die ausführliche Faktenbasis,
- * die an unseren Cloudflare Worker gesendet wird.
+ * Erstellt die Faktenbasis für Groq.
+ *
+ * Die KI bekommt Zahlen, Rollen und Kartenliste
+ * aus Arcane Decksmith und soll diese erklären,
+ * statt selbst Deckdaten zu berechnen.
  */
 function createAiAnalysis(deck: DeckRecord): string {
-  const statistics =
-    generateDeckExplanation(deck);
-
-  const cards =
-    createCardList(deck);
-
   return [
-    statistics,
+    "TECHNISCHE DECKDATEN",
+    generateDeckExplanation(deck),
     "",
-    "Karten im Deck:",
-    cards
+    "COMMANDER-INFORMATION",
+    commanderText(deck),
+    "",
+    "NOTIZEN DES DECKBUILDERS",
+    deck.notes || "Keine Notizen vorhanden.",
+    "",
+    "KARTENLISTE",
+    cardListText(deck)
   ].join("\n");
 }
 
 /**
- * Ruft die echte generative KI über unseren
- * Cloudflare Worker auf.
+ * Ruft die generative Deckanalyse über
+ * unseren Cloudflare Worker auf.
  *
- * Der Groq API-Key befindet sich NICHT hier.
- * Er bleibt als Secret im Cloudflare Worker.
+ * Ablauf:
+ *
+ * Arcane Decksmith
+ * → Firebase ID-Token
+ * → Cloudflare Worker
+ * → Groq
+ * → deutsche Deckanalyse
+ *
+ * Der geheime Groq API-Key befindet sich
+ * ausschließlich im Cloudflare Worker.
  */
 export async function generateAiDeckExplanation(
   deck: DeckRecord
@@ -328,43 +342,31 @@ export async function generateAiDeckExplanation(
     );
   }
 
-  /*
-   * Firebase erstellt hier automatisch ein ID-Token
-   * für den aktuell eingeloggten Benutzer.
+  /**
+   * getIdToken() liefert den zeitlich begrenzten
+   * Firebase-Anmeldenachweis des aktuellen Nutzers.
+   *
+   * Dieser wird vom Cloudflare Worker geprüft.
    */
   const idToken =
     await user.getIdToken();
 
-  /*
-   * Die lokale Analyse liefert der KI die Fakten.
-   * Dadurch muss Groq beispielsweise Kartenanzahl,
-   * Mana-Kurve oder Kartentexte nicht erraten.
-   */
   const analysis =
     createAiAnalysis(deck);
 
-  const response = await fetch(
-    AI_WORKER_URL,
-    {
+  const response =
+    await fetch(AI_WORKER_URL, {
       method: "POST",
 
       headers: {
         "Content-Type": "application/json",
-
-        /*
-         * Der Worker überprüft dieses Firebase-Token.
-         * Nur angemeldete Arcane-Decksmith-Nutzer
-         * sollen die KI verwenden können.
-         */
-        Authorization:
-          `Bearer ${idToken}`
+        Authorization: `Bearer ${idToken}`
       },
 
       body: JSON.stringify({
         analysis
       })
-    }
-  );
+    });
 
   let data: {
     explanation?: string;
@@ -382,7 +384,7 @@ export async function generateAiDeckExplanation(
   if (!response.ok) {
     throw new Error(
       data.error ??
-        `KI-Anfrage fehlgeschlagen (${response.status}).`
+        `Die KI-Anfrage ist fehlgeschlagen (${response.status}).`
     );
   }
 
