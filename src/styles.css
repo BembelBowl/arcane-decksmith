@@ -1950,6 +1950,148 @@ footer {
 
 
 /* =========================================================
+   CARD PRINTINGS / VARIANTS
+   ========================================================= */
+
+.variant-actions {
+  margin-top: 14px;
+}
+
+.variant-actions .secondary {
+  width: 100%;
+}
+
+.variant-box {
+  min-width: 0;
+  margin-top: 10px;
+  padding: 12px;
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(8, 19, 33, 0.94),
+      rgba(12, 25, 41, 0.96)
+    );
+
+  border:
+    1px solid
+    rgba(85, 215, 229, 0.18);
+
+  border-radius: 11px;
+
+  overflow: hidden;
+}
+
+.variant-field {
+  min-width: 0;
+}
+
+.variant-field label {
+  display: block;
+
+  margin: 0 0 6px;
+
+  color: var(--text-soft);
+
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.variant-select {
+  display: block;
+
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+
+  margin: 0;
+
+  padding: 9px 34px 9px 10px;
+
+  background: #07111f;
+
+  color: var(--text);
+
+  border:
+    1px solid
+    rgba(85, 215, 229, 0.28);
+
+  border-radius: 8px;
+
+  outline: none;
+
+  text-overflow: ellipsis;
+}
+
+.variant-select:focus {
+  border-color:
+    rgba(85, 215, 229, 0.62);
+
+  box-shadow:
+    0 0 0 3px
+    rgba(85, 215, 229, 0.07);
+}
+
+.variant-info {
+  display: grid;
+
+  gap: 7px;
+
+  min-width: 0;
+
+  margin-top: 12px;
+  padding-top: 11px;
+
+  border-top:
+    1px solid
+    rgba(118, 143, 173, 0.18);
+}
+
+.variant-info-title {
+  color: var(--gold-bright);
+
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.variant-info-row {
+  display: grid;
+
+  grid-template-columns:
+    minmax(82px, auto)
+    minmax(0, 1fr);
+
+  gap: 10px;
+
+  align-items: start;
+}
+
+.variant-info-row span {
+  color: var(--muted);
+
+  font-size: 11px;
+}
+
+.variant-info-row strong {
+  min-width: 0;
+
+  color: var(--text-soft);
+
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+
+  overflow-wrap: anywhere;
+
+  text-align: right;
+}
+
+.search-card-actions {
+  margin-top: 14px;
+}
+
+/* =========================================================
    TABLET
    ========================================================= */
 
