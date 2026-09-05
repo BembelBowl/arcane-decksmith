@@ -14,6 +14,73 @@ import "./styles.css";
 
 const COLORS = ["W","U","B","R","G"];
 const COLOR_NAMES: Record<string,string> = {W:"Weiß",U:"Blau",B:"Schwarz",R:"Rot",G:"Grün"};
+const COLOR_ORDER = ["W","U","B","R","G"];
+const TYPE_ORDER = [
+  "Land",
+  "Kreatur",
+  "Planeswalker",
+  "Spontanzauber",
+  "Hexerei",
+  "Verzauberung",
+  "Artefakt",
+  "Schlacht",
+  "Sonstiges"
+];
+
+function colorGroupName(colors:string[]):string {
+  if(!colors.length) {
+    return "Farblos";
+  }
+
+  const ordered=COLOR_ORDER.filter(color=>colors.includes(color));
+
+  return ordered
+    .map(color=>COLOR_NAMES[color]??color)
+    .join(" / ");
+}
+
+function primaryTypeGroup(typeLine:string|undefined):string {
+  const type=(typeLine??"").toLowerCase();
+
+  if(type.includes("land")) return "Land";
+  if(type.includes("creature")) return "Kreatur";
+  if(type.includes("planeswalker")) return "Planeswalker";
+  if(type.includes("instant")) return "Spontanzauber";
+  if(type.includes("sorcery")) return "Hexerei";
+  if(type.includes("enchantment")) return "Verzauberung";
+  if(type.includes("artifact")) return "Artefakt";
+  if(type.includes("battle")) return "Schlacht";
+
+  return "Sonstiges";
+}
+
+function compareGroupNames(a:string,b:string,group:GroupBy):number {
+  if(group==="manaValue") {
+    const av=Number(a.replace("MV ",""));
+    const bv=Number(b.replace("MV ",""));
+
+    return av-bv;
+  }
+
+  if(group==="type") {
+    const ai=TYPE_ORDER.indexOf(a);
+    const bi=TYPE_ORDER.indexOf(b);
+
+    return (ai===-1?999:ai)-(bi===-1?999:bi);
+  }
+
+  if(group==="color") {
+    if(a==="Farblos"&&b!=="Farblos") return -1;
+    if(b==="Farblos"&&a!=="Farblos") return 1;
+
+    const ac=a.split(" / ").length;
+    const bc=b.split(" / ").length;
+
+    if(ac!==bc) return ac-bc;
+  }
+
+  return a.localeCompare(b,"de",{numeric:true,sensitivity:"base"});
+}
 
 function App() {
   const [auth, setAuth] = useState<{user: User|null; loading: boolean}>({user:null,loading:true});
@@ -154,8 +221,43 @@ function Main({
       setBusy(true);
 
       try {
-        setCollection(await loadCollection(uid));
-        setDecks(await loadDecks(uid));
+        const loadedCollection=await loadCollection(uid);
+        const loadedDecks=await loadDecks(uid);
+
+        setCollection(loadedCollection);
+        setDecks(loadedDecks);
+
+        const cardsWithoutSetName=loadedCollection.filter(card=>!card.setName);
+
+        if(cardsWithoutSetName.length>0){
+          void (async()=>{
+            const refreshed=[...loadedCollection];
+            let changed=false;
+
+            for(const card of cardsWithoutSetName){
+              try{
+                const fresh=await getCard(card.id);
+                const index=refreshed.findIndex(item=>item.id===card.id);
+
+                if(index!==-1&&fresh.setName){
+                  refreshed[index]={
+                    ...refreshed[index],
+                    setName:fresh.setName
+                  };
+
+                  await saveCard(uid,refreshed[index]);
+                  changed=true;
+                }
+              }catch{
+                // Fehlende Setnamen werden beim nächsten Laden erneut versucht.
+              }
+            }
+
+            if(changed){
+              setCollection(refreshed);
+            }
+          })();
+        }
       } finally {
         setBusy(false);
       }
@@ -503,10 +605,13 @@ function SearchCard({
 
             {!loadingPrintings&&printings.length>0&&
               <>
-                <label>
-                  Ausgabe auswählen
+                <div className="variant-field">
+                  <label htmlFor={`variant-${card.id}`}>
+                    Ausgabe auswählen
+                  </label>
 
                   <select
+                    id={`variant-${card.id}`}
                     className="variant-select"
                     value={selectedCard.id}
                     onChange={e=>{
@@ -525,9 +630,7 @@ function SearchCard({
                         value={p.id}
                       >
                         {(p.set_name??p.set)}
-                        {" · "}
-                        {p.set.toUpperCase()}
-                        {" #"}
+                        {" · #"}
                         {p.collector_number}
                         {p.lang&&p.lang!=="en"
                           ?` · ${p.lang.toUpperCase()}`
@@ -536,27 +639,37 @@ function SearchCard({
                       </option>
                     )}
                   </select>
-                </label>
+                </div>
 
                 <div className="variant-info">
-                  <strong>Gewählte Ausgabe:</strong>
+                  <div className="variant-info-title">
+                    Gewählte Ausgabe
+                  </div>
 
-                  <span>
-                    {selectedCard.set_name??selectedCard.set.toUpperCase()}
-                  </span>
+                  <div className="variant-info-row">
+                    <span>Set</span>
+                    <strong>
+                      {selectedCard.set_name??selectedCard.set.toUpperCase()}
+                    </strong>
+                  </div>
 
-                  <span>
-                    Set: {selectedCard.set.toUpperCase()}
-                  </span>
+                  <div className="variant-info-row">
+                    <span>Collector-Nr.</span>
+                    <strong>{selectedCard.collector_number}</strong>
+                  </div>
 
-                  <span>
-                    Collector Nr.: {selectedCard.collector_number}
-                  </span>
+                  {selectedCard.lang&&
+                    <div className="variant-info-row">
+                      <span>Sprache</span>
+                      <strong>{selectedCard.lang.toUpperCase()}</strong>
+                    </div>
+                  }
 
                   {selectedCard.rarity&&
-                    <span>
-                      Seltenheit: {selectedCard.rarity}
-                    </span>
+                    <div className="variant-info-row">
+                      <span>Seltenheit</span>
+                      <strong>{selectedCard.rarity}</strong>
+                    </div>
                   }
                 </div>
               </>
@@ -607,7 +720,7 @@ function Collection({
   const filtered=useMemo(
     ()=>cards
       .filter(c=>
-        `${c.name} ${c.set} ${c.typeLine} ${c.oracleText}`
+        `${c.name} ${c.set} ${c.setName??""} ${c.typeLine} ${c.oracleText}`
           .toLowerCase()
           .includes(query.toLowerCase())
       )
@@ -623,22 +736,29 @@ function Collection({
 
   const total=cards.reduce((n,c)=>n+c.count,0);
 
-  const groups=
-    group==="none"
-      ? {Alle:filtered}
-      : filtered.reduce<Record<string,CardRecord[]>>((a,c)=>{
-          const k=
-            group==="color"
-              ?(c.colors.join("")||"Farblos")
-              :group==="type"
-                ?(c.typeLine?.split("—")[0]??"Unbekannt")
-                :group==="set"
-                  ?c.set.toUpperCase()
-                  :`MV ${c.manaValue}`;
+  const groups=useMemo(()=>{
+    if(group==="none") {
+      return [["Alle",filtered]] as Array<[string,CardRecord[]]>;
+    }
 
-          (a[k]??=[]).push(c);
-          return a;
-        },{});
+    const grouped=filtered.reduce<Record<string,CardRecord[]>>((acc,card)=>{
+      const key=
+        group==="color"
+          ?colorGroupName(card.colors)
+          :group==="type"
+            ?primaryTypeGroup(card.typeLine)
+            :group==="set"
+              ?(card.setName??card.set.toUpperCase())
+              :`MV ${card.manaValue}`;
+
+      (acc[key]??=[]).push(card);
+      return acc;
+    },{});
+
+    return Object.entries(grouped).sort(([a],[b])=>
+      compareGroupNames(a,b,group)
+    );
+  },[filtered,group]);
 
   const importList=async()=>{
     const rows=parseList(importText);
@@ -779,7 +899,7 @@ function Collection({
         </button>
       </div>
 
-      {Object.entries(groups).map(([name,list])=>
+      {groups.map(([name,list])=>
         <div key={name}>
           <h3 className="group-title">{name}</h3>
 
@@ -866,7 +986,7 @@ function CollectionCard({
         <h3>{card.name}</h3>
 
         <div className="meta">
-          {card.set.toUpperCase()} #{card.collectorNumber} · MV {card.manaValue}
+          {card.setName??card.set.toUpperCase()} · #{card.collectorNumber} · MV {card.manaValue}
         </div>
 
         <p>{card.typeLine}</p>
@@ -954,41 +1074,41 @@ function Builder({
     setAnalysisText("");
   };
 
- const explain=async()=>{
-  if(!result) {
-    return;
-  }
+  const explain=async()=>{
+    if(!result) {
+      return;
+    }
 
-  setAiBusy(true);
-  setAnalysisText("");
+    setAiBusy(true);
+    setAnalysisText("");
 
-  try {
-    const text=await generateAiDeckExplanation(result);
-    setAnalysisText(text);
-  } catch(error) {
-    console.error(
-      "KI-Analyse fehlgeschlagen:",
-      error
-    );
+    try {
+      const text=await generateAiDeckExplanation(result);
+      setAnalysisText(text);
+    } catch(error) {
+      console.error(
+        "KI-Analyse fehlgeschlagen:",
+        error
+      );
 
-    const fallback=generateDeckExplanation(result);
+      const fallback=generateDeckExplanation(result);
 
-    const errorMessage=
-      error instanceof Error
-        ?error.message
-        :"Unbekannter Fehler bei der KI-Analyse.";
+      const errorMessage=
+        error instanceof Error
+          ?error.message
+          :"Unbekannter Fehler bei der KI-Analyse.";
 
-    setAnalysisText(
-      fallback+
-      "\n\n---\n\n"+
-      "### ⚠️ Generative KI nicht verfügbar\n\n"+
-      errorMessage+
-      "\n\nDie lokale Deckanalyse wird deshalb als Fallback angezeigt."
-    );
-  } finally {
-    setAiBusy(false);
-  }
-};
+      setAnalysisText(
+        fallback+
+        "\n\n---\n\n"+
+        "### ⚠️ Generative KI nicht verfügbar\n\n"+
+        errorMessage+
+        "\n\nDie lokale Deckanalyse wird deshalb als Fallback angezeigt."
+      );
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   return (
     <section>
