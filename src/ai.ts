@@ -1,43 +1,31 @@
 import { auth } from "./firebase";
-import type { DeckRecord } from "./types";
+import { loadCollection } from "./db";
+import {
+  cardLegalForDeck,
+  deckCopyLimit
+} from "./deckBuilder";
+import type {
+  CardRecord,
+  DeckRecord
+} from "./types";
 
 const AI_WORKER_URL =
   "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
 
-/*
- * Der Cloudflare Worker akzeptiert aktuell
- * maximal ungefähr 12.000 Zeichen Analyse-Text.
- *
- * Wir bleiben bewusst etwas darunter, damit
- * auch JSON-/Prompt-Overhead kein Problem wird.
- */
 const MAX_ANALYSIS_LENGTH = 10500;
-
-/*
- * Bei einer leeren, aber technisch erfolgreichen
- * KI-Antwort versuchen wir die Anfrage genau
- * ein weiteres Mal.
- */
 const EMPTY_RESPONSE_RETRIES = 1;
-
-/*
- * Kurze Wartezeit vor dem Retry.
- */
 const RETRY_DELAY_MS = 700;
 
-/**
- * Zählt die Gesamtzahl aller Karten im Hauptdeck.
- */
-function countCards(deck: DeckRecord): number {
+function countCards(
+  deck: DeckRecord
+): number {
   return deck.cards.reduce(
-    (total, card) => total + card.count,
+    (total, card) =>
+      total + card.count,
     0
   );
 }
 
-/**
- * Erkennt Länder anhand der Typzeile.
- */
 function isLand(
   typeLine: string | undefined
 ): boolean {
@@ -46,10 +34,6 @@ function isLand(
     .includes("land");
 }
 
-/**
- * Berechnet den durchschnittlichen Mana Value
- * aller Nichtland-Karten.
- */
 function averageManaValue(
   deck: DeckRecord
 ): number {
@@ -61,33 +45,18 @@ function averageManaValue(
       continue;
     }
 
-    const manaValue =
-      typeof card.manaValue === "number"
-        ? card.manaValue
-        : 0;
-
     totalManaValue +=
-      manaValue * card.count;
+      (card.manaValue ?? 0) *
+      card.count;
 
     cardCount += card.count;
   }
 
-  if (cardCount === 0) {
-    return 0;
-  }
-
-  return totalManaValue / cardCount;
+  return cardCount === 0
+    ? 0
+    : totalManaValue / cardCount;
 }
 
-/**
- * Erstellt die Mana-Kurve.
- *
- * Index:
- * 0 = MV 0
- * 1 = MV 1
- * ...
- * 7 = MV 7 oder höher
- */
 function manaCurve(
   deck: DeckRecord
 ): number[] {
@@ -100,14 +69,15 @@ function manaCurve(
     }
 
     const manaValue =
-      typeof card.manaValue === "number"
-        ? Math.floor(card.manaValue)
-        : 0;
+      Math.floor(
+        card.manaValue ?? 0
+      );
 
-    const index = Math.min(
-      Math.max(manaValue, 0),
-      7
-    );
+    const index =
+      Math.min(
+        Math.max(manaValue, 0),
+        7
+      );
 
     curve[index] += card.count;
   }
@@ -115,9 +85,6 @@ function manaCurve(
   return curve;
 }
 
-/**
- * Zählt grundlegende Kartentypen.
- */
 function typeCounts(
   deck: DeckRecord
 ) {
@@ -190,10 +157,6 @@ function typeCounts(
   };
 }
 
-/**
- * Zählt die Rollen, die der Deckbuilder
- * den Karten bereits zugewiesen hat.
- */
 function roleCounts(
   deck: DeckRecord
 ): Record<string, number> {
@@ -213,38 +176,28 @@ function roleCounts(
   return roles;
 }
 
-/**
- * Erstellt eine lesbare Darstellung
- * der Mana-Kurve.
- */
 function manaCurveText(
   deck: DeckRecord
 ): string {
-  const curve = manaCurve(deck);
-
-  return curve
-    .map((count, index) => {
-      const label =
-        index === 7
-          ? "7+"
-          : String(index);
-
-      return `MV ${label}: ${count}`;
-    })
+  return manaCurve(deck)
+    .map(
+      (count, index) =>
+        `MV ${
+          index === 7
+            ? "7+"
+            : index
+        }: ${count}`
+    )
     .join(", ");
 }
 
-/**
- * Erstellt eine lesbare Darstellung
- * der Kartenrollen.
- */
 function rolesText(
   deck: DeckRecord
 ): string {
-  const roles = roleCounts(deck);
-
   const entries =
-    Object.entries(roles);
+    Object.entries(
+      roleCounts(deck)
+    );
 
   if (entries.length === 0) {
     return "Keine Rollen vorhanden.";
@@ -258,16 +211,10 @@ function rolesText(
     .join(", ");
 }
 
-/**
- * Gibt die Commander-IDs aus.
- *
- * DeckRecord enthält hier nur die IDs.
- */
 function commanderText(
   deck: DeckRecord
 ): string {
   if (
-    !deck.commanderIds ||
     deck.commanderIds.length === 0
   ) {
     return (
@@ -279,50 +226,38 @@ function commanderText(
   return deck.commanderIds.join(", ");
 }
 
-/**
- * Kürzt Text nur für die Übertragung
- * an die generative KI.
- *
- * Die eigentlichen Kartendaten im Deck
- * werden dadurch nicht verändert.
- */
 function shorten(
   value: string,
   maxLength: number
 ): string {
   const clean =
-    value.replace(/\s+/g, " ").trim();
+    value
+      .replace(/\s+/g, " ")
+      .trim();
 
-  if (clean.length <= maxLength) {
+  if (
+    clean.length <= maxLength
+  ) {
     return clean;
   }
 
   return (
     clean.slice(
       0,
-      Math.max(0, maxLength - 1)
+      Math.max(
+        0,
+        maxLength - 1
+      )
     ) + "…"
   );
 }
 
-/**
- * Kompakte Kartenliste für normale
- * vollständige Commander-Decks.
- *
- * Statt langer Begründungen senden wir
- * nur die Informationen, die für eine
- * Deckanalyse wirklich wichtig sind:
- *
- * - Anzahl
- * - Kartenname
- * - Mana Value
- * - Rolle
- * - Kartentyp
- */
 function compactCardListText(
   deck: DeckRecord
 ): string {
-  if (deck.cards.length === 0) {
+  if (
+    deck.cards.length === 0
+  ) {
     return "Keine Karten im Deck.";
   }
 
@@ -341,7 +276,9 @@ function compactCardListText(
 
       return [
         `${card.count}x ${card.name}`,
-        `MV ${card.manaValue ?? 0}`,
+        `MV ${
+          card.manaValue ?? 0
+        }`,
         role,
         typeLine
       ].join(" | ");
@@ -349,20 +286,12 @@ function compactCardListText(
     .join("\n");
 }
 
-/**
- * Noch kompaktere Kartenliste.
- *
- * Diese Variante wird nur verwendet,
- * wenn ein ungewöhnlich großes Deck
- * trotz der normalen Komprimierung
- * noch nahe am Worker-Limit liegt.
- *
- * Alle Karten bleiben enthalten.
- */
 function ultraCompactCardListText(
   deck: DeckRecord
 ): string {
-  if (deck.cards.length === 0) {
+  if (
+    deck.cards.length === 0
+  ) {
     return "Keine Karten im Deck.";
   }
 
@@ -378,24 +307,27 @@ function ultraCompactCardListText(
     .join("\n");
 }
 
-/**
- * Lokale, deterministische Deckanalyse.
- *
- * Diese Analyse benötigt weder
- * Cloudflare noch Groq und bleibt
- * weiterhin unser Fallback.
- */
 export function generateDeckExplanation(
   deck: DeckRecord
 ): string {
-  const total =
+  const mainDeckTotal =
     countCards(deck);
+
+  const commanderCount =
+    deck.format === "commander"
+      ? deck.commanderIds.length
+      : 0;
+
+  const total =
+    mainDeckTotal +
+    commanderCount;
 
   const types =
     typeCounts(deck);
 
   const nonlands =
-    total - types.lands;
+    mainDeckTotal -
+    types.lands;
 
   const averageMv =
     averageManaValue(deck);
@@ -403,7 +335,8 @@ export function generateDeckExplanation(
   const targetManaValue =
     typeof deck.targetManaValue ===
     "number"
-      ? deck.targetManaValue.toFixed(1)
+      ? deck.targetManaValue
+          .toFixed(1)
       : "Nicht angegeben";
 
   return [
@@ -411,10 +344,18 @@ export function generateDeckExplanation(
     `Format: ${deck.format}`,
     "",
     `Karten gesamt: ${total}`,
-    `Länder: ${types.lands}`,
-    `Nichtländer: ${nonlands}`,
-    `Kreaturen: ${types.creatures}`,
-    `Artefakte: ${types.artifacts}`,
+    `Länder im Hauptdeck: ${
+      types.lands
+    }`,
+    `Nichtländer im Hauptdeck: ${
+      nonlands
+    }`,
+    `Kreaturen: ${
+      types.creatures
+    }`,
+    `Artefakte: ${
+      types.artifacts
+    }`,
     `Verzauberungen: ${
       types.enchantments
     }`,
@@ -441,27 +382,22 @@ export function generateDeckExplanation(
   ].join("\n");
 }
 
-/**
- * Erstellt die gemeinsame Faktenbasis
- * für die generative Analyse.
- */
 function analysisHeader(
   deck: DeckRecord
 ): string {
-  /*
-   * Sehr lange freie Decknotizen können
-   * die Anfrage unnötig aufblasen.
-   *
-   * 800 Zeichen reichen als zusätzlicher
-   * Kontext für die generative Analyse.
-   */
-  const notes = deck.notes
-    ? shorten(deck.notes, 800)
-    : "Keine Notizen vorhanden.";
+  const notes =
+    deck.notes
+      ? shorten(
+          deck.notes,
+          800
+        )
+      : "Keine Notizen vorhanden.";
 
   return [
     "TECHNISCHE DECKDATEN",
-    generateDeckExplanation(deck),
+    generateDeckExplanation(
+      deck
+    ),
     "",
     "COMMANDER-INFORMATION",
     commanderText(deck),
@@ -471,83 +407,377 @@ function analysisHeader(
   ].join("\n");
 }
 
-/**
- * Erstellt die Faktenbasis für Groq.
- *
- * Zuerst verwenden wir die normale
- * kompakte Kartenliste.
- *
- * Falls das Ergebnis trotzdem zu groß
- * wäre, verwenden wir automatisch die
- * Ultra-Kompakt-Darstellung.
- */
-function createAiAnalysis(
+function usedCopiesById(
   deck: DeckRecord
+): Map<string, number> {
+  const used =
+    new Map<string, number>();
+
+  for (
+    const card of [
+      ...deck.cards,
+      ...deck.sideboard
+    ]
+  ) {
+    used.set(
+      card.id,
+      (used.get(card.id) ?? 0) +
+        card.count
+    );
+  }
+
+  for (
+    const commanderId
+    of deck.commanderIds
+  ) {
+    used.set(
+      commanderId,
+      (
+        used.get(
+          commanderId
+        ) ?? 0
+      ) + 1
+    );
+  }
+
+  return used;
+}
+
+function usedCopiesByName(
+  deck: DeckRecord,
+  collection: CardRecord[]
+): Map<string, number> {
+  const used =
+    new Map<string, number>();
+
+  const nameById =
+    new Map(
+      collection.map(
+        card => [
+          card.id,
+          card.name
+        ]
+      )
+    );
+
+  for (
+    const card of [
+      ...deck.cards,
+      ...deck.sideboard
+    ]
+  ) {
+    const key =
+      card.name.toLowerCase();
+
+    used.set(
+      key,
+      (used.get(key) ?? 0) +
+        card.count
+    );
+  }
+
+  for (
+    const commanderId
+    of deck.commanderIds
+  ) {
+    const name =
+      nameById.get(
+        commanderId
+      );
+
+    if (!name) {
+      continue;
+    }
+
+    const key =
+      name.toLowerCase();
+
+    used.set(
+      key,
+      (used.get(key) ?? 0) + 1
+    );
+  }
+
+  return used;
+}
+
+function availableCollectionCards(
+  deck: DeckRecord,
+  collection: CardRecord[]
+): Array<{
+  card: CardRecord;
+  available: number;
+}> {
+  const usedById =
+    usedCopiesById(deck);
+
+  const usedByName =
+    usedCopiesByName(
+      deck,
+      collection
+    );
+
+  return collection
+    .filter(card =>
+      cardLegalForDeck(
+        card,
+        deck.format,
+        deck.colors
+      )
+    )
+    .map(card => {
+      const physicallyFree =
+        Math.max(
+          0,
+          card.count -
+            (
+              usedById.get(
+                card.id
+              ) ?? 0
+            )
+        );
+
+      const ruleLimit =
+        deckCopyLimit(
+          card,
+          deck.format
+        );
+
+      const alreadyUsedByName =
+        usedByName.get(
+          card.name.toLowerCase()
+        ) ?? 0;
+
+      const ruleFree =
+        Number.isFinite(
+          ruleLimit
+        )
+          ? Math.max(
+              0,
+              ruleLimit -
+                alreadyUsedByName
+            )
+          : physicallyFree;
+
+      return {
+        card,
+        available:
+          Math.min(
+            physicallyFree,
+            ruleFree
+          )
+      };
+    })
+    .filter(
+      item =>
+        item.available > 0
+    )
+    .sort(
+      (a, b) =>
+        a.card.manaValue -
+          b.card.manaValue ||
+        a.card.name.localeCompare(
+          b.card.name,
+          "en",
+          {
+            sensitivity:
+              "base"
+          }
+        )
+    );
+}
+
+function collectionLine(
+  card: CardRecord,
+  available: number
+): string {
+  return [
+    `${available}x frei: ${
+      card.name
+    }`,
+    `MV ${
+      card.manaValue ?? 0
+    }`,
+    shorten(
+      card.typeLine ??
+        "Unbekannt",
+      55
+    )
+  ].join(" | ");
+}
+
+function collectionContext(
+  deck: DeckRecord,
+  collection: CardRecord[],
+  maxLength: number
+): string {
+  const available =
+    availableCollectionCards(
+      deck,
+      collection
+    );
+
+  const header = [
+    "VERFÜGBARE LEGALE KARTEN AUS DER SAMMLUNG",
+    "Nur Karten in dieser Liste dürfen als sofort ausführbarer Austausch empfohlen werden.",
+    "Die angegebene Anzahl ist die noch freie physische Anzahl nach Abzug von Hauptdeck, Sideboard und Commander sowie unter Beachtung des Copy-Limits.",
+    "Wenn eine Karte nicht in dieser Liste steht, darf NICHT behauptet werden, dass sie im Besitz ist.",
+    ""
+  ].join("\n");
+
+  if (
+    available.length === 0
+  ) {
+    return (
+      header +
+      "Keine weitere passende Karte verfügbar."
+    );
+  }
+
+  const lines: string[] = [];
+
+  let length =
+    header.length;
+
+  let complete = true;
+
+  for (
+    const item of available
+  ) {
+    const line =
+      collectionLine(
+        item.card,
+        item.available
+      );
+
+    if (
+      length +
+        line.length +
+        1 >
+      maxLength
+    ) {
+      complete = false;
+      break;
+    }
+
+    lines.push(line);
+
+    length +=
+      line.length + 1;
+  }
+
+  const status =
+    complete
+      ? "SAMMLUNGSLISTE VOLLSTÄNDIG: JA"
+      : [
+          "SAMMLUNGSLISTE VOLLSTÄNDIG: NEIN",
+          "Wegen des sicheren Größenlimits wird nur ein Teil der verfügbaren Sammlung übertragen.",
+          "Aus dem Fehlen einer Karte in dieser gekürzten Liste darf NICHT geschlossen werden, dass sie nicht im Besitz ist."
+        ].join("\n");
+
+  return [
+    header,
+    status,
+    "",
+    ...lines
+  ].join("\n");
+}
+
+function recommendationRules(): string {
+  return [
+    "EMPFEHLUNGSREGELN",
+    "1. Konkrete sofortige Austausche dürfen nur mit Karten aus der Sektion VERFÜGBARE LEGALE KARTEN AUS DER SAMMLUNG vorgeschlagen werden.",
+    "2. Formuliere bei solchen Vorschlägen klar: 'Aus deiner Sammlung'.",
+    "3. Behaupte niemals, dass eine nicht aufgelistete Karte im Besitz ist.",
+    "4. Wenn die Sammlungsliste unvollständig ist, sage bei nicht aufgelisteten Karten nicht 'nicht im Besitz', sondern nur, dass ihr Besitz anhand der übertragenen Daten nicht bestätigt werden kann.",
+    "5. Karten außerhalb der Sammlungsliste dürfen in dieser Ausbaustufe NICHT als konkrete Kauf- oder Austauschkarte empfohlen werden.",
+    "6. Erfinde keine Karten und keine Karteneigenschaften."
+  ].join("\n");
+}
+
+function createAiAnalysis(
+  deck: DeckRecord,
+  collection: CardRecord[]
 ): string {
   const header =
     analysisHeader(deck);
 
-  const normalAnalysis = [
+  const rules =
+    recommendationRules();
+
+  const normalDeck = [
     header,
     "",
-    "KARTENLISTE",
-    compactCardListText(deck)
+    "KARTENLISTE DES DECKS",
+    compactCardListText(
+      deck
+    )
+  ].join("\n");
+
+  const compactDeck = [
+    header,
+    "",
+    "KARTENLISTE DES DECKS",
+    ultraCompactCardListText(
+      deck
+    )
+  ].join("\n");
+
+  const base =
+    normalDeck.length +
+      rules.length +
+      2 <=
+    MAX_ANALYSIS_LENGTH
+      ? normalDeck
+      : compactDeck;
+
+  const remainingForCollection =
+    Math.max(
+      0,
+      MAX_ANALYSIS_LENGTH -
+        base.length -
+        rules.length -
+        4
+    );
+
+  const collectionText =
+    collectionContext(
+      deck,
+      collection,
+      remainingForCollection
+    );
+
+  const analysis = [
+    base,
+    "",
+    collectionText,
+    "",
+    rules
   ].join("\n");
 
   if (
-    normalAnalysis.length <=
+    analysis.length >
     MAX_ANALYSIS_LENGTH
   ) {
-    return normalAnalysis;
+    throw new Error(
+      "Die Deck- und Sammlungsdaten sind selbst in kompakter Form zu groß für eine einzelne KI-Analyse."
+    );
   }
 
-  const compactAnalysis = [
-    header,
-    "",
-    "KARTENLISTE",
-    ultraCompactCardListText(deck)
-  ].join("\n");
-
-  if (
-    compactAnalysis.length <=
-    MAX_ANALYSIS_LENGTH
-  ) {
-    return compactAnalysis;
-  }
-
-  /*
-   * Dieser Fall sollte bei normalen
-   * 60-/100-Karten-Decks praktisch
-   * nicht auftreten.
-   *
-   * Wir behalten trotzdem einen Schutz,
-   * damit nie versehentlich eine riesige
-   * Anfrage an den Worker geschickt wird.
-   */
-  throw new Error(
-    "Die Deckdaten sind selbst in " +
-    "kompakter Form zu groß für eine " +
-    "einzelne KI-Analyse."
-  );
+  return analysis;
 }
 
-/**
- * Kurze Wartefunktion für einen
- * automatischen Retry.
- *
- * Promise bedeutet:
- * Der Browser wartet asynchron,
- * ohne die Oberfläche zu blockieren.
- */
 function wait(
   milliseconds: number
 ): Promise<void> {
-  return new Promise(resolve => {
-    window.setTimeout(
-      resolve,
-      milliseconds
-    );
-  });
+  return new Promise(
+    resolve => {
+      window.setTimeout(
+        resolve,
+        milliseconds
+      );
+    }
+  );
 }
 
 interface AiWorkerResponse {
@@ -555,9 +785,6 @@ interface AiWorkerResponse {
   error?: string;
 }
 
-/**
- * Liest die JSON-Antwort des Workers.
- */
 async function readWorkerResponse(
   response: Response
 ): Promise<AiWorkerResponse> {
@@ -567,28 +794,18 @@ async function readWorkerResponse(
     ) as AiWorkerResponse;
   } catch {
     throw new Error(
-      "Der KI-Dienst hat eine " +
-      "ungültige Antwort geliefert."
+      "Der KI-Dienst hat eine ungültige Antwort geliefert."
     );
   }
 }
 
-/**
- * Wandelt HTTP-Fehler in
- * verständliche Meldungen um.
- */
 function workerError(
   response: Response,
   data: AiWorkerResponse
 ): Error {
-  /*
-   * HTTP 429 =
-   * zu viele Anfragen.
-   *
-   * Hier machen wir absichtlich keinen
-   * sofortigen Retry.
-   */
-  if (response.status === 429) {
+  if (
+    response.status === 429
+  ) {
     return new Error(
       "Das KI-Limit wurde erreicht. " +
       "Pro angemeldetem Benutzer sind " +
@@ -598,7 +815,9 @@ function workerError(
     );
   }
 
-  if (response.status === 401) {
+  if (
+    response.status === 401
+  ) {
     return new Error(
       data.error ||
       "Die Anmeldung für den KI-Dienst " +
@@ -607,20 +826,21 @@ function workerError(
     );
   }
 
-  if (response.status === 403) {
+  if (
+    response.status === 403
+  ) {
     return new Error(
       data.error ||
-      "Der KI-Dienst hat diese Anfrage " +
-      "nicht erlaubt."
+      "Der KI-Dienst hat diese Anfrage nicht erlaubt."
     );
   }
 
-  if (response.status >= 500) {
+  if (
+    response.status >= 500
+  ) {
     return new Error(
       data.error ||
-      "Der KI-Dienst ist momentan " +
-      "nicht verfügbar. Bitte versuche " +
-      "es später erneut."
+      "Der KI-Dienst ist momentan nicht verfügbar."
     );
   }
 
@@ -630,13 +850,6 @@ function workerError(
   );
 }
 
-/**
- * Führt genau eine Anfrage an den
- * Cloudflare Worker aus.
- *
- * Der geheime Groq API-Key bleibt
- * ausschließlich im Worker.
- */
 async function requestAiExplanation(
   idToken: string,
   analysis: string
@@ -658,17 +871,16 @@ async function requestAiExplanation(
               `Bearer ${idToken}`
           },
 
-          body: JSON.stringify({
-            analysis
-          })
+          body:
+            JSON.stringify({
+              analysis
+            })
         }
       );
   } catch {
     throw new Error(
-      "Der KI-Dienst konnte nicht " +
-      "erreicht werden. Bitte prüfe " +
-      "deine Internetverbindung und " +
-      "versuche es erneut."
+      "Der KI-Dienst konnte nicht erreicht werden. " +
+      "Bitte prüfe deine Internetverbindung und versuche es erneut."
     );
   }
 
@@ -684,13 +896,6 @@ async function requestAiExplanation(
     );
   }
 
-  /*
-   * Eine leere Erklärung ist kein
-   * HTTP-Fehler.
-   *
-   * null signalisiert, dass ein
-   * automatischer Retry sinnvoll ist.
-   */
   if (
     typeof data.explanation !==
       "string" ||
@@ -702,26 +907,6 @@ async function requestAiExplanation(
   return data.explanation.trim();
 }
 
-/**
- * Ruft die generative Deckanalyse über
- * unseren Cloudflare Worker auf.
- *
- * Ablauf:
- *
- * Arcane Decksmith
- * → kompakte vollständige Deckdaten
- * → Firebase ID-Token
- * → Cloudflare Worker
- * → Groq
- * → deutsche Deckanalyse
- *
- * Bei leerer Groq-Antwort wird genau
- * ein zweiter Versuch ausgeführt.
- *
- * Danach übernimmt weiterhin der
- * lokale deterministische Fallback
- * in App.tsx.
- */
 export async function generateAiDeckExplanation(
   deck: DeckRecord
 ): Promise<string> {
@@ -730,28 +915,26 @@ export async function generateAiDeckExplanation(
 
   if (!user) {
     throw new Error(
-      "Du musst angemeldet sein, " +
-      "um die KI-Analyse zu verwenden."
+      "Du musst angemeldet sein, um die KI-Analyse zu verwenden."
     );
   }
 
-  /*
-   * getIdToken() liefert den
-   * zeitlich begrenzten
-   * Firebase-Anmeldenachweis.
-   */
-  const idToken =
-    await user.getIdToken();
+  const [
+    idToken,
+    collection
+  ] =
+    await Promise.all([
+      user.getIdToken(),
+      loadCollection(
+        user.uid
+      )
+    ]);
 
-  /*
-   * createAiAnalysis() komprimiert
-   * die vollständigen Deckdaten jetzt
-   * automatisch so weit, dass normale
-   * Commander-Decks unter dem
-   * Worker-Limit bleiben.
-   */
   const analysis =
-    createAiAnalysis(deck);
+    createAiAnalysis(
+      deck,
+      collection
+    );
 
   for (
     let attempt = 0;
@@ -780,9 +963,6 @@ export async function generateAiDeckExplanation(
   }
 
   throw new Error(
-    "Die generative KI hat auch " +
-    "nach einem automatischen " +
-    "zweiten Versuch keine " +
-    "Deckanalyse zurückgegeben."
+    "Die generative KI hat auch nach einem automatischen zweiten Versuch keine Deckanalyse zurückgegeben."
   );
 }
