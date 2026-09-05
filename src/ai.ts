@@ -75,7 +75,10 @@ function manaCurve(
 
     const index =
       Math.min(
-        Math.max(manaValue, 0),
+        Math.max(
+          manaValue,
+          0
+        ),
         7
       );
 
@@ -101,7 +104,9 @@ function typeCounts(
       (card.typeLine ?? "")
         .toLowerCase();
 
-    if (typeLine.includes("land")) {
+    if (
+      typeLine.includes("land")
+    ) {
       lands += card.count;
     }
 
@@ -199,7 +204,9 @@ function rolesText(
       roleCounts(deck)
     );
 
-  if (entries.length === 0) {
+  if (
+    entries.length === 0
+  ) {
     return "Keine Rollen vorhanden.";
   }
 
@@ -211,8 +218,39 @@ function rolesText(
     .join(", ");
 }
 
+function normalizeCardName(
+  value: string
+): string {
+  return value
+    .trim()
+    .toLowerCase();
+}
+
+function collectionCardForDeckCard(
+  deckCard:
+    DeckRecord["cards"][number],
+  collection: CardRecord[]
+): CardRecord | undefined {
+  return (
+    collection.find(
+      card =>
+        card.id === deckCard.id
+    ) ??
+    collection.find(
+      card =>
+        normalizeCardName(
+          card.name
+        ) ===
+        normalizeCardName(
+          deckCard.name
+        )
+    )
+  );
+}
+
 function commanderText(
-  deck: DeckRecord
+  deck: DeckRecord,
+  collection: CardRecord[]
 ): string {
   if (
     deck.commanderIds.length === 0
@@ -223,7 +261,34 @@ function commanderText(
     );
   }
 
-  return deck.commanderIds.join(", ");
+  return deck.commanderIds
+    .map(commanderId => {
+      const commander =
+        collection.find(
+          card =>
+            card.id ===
+            commanderId
+        );
+
+      if (!commander) {
+        return commanderId;
+      }
+
+      const oracle =
+        shorten(
+          commander.oracleText ??
+            "Kein Oracle-Text gespeichert.",
+          180
+        );
+
+      return [
+        commander.name,
+        commander.typeLine ??
+          "Unbekannter Kartentyp",
+        `Oracle: ${oracle}`
+      ].join(" | ");
+    })
+    .join("\n");
 }
 
 function shorten(
@@ -252,42 +317,68 @@ function shorten(
   );
 }
 
-function compactCardListText(
-  deck: DeckRecord
+function deckCardLine(
+  deckCard:
+    DeckRecord["cards"][number],
+  collection: CardRecord[],
+  oracleLength: number
 ): string {
+  const source =
+    collectionCardForDeckCard(
+      deckCard,
+      collection
+    );
+
+  const role =
+    deckCard.role?.trim() ||
+    "Keine";
+
+  const typeLine =
+    shorten(
+      source?.typeLine ??
+        deckCard.typeLine ??
+        "Unbekannt",
+      55
+    );
+
+  const parts = [
+    `${deckCard.count}x ${
+      deckCard.name
+    }`,
+    `MV ${
+      deckCard.manaValue ??
+      source?.manaValue ??
+      0
+    }`,
+    `Rolle ${role}`,
+    typeLine
+  ];
+
   if (
-    deck.cards.length === 0
+    oracleLength > 0
   ) {
-    return "Keine Karten im Deck.";
+    const oracleText =
+      source?.oracleText?.trim();
+
+    if (oracleText) {
+      parts.push(
+        `Oracle ${
+          shorten(
+            oracleText,
+            oracleLength
+          )
+        }`
+      );
+    }
   }
 
-  return deck.cards
-    .map(card => {
-      const role =
-        card.role?.trim() ||
-        "Keine";
-
-      const typeLine =
-        shorten(
-          card.typeLine ||
-            "Unbekannt",
-          70
-        );
-
-      return [
-        `${card.count}x ${card.name}`,
-        `MV ${
-          card.manaValue ?? 0
-        }`,
-        role,
-        typeLine
-      ].join(" | ");
-    })
-    .join("\n");
+  return parts.join(" | ");
 }
 
-function ultraCompactCardListText(
-  deck: DeckRecord
+function cardListText(
+  deck: DeckRecord,
+  collection: CardRecord[],
+  oracleLength: number
 ): string {
   if (
     deck.cards.length === 0
@@ -296,14 +387,13 @@ function ultraCompactCardListText(
   }
 
   return deck.cards
-    .map(card => {
-      const role =
-        card.role?.trim();
-
-      return role
-        ? `${card.count}x ${card.name} | ${role}`
-        : `${card.count}x ${card.name}`;
-    })
+    .map(card =>
+      deckCardLine(
+        card,
+        collection,
+        oracleLength
+      )
+    )
     .join("\n");
 }
 
@@ -383,7 +473,8 @@ export function generateDeckExplanation(
 }
 
 function analysisHeader(
-  deck: DeckRecord
+  deck: DeckRecord,
+  collection: CardRecord[]
 ): string {
   const notes =
     deck.notes
@@ -400,7 +491,10 @@ function analysisHeader(
     ),
     "",
     "COMMANDER-INFORMATION",
-    commanderText(deck),
+    commanderText(
+      deck,
+      collection
+    ),
     "",
     "NOTIZEN DES DECKBUILDERS",
     notes
@@ -421,7 +515,11 @@ function usedCopiesById(
   ) {
     used.set(
       card.id,
-      (used.get(card.id) ?? 0) +
+      (
+        used.get(
+          card.id
+        ) ?? 0
+      ) +
         card.count
     );
   }
@@ -471,7 +569,11 @@ function usedCopiesByName(
 
     used.set(
       key,
-      (used.get(key) ?? 0) +
+      (
+        used.get(
+          key
+        ) ?? 0
+      ) +
         card.count
     );
   }
@@ -494,7 +596,11 @@ function usedCopiesByName(
 
     used.set(
       key,
-      (used.get(key) ?? 0) + 1
+      (
+        used.get(
+          key
+        ) ?? 0
+      ) + 1
     );
   }
 
@@ -591,7 +697,7 @@ function collectionLine(
   card: CardRecord,
   available: number
 ): string {
-  return [
+  const parts = [
     `${available}x frei: ${
       card.name
     }`,
@@ -603,7 +709,23 @@ function collectionLine(
         "Unbekannt",
       55
     )
-  ].join(" | ");
+  ];
+
+  const oracleText =
+    card.oracleText?.trim();
+
+  if (oracleText) {
+    parts.push(
+      `Oracle ${
+        shorten(
+          oracleText,
+          140
+        )
+      }`
+    );
+  }
+
+  return parts.join(" | ");
 }
 
 function collectionContext(
@@ -634,7 +756,8 @@ function collectionContext(
     );
   }
 
-  const lines: string[] = [];
+  const lines:
+    string[] = [];
 
   let length =
     header.length;
@@ -691,7 +814,11 @@ function recommendationRules(): string {
     "3. Behaupte niemals, dass eine nicht aufgelistete Karte im Besitz ist.",
     "4. Wenn die Sammlungsliste unvollständig ist, sage bei nicht aufgelisteten Karten nicht 'nicht im Besitz', sondern nur, dass ihr Besitz anhand der übertragenen Daten nicht bestätigt werden kann.",
     "5. Karten außerhalb der Sammlungsliste dürfen in dieser Ausbaustufe NICHT als konkrete Kauf- oder Austauschkarte empfohlen werden.",
-    "6. Erfinde keine Karten und keine Karteneigenschaften."
+    "6. Erfinde keine Karten und keine Karteneigenschaften.",
+    "7. Nutze Oracle-Text und Rolle als wichtigste Grundlage für die Funktion einer Karte. Erfinde keine Funktion, die daraus nicht hervorgeht.",
+    "8. Ein Verbesserungsvorschlag soll möglichst ein echtes Austauschpaar nennen: eine konkrete Karte AUS DEM DECK entfernen und eine konkrete freie Karte AUS DER SAMMLUNG einsetzen.",
+    "9. Begründe den Austausch anhand der übermittelten Rollen, Kartentypen, Mana Values und Oracle-Texte.",
+    "10. Gib 'Keine passende Ersatzkarte aus deiner Sammlung verfügbar.' nur aus, wenn du tatsächlich kein sinnvolles Austauschpaar aus den übermittelten Daten begründen kannst."
   ].join("\n");
 }
 
@@ -700,17 +827,22 @@ function createAiAnalysis(
   collection: CardRecord[]
 ): string {
   const header =
-    analysisHeader(deck);
+    analysisHeader(
+      deck,
+      collection
+    );
 
   const rules =
     recommendationRules();
 
-  const normalDeck = [
+  const detailedDeck = [
     header,
     "",
     "KARTENLISTE DES DECKS",
-    compactCardListText(
-      deck
+    cardListText(
+      deck,
+      collection,
+      90
     )
   ].join("\n");
 
@@ -718,18 +850,39 @@ function createAiAnalysis(
     header,
     "",
     "KARTENLISTE DES DECKS",
-    ultraCompactCardListText(
-      deck
+    cardListText(
+      deck,
+      collection,
+      40
     )
   ].join("\n");
 
+  const minimalDeck = [
+    header,
+    "",
+    "KARTENLISTE DES DECKS",
+    cardListText(
+      deck,
+      collection,
+      0
+    )
+  ].join("\n");
+
+  const collectionReserve =
+    2800;
+
   const base =
-    normalDeck.length +
+    detailedDeck.length +
       rules.length +
-      2 <=
+      collectionReserve <=
     MAX_ANALYSIS_LENGTH
-      ? normalDeck
-      : compactDeck;
+      ? detailedDeck
+      : compactDeck.length +
+          rules.length +
+          collectionReserve <=
+        MAX_ANALYSIS_LENGTH
+        ? compactDeck
+        : minimalDeck;
 
   const remainingForCollection =
     Math.max(
