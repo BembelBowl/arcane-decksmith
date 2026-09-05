@@ -7,7 +7,7 @@ import { firebaseConfigured } from "./firebase";
 import { loadCollection, loadDecks, removeCard, removeDeck, saveCard, saveDeck, uidFromEmail } from "./db";
 import { autocomplete, getCard, getPrintings, imageFor, searchCards, scryfallUrl, normalizeCard, type ScryfallCard } from "./scryfall";
 import { buildDeck, cardLegalForDeck, commanderCandidates, commanderColorIdentity, commanderPairCandidates, deckCopyLimit, deckStats } from "./deckBuilder";
-import { deckText, download, parseList, toCsv } from "./importExport";
+import { deckText, download, parseCollectionCsv, parseDeckList, toCsv } from "./importExport";
 import { generateAiDeckExplanation, generateDeckExplanation } from "./ai";
 import type { CardRecord, DeckRecord, Format, GroupBy, ViewMode } from "./types";
 import "./styles.css";
@@ -716,6 +716,15 @@ function Collection({
   const [selected,setSelected]=useState<Set<string>>(new Set());
   const [importText,setImportText]=useState("");
   const [showImport,setShowImport]=useState(false);
+  const [importBusy,setImportBusy]=useState(false);
+  const [importPreview,setImportPreview]=useState<{
+    cards:CardRecord[];
+    requestedRows:number;
+    resolvedRows:number;
+    addedCopies:number;
+    source:"csv"|"text";
+    issues:string[];
+  }|null>(null);
 
   const filtered=useMemo(
     ()=>cards
@@ -760,36 +769,166 @@ function Collection({
     );
   },[filtered,group]);
 
-  const importList=async()=>{
-    const rows=parseList(importText);
-    const out=[...cards];
+  const resetImport=()=>{
+    setImportText("");
+    setImportPreview(null);
+  };
 
-    for(const r of rows){
-      try{
-        const matches=await searchCards(r.name);
-        const c=matches[0];
+  const closeImport=()=>{
+    resetImport();
+    setShowImport(false);
+  };
 
-        if(!c) {
-          continue;
-        }
-
-        const n=normalizeCard(c,r.count);
-        const old=out.find(x=>x.id===n.id);
-
-        if(old) {
-          old.count+=r.count;
-        } else {
-          out.push(n);
-        }
-      }catch{
-        // Fehlerhafte Importzeile überspringen.
-      }
+  const readImportFile=async(file:File|undefined)=>{
+    if(!file){
+      return;
     }
 
-    await onImport(out);
+    try{
+      const text=await file.text();
+      setImportText(text);
+      setImportPreview(null);
+    }catch{
+      setImportPreview({
+        cards:cards.map(card=>({...card})),
+        requestedRows:0,
+        resolvedRows:0,
+        addedCopies:0,
+        source:"text",
+        issues:["Die ausgewählte Datei konnte nicht gelesen werden."]
+      });
+    }
+  };
 
-    setImportText("");
-    setShowImport(false);
+  const previewCollectionImport=async()=>{
+    if(!importText.trim()){
+      return;
+    }
+
+    setImportBusy(true);
+    setImportPreview(null);
+
+    try{
+      const csvRows=parseCollectionCsv(importText);
+      const source:"csv"|"text"=csvRows.length>0?"csv":"text";
+
+      const parsedTextRows=parseDeckList(importText);
+
+      const rows=source==="csv"
+        ?csvRows
+        :parsedTextRows.flatMap(row=>
+            row.kind==="card"
+              ?[{
+                  name:row.name,
+                  count:row.count,
+                  set:row.set,
+                  collectorNumber:row.collectorNumber
+                }]
+              :[]
+          );
+
+      const next=cards.map(card=>({...card}));
+      const issues:string[]=[];
+      let resolvedRows=0;
+      let addedCopies=0;
+
+      for(const row of rows){
+        try{
+          const matches=await searchCards(row.name);
+
+          const exactNameMatches=matches.filter(
+            card=>card.name.toLowerCase()===row.name.toLowerCase()
+          );
+
+          let candidates=exactNameMatches.length>0
+            ?exactNameMatches
+            :matches;
+
+          if(row.set){
+            candidates=candidates.filter(
+              card=>card.set.toLowerCase()===row.set!.toLowerCase()
+            );
+          }
+
+          if(row.collectorNumber){
+            candidates=candidates.filter(
+              card=>card.collector_number.toLowerCase()===row.collectorNumber!.toLowerCase()
+            );
+          }
+
+          const chosen=candidates[0];
+
+          if(!chosen){
+            issues.push(
+              `${row.count}× ${row.name}: nicht bei Scryfall gefunden${row.set?` (Set ${row.set.toUpperCase()})`:""}.`
+            );
+            continue;
+          }
+
+          if(
+            candidates.length>1 &&
+            !row.set &&
+            !row.collectorNumber
+          ){
+            issues.push(
+              `${row.name}: mehrere Druckausgaben gefunden; verwendet wird ${chosen.set_name??chosen.set.toUpperCase()} #${chosen.collector_number}.`
+            );
+          }
+
+          if(
+            exactNameMatches.length===0 &&
+            chosen.name.toLowerCase()!==row.name.toLowerCase()
+          ){
+            issues.push(
+              `${row.name}: kein exakter Name gefunden; verwendet wird „${chosen.name}“.`
+            );
+          }
+
+          const normalized=normalizeCard(chosen,row.count);
+          const existing=next.find(card=>card.id===normalized.id);
+
+          if(existing){
+            existing.count+=row.count;
+            existing.updatedAt=Date.now();
+          }else{
+            next.push(normalized);
+          }
+
+          resolvedRows+=1;
+          addedCopies+=row.count;
+        }catch{
+          issues.push(
+            `${row.count}× ${row.name}: Scryfall-Abfrage fehlgeschlagen.`
+          );
+        }
+      }
+
+      setImportPreview({
+        cards:next,
+        requestedRows:rows.length,
+        resolvedRows,
+        addedCopies,
+        source,
+        issues
+      });
+    }finally{
+      setImportBusy(false);
+    }
+  };
+
+  const applyCollectionImport=async()=>{
+    if(!importPreview||importPreview.resolvedRows===0){
+      return;
+    }
+
+    setImportBusy(true);
+
+    try{
+      await onImport(importPreview.cards);
+      closeImport();
+    }finally{
+      setImportBusy(false);
+    }
   };
 
   return (
@@ -828,7 +967,13 @@ function Collection({
 
           <button
             className="primary"
-            onClick={()=>setShowImport(!showImport)}
+            onClick={()=>{
+              if(showImport){
+                closeImport();
+              }else{
+                setShowImport(true);
+              }
+            }}
           >
             Import
           </button>
@@ -837,30 +982,90 @@ function Collection({
 
       {showImport&&
         <div className="panel">
-          <h3>Textimport</h3>
+          <h3>Sammlung importieren</h3>
+
+          <p className="muted">
+            Du kannst eine Textliste oder eine CSV-Datei importieren. CSV-Dateien aus Arcane Decksmith enthalten Set und Collector Number und können Druckausgaben dadurch genauer zuordnen.
+          </p>
+
+          <label>
+            CSV- oder Textdatei auswählen
+
+            <input
+              type="file"
+              accept=".csv,text/csv,.txt,text/plain"
+              onChange={e=>void readImportFile(e.target.files?.[0])}
+            />
+          </label>
 
           <textarea
             value={importText}
-            onChange={e=>setImportText(e.target.value)}
+            onChange={e=>{
+              setImportText(e.target.value);
+              setImportPreview(null);
+            }}
             placeholder={"4 Lightning Bolt\n2x Counterspell\n1 Sol Ring"}
-            rows={6}
+            rows={8}
           />
 
           <div className="row">
             <button
               className="primary"
-              onClick={importList}
+              onClick={()=>void previewCollectionImport()}
+              disabled={importBusy||!importText.trim()}
             >
-              Import prüfen & übernehmen
+              {importBusy?"Import wird geprüft…":"Import prüfen"}
             </button>
 
             <button
               className="secondary"
-              onClick={()=>setShowImport(false)}
+              onClick={closeImport}
+              disabled={importBusy}
             >
               Abbrechen
             </button>
           </div>
+
+          {importPreview&&
+            <div className="ai-box">
+              <h3>Import-Zusammenfassung</h3>
+
+              <p>
+                Quelle: <strong>{importPreview.source==="csv"?"CSV":"Textliste"}</strong><br />
+                Zeilen erkannt: <strong>{importPreview.requestedRows}</strong><br />
+                Erfolgreich aufgelöst: <strong>{importPreview.resolvedRows}</strong><br />
+                Karten, die hinzugefügt werden: <strong>{importPreview.addedCopies}</strong>
+              </p>
+
+              {importPreview.issues.length>0&&
+                <div className="notice">
+                  <strong>Hinweise vor dem Übernehmen:</strong>
+
+                  <div className="deck-list">
+                    {importPreview.issues.map((issue,index)=>
+                      <div key={`${issue}-${index}`}>
+                        <span>{issue}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              }
+
+              {importPreview.resolvedRows===0&&
+                <div className="error">
+                  Es konnte keine Karte für den Import aufgelöst werden.
+                </div>
+              }
+
+              <button
+                className="primary"
+                onClick={()=>void applyCollectionImport()}
+                disabled={importBusy||importPreview.resolvedRows===0}
+              >
+                Import übernehmen
+              </button>
+            </div>
+          }
         </div>
       }
 
@@ -950,6 +1155,7 @@ function Collection({
     </section>
   );
 }
+
 
 function CollectionCard({
   card,
@@ -1513,7 +1719,7 @@ function Builder({
                   className="secondary"
                   onClick={()=>download(
                     `${result.name}.txt`,
-                    deckText(result)
+                    deckText(result,pool)
                   )}
                   disabled={!resultHasCards}
                 >
@@ -1581,6 +1787,14 @@ function Decks({
   const [editing,setEditing]=useState<DeckRecord|null>(null);
   const [importText,setImportText]=useState("");
   const [showImport,setShowImport]=useState(false);
+  const [importBusy,setImportBusy]=useState(false);
+  const [importPreview,setImportPreview]=useState<{
+    deck:DeckRecord;
+    requestedCards:number;
+    importedCards:number;
+    issues:string[];
+    formatDetectedBy:string;
+  }|null>(null);
 
   const newManualDeck=()=>{
     const now=Date.now();
@@ -1601,52 +1815,376 @@ function Decks({
     setEditing(deck);
   };
 
-  const importDeck=async()=>{
-    const rows=parseList(importText);
-    const cards:DeckRecord["cards"]=[];
+  const resetDeckImport=()=>{
+    setImportText("");
+    setImportPreview(null);
+  };
 
-    for(const r of rows){
-      const hit=
-        pool.find(
-          c=>c.name.toLowerCase()===r.name.toLowerCase()
-        ) ??
-        pool.find(
-          c=>c.name.toLowerCase().includes(r.name.toLowerCase())
-        );
+  const closeDeckImport=()=>{
+    resetDeckImport();
+    setShowImport(false);
+  };
 
-      if(hit){
-        cards.push({
-          id:hit.id,
-          name:hit.name,
-          count:Math.min(r.count,hit.count),
-          manaValue:hit.manaValue,
-          typeLine:hit.typeLine,
-          role:"Import",
-          reason:"Aus Deckliste importiert.",
-          available:hit.count
-        });
-      }
+  const readDeckImportFile=async(file:File|undefined)=>{
+    if(!file){
+      return;
     }
 
-    const d:DeckRecord={
-      id:crypto.randomUUID(),
-      name:"Importiertes Deck",
-      format:"standard",
-      commanderIds:[],
-      cards,
-      sideboard:[],
-      colors:[],
-      createdAt:Date.now(),
-      updatedAt:Date.now(),
-      notes:"Importierte Deckliste; bitte Format und Legalität im Editor prüfen."
+    try{
+      setImportText(await file.text());
+      setImportPreview(null);
+    }catch{
+      setImportPreview(null);
+    }
+  };
+
+  const previewDeckImport=()=>{
+    const parsed=parseDeckList(importText);
+    const explicitFormat=parsed.find(
+      (row):row is Extract<typeof parsed[number],{kind:"format"}>=>
+        row.kind==="format"
+    );
+
+    const cardRows=parsed.filter(
+      (row):row is Extract<typeof parsed[number],{kind:"card"}>=>
+        row.kind==="card"
+    );
+
+    if(cardRows.length===0){
+      setImportPreview(null);
+      return;
+    }
+
+    const commanderRows=cardRows.filter(row=>row.section==="commander");
+
+    const format:Format=
+      explicitFormat?.format??
+      (commanderRows.length>0?"commander":"standard");
+
+    const formatDetectedBy=
+      explicitFormat
+        ?"explizite Format-Zeile"
+        :commanderRows.length>0
+          ?"Commander-Sektion"
+          :"Standard als sichere Voreinstellung";
+
+    const issues:string[]=[];
+    const usedById=new Map<string,number>();
+    const mainCards:DeckRecord["cards"]=[];
+    const sideboard:DeckRecord["sideboard"]=[];
+    const commanderIds:string[]=[];
+
+    const exactMatches=(name:string)=>
+      pool.filter(
+        card=>card.name.toLowerCase()===name.toLowerCase()
+      );
+
+    const partialMatches=(name:string)=>{
+      const needle=name.toLowerCase();
+
+      return pool.filter(
+        card=>card.name.toLowerCase().includes(needle)
+      );
     };
 
-    if(cards.length){
-      await onSave(d);
+    const chooseCandidates=(row:Extract<typeof cardRows[number],{kind:"card"}>)=>{
+      let matches=exactMatches(row.name);
+      let partial=false;
+
+      if(matches.length===0){
+        matches=partialMatches(row.name);
+        partial=matches.length>0;
+      }
+
+      if(row.set){
+        matches=matches.filter(
+          card=>card.set.toLowerCase()===row.set!.toLowerCase()
+        );
+      }
+
+      if(row.collectorNumber){
+        matches=matches.filter(
+          card=>card.collectorNumber.toLowerCase()===row.collectorNumber!.toLowerCase()
+        );
+      }
+
+      return {matches,partial};
+    };
+
+    const addToList=(
+      target:DeckRecord["cards"],
+      source:CardRecord,
+      amount:number,
+      reason:string
+    )=>{
+      const existing=target.find(card=>card.id===source.id);
+
+      if(existing){
+        existing.count+=amount;
+        return;
+      }
+
+      target.push({
+        id:source.id,
+        name:source.name,
+        count:amount,
+        manaValue:source.manaValue,
+        typeLine:source.typeLine,
+        role:"Import",
+        reason,
+        available:source.count
+      });
+    };
+
+    const consumeRow=(
+      row:Extract<typeof cardRows[number],{kind:"card"}>,
+      target:DeckRecord["cards"],
+      reason:string
+    )=>{
+      const {matches,partial}=chooseCandidates(row);
+
+      if(matches.length===0){
+        issues.push(
+          `${row.count}× ${row.name}: nicht in deiner Sammlung gefunden.`
+        );
+        return 0;
+      }
+
+      if(partial){
+        issues.push(
+          `${row.name}: kein exakter Name in der Sammlung; Teiltreffer ${matches.map(card=>`„${card.name}“`).slice(0,3).join(", ")}.`
+        );
+      }
+
+      if(
+        matches.length>1 &&
+        !row.set &&
+        !row.collectorNumber
+      ){
+        issues.push(
+          `${row.name}: ${matches.length} Ausgaben in deiner Sammlung gefunden; verfügbare Exemplare werden über die Ausgaben verteilt.`
+        );
+      }
+
+      let remaining=row.count;
+      let imported=0;
+
+      for(const source of matches){
+        if(remaining<=0){
+          break;
+        }
+
+        const alreadyUsed=usedById.get(source.id)??0;
+        const free=Math.max(0,source.count-alreadyUsed);
+        const amount=Math.min(remaining,free);
+
+        if(amount<=0){
+          continue;
+        }
+
+        addToList(
+          target,
+          source,
+          amount,
+          reason
+        );
+
+        usedById.set(
+          source.id,
+          alreadyUsed+amount
+        );
+
+        remaining-=amount;
+        imported+=amount;
+      }
+
+      if(remaining>0){
+        issues.push(
+          `${row.name}: ${row.count} angefordert, aber nur ${imported} Exemplare in deiner Sammlung verfügbar. Es fehlen ${remaining}.`
+        );
+      }
+
+      return imported;
+    };
+
+    if(format==="commander"){
+      const rowsForCommander=commanderRows.slice(0,2);
+
+      if(commanderRows.length>2){
+        issues.push(
+          `Die Commander-Sektion enthält ${commanderRows.length} Einträge. Arcane Decksmith übernimmt höchstens zwei Commander.`
+        );
+      }
+
+      for(const row of rowsForCommander){
+        const {matches,partial}=chooseCandidates(row);
+        const source=matches[0];
+
+        if(!source){
+          issues.push(
+            `Commander „${row.name}“ wurde nicht in deiner Sammlung gefunden.`
+          );
+          continue;
+        }
+
+        if(partial){
+          issues.push(
+            `Commander „${row.name}“ wurde nur als Teiltreffer „${source.name}“ gefunden.`
+          );
+        }
+
+        const used=usedById.get(source.id)??0;
+
+        if(source.count-used<1){
+          issues.push(
+            `Commander „${source.name}“ ist in der Sammlung nicht mehr als freies Exemplar verfügbar.`
+          );
+          continue;
+        }
+
+        commanderIds.push(source.id);
+        usedById.set(source.id,used+1);
+      }
+
+      if(commanderIds.length===0){
+        issues.push(
+          "Commander-Format erkannt, aber kein Commander konnte aus deiner Sammlung aufgelöst werden. Bitte nach dem Import im Editor einen Commander wählen."
+        );
+      }
+
+      if(commanderIds.length===1){
+        const primary=pool.find(card=>card.id===commanderIds[0]);
+
+        if(primary&&!commanderCandidates(pool).some(card=>card.id===primary.id)){
+          issues.push(
+            `„${primary.name}“ ist nach den gespeicherten Scryfall-Daten kein zulässiger Commander-Kandidat.`
+          );
+        }
+      }
+
+      if(commanderIds.length===2){
+        const primary=pool.find(card=>card.id===commanderIds[0]);
+        const second=pool.find(card=>card.id===commanderIds[1]);
+
+        if(
+          primary &&
+          second &&
+          !commanderPairCandidates(pool,primary).some(card=>card.id===second.id)
+        ){
+          issues.push(
+            `Die Commander-Kombination „${primary.name}“ + „${second.name}“ wurde nicht als zulässiges Partner-/Background-/Doctor's-Companion-Paar erkannt.`
+          );
+        }
+      }
+    }else if(commanderRows.length>0){
+      issues.push(
+        "Die Liste enthält eine Commander-Sektion, aber das Format ist explizit Standard. Diese Karten werden deshalb dem Hauptdeck zugeordnet."
+      );
     }
 
-    setImportText("");
-    setShowImport(false);
+    const mainRows=cardRows.filter(row=>
+      row.section==="main" ||
+      (format==="standard"&&row.section==="commander")
+    );
+
+    const sideRows=cardRows.filter(row=>row.section==="sideboard");
+
+    for(const row of mainRows){
+      consumeRow(
+        row,
+        mainCards,
+        "Aus Deckliste ins Hauptdeck importiert."
+      );
+    }
+
+    for(const row of sideRows){
+      consumeRow(
+        row,
+        sideboard,
+        "Aus Deckliste ins Sideboard importiert."
+      );
+    }
+
+    const commanders=commanderIds
+      .map(id=>pool.find(card=>card.id===id))
+      .filter((card):card is CardRecord=>Boolean(card));
+
+    const colors=
+      format==="commander"
+        ?commanderColorIdentity(commanders)
+        :Array.from(
+            new Set(
+              mainCards.flatMap(deckCard=>
+                pool.find(card=>card.id===deckCard.id)?.colorIdentity??[]
+              )
+            )
+          );
+
+    const requestedCards=cardRows.reduce(
+      (sum,row)=>sum+row.count,
+      0
+    );
+
+    const importedMain=mainCards.reduce(
+      (sum,card)=>sum+card.count,
+      0
+    );
+
+    const importedSide=sideboard.reduce(
+      (sum,card)=>sum+card.count,
+      0
+    );
+
+    const importedCards=
+      importedMain+
+      importedSide+
+      commanderIds.length;
+
+    const now=Date.now();
+
+    const deck:DeckRecord={
+      id:crypto.randomUUID(),
+      name:"Importiertes Deck",
+      format,
+      commanderIds,
+      cards:mainCards,
+      sideboard,
+      colors,
+      createdAt:now,
+      updatedAt:now,
+      notes:
+        `Importierte Deckliste: ${importedCards} von ${requestedCards} angeforderten Karten aus der Sammlung aufgelöst.`
+    };
+
+    setImportPreview({
+      deck,
+      requestedCards,
+      importedCards,
+      issues,
+      formatDetectedBy
+    });
+  };
+
+  const applyDeckImport=async()=>{
+    if(
+      !importPreview ||
+      (
+        importPreview.deck.cards.length===0 &&
+        importPreview.deck.commanderIds.length===0 &&
+        importPreview.deck.sideboard.length===0
+      )
+    ){
+      return;
+    }
+
+    setImportBusy(true);
+
+    try{
+      await onSave(importPreview.deck);
+      closeDeckImport();
+    }finally{
+      setImportBusy(false);
+    }
   };
 
   if(editing){
@@ -1684,7 +2222,13 @@ function Decks({
 
           <button
             className="secondary"
-            onClick={()=>setShowImport(!showImport)}
+            onClick={()=>{
+              if(showImport){
+                closeDeckImport();
+              }else{
+                setShowImport(true);
+              }
+            }}
           >
             Deckliste importieren
           </button>
@@ -1696,31 +2240,114 @@ function Decks({
           <h3>Deckliste importieren</h3>
 
           <p className="muted">
-            Format: „4 Lightning Bolt“. Die Karten werden gegen deine Sammlung aufgelöst.
+            Unterstützt werden Format-Zeilen sowie die Bereiche Commander, Deck/Mainboard und Sideboard. Vor dem Speichern siehst du fehlende Karten, Fehlmengen und mehrdeutige Ausgaben.
           </p>
+
+          <label>
+            Textdatei auswählen
+
+            <input
+              type="file"
+              accept=".txt,text/plain"
+              onChange={e=>void readDeckImportFile(e.target.files?.[0])}
+            />
+          </label>
 
           <textarea
             value={importText}
-            onChange={e=>setImportText(e.target.value)}
-            rows={8}
-            placeholder={"4 Lightning Bolt\n4 Counterspell\n20 Island"}
+            onChange={e=>{
+              setImportText(e.target.value);
+              setImportPreview(null);
+            }}
+            rows={12}
+            placeholder={"Format: Commander\n\nCommander\n1 Cloud, Midgar Mercenary\n\nDeck\n1 Sol Ring\n1 Command Tower\n\nSideboard\n1 Example Card"}
           />
 
           <div className="row">
             <button
               className="primary"
-              onClick={importDeck}
+              onClick={previewDeckImport}
+              disabled={!importText.trim()||importBusy}
             >
-              Importieren
+              Import prüfen
             </button>
 
             <button
               className="secondary"
-              onClick={()=>setShowImport(false)}
+              onClick={closeDeckImport}
+              disabled={importBusy}
             >
               Abbrechen
             </button>
           </div>
+
+          {importPreview&&
+            <div className="ai-box">
+              <h3>Import-Vorschau</h3>
+
+              <p>
+                Format: <strong>{importPreview.deck.format==="commander"?"Commander":"Standard"}</strong><br />
+                Erkannt durch: <strong>{importPreview.formatDetectedBy}</strong><br />
+                Angefordert: <strong>{importPreview.requestedCards}</strong> Karten<br />
+                Aus deiner Sammlung aufgelöst: <strong>{importPreview.importedCards}</strong> Karten<br />
+                Hauptdeck: <strong>{importPreview.deck.cards.reduce((sum,card)=>sum+card.count,0)}</strong><br />
+                Commander: <strong>{importPreview.deck.commanderIds.length}</strong><br />
+                Sideboard: <strong>{importPreview.deck.sideboard.reduce((sum,card)=>sum+card.count,0)}</strong>
+              </p>
+
+              {importPreview.deck.commanderIds.length>0&&
+                <div className="commander-card">
+                  <strong>Commander</strong>
+
+                  {importPreview.deck.commanderIds.map(id=>{
+                    const commander=pool.find(card=>card.id===id);
+
+                    return commander
+                      ?<span key={id}>{commander.name}</span>
+                      :null;
+                  })}
+                </div>
+              }
+
+              {importPreview.issues.length>0&&
+                <div className="notice">
+                  <strong>Hinweise vor dem Speichern:</strong>
+
+                  <div className="deck-list">
+                    {importPreview.issues.map((issue,index)=>
+                      <div key={`${issue}-${index}`}>
+                        <span>{issue}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              }
+
+              {importPreview.importedCards===0&&
+                <div className="error">
+                  Keine Karte aus der Liste konnte gegen deine Sammlung aufgelöst werden.
+                </div>
+              }
+
+              <div className="row">
+                <button
+                  className="primary"
+                  onClick={()=>void applyDeckImport()}
+                  disabled={importBusy||importPreview.importedCards===0}
+                >
+                  {importBusy?"Wird gespeichert…":"Import übernehmen"}
+                </button>
+
+                <button
+                  className="secondary"
+                  onClick={()=>setImportPreview(null)}
+                  disabled={importBusy}
+                >
+                  Liste bearbeiten
+                </button>
+              </div>
+            </div>
+          }
         </div>
       }
 
@@ -1750,7 +2377,10 @@ function Decks({
 
               <button
                 className="secondary"
-                onClick={()=>download(`${d.name}.txt`,deckText(d))}
+                onClick={()=>download(
+                  `${d.name}.txt`,
+                  deckText(d,pool)
+                )}
               >
                 Export
               </button>
@@ -1768,6 +2398,7 @@ function Decks({
     </section>
   );
 }
+
 
 function DeckEditor({
   deck,
