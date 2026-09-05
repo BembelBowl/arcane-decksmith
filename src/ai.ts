@@ -1,384 +1,399 @@
 import { auth } from "./firebase";
-import { DeckRecord } from "./types";
+import type { DeckRecord } from "./types";
 
-type RoleCounts = Record<string, number>;
+const AI_WORKER_URL =
+  "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
 
-function countCards(
-  deck: DeckRecord,
-  predicate: (card: DeckRecord["cards"][number]) => boolean
-): number {
-  return deck.cards
-    .filter(predicate)
-    .reduce((sum, card) => sum + card.count, 0);
+/**
+ * Zählt alle Karten eines Decks.
+ * Die Kartenmenge einer Karte wird dabei berücksichtigt.
+ */
+function countCards(deck: DeckRecord): number {
+  return deck.cards.reduce(
+    (total, entry) => total + entry.quantity,
+    0
+  );
 }
 
-function roleCounts(deck: DeckRecord): RoleCounts {
-  const result: RoleCounts = {};
-
-  for (const card of deck.cards) {
-    const role = card.role?.trim() || "Sonstiges";
-    result[role] = (result[role] ?? 0) + card.count;
-  }
-
-  return result;
-}
-
-function findRole(
-  roles: RoleCounts,
-  terms: string[]
-): number {
-  return Object.entries(roles)
-    .filter(([role]) =>
-      terms.some(term =>
-        role.toLowerCase().includes(term.toLowerCase())
-      )
-    )
-    .reduce((sum, [, count]) => sum + count, 0);
-}
-
+/**
+ * Berechnet den durchschnittlichen Mana Value aller Nichtland-Karten.
+ */
 function averageManaValue(deck: DeckRecord): number {
-  let totalMana = 0;
-  let totalCards = 0;
+  let totalManaValue = 0;
+  let cardCount = 0;
 
-  for (const card of deck.cards) {
-    if (/land/i.test(card.typeLine ?? "")) {
+  for (const entry of deck.cards) {
+    const card = entry.card;
+
+    if (card.typeLine?.includes("Land")) {
       continue;
     }
 
-    totalMana += (card.manaValue ?? 0) * card.count;
-    totalCards += card.count;
+    const manaValue =
+      typeof card.cmc === "number" ? card.cmc : 0;
+
+    totalManaValue += manaValue * entry.quantity;
+    cardCount += entry.quantity;
   }
 
-  if (totalCards === 0) return 0;
+  if (cardCount === 0) {
+    return 0;
+  }
 
-  return Number((totalMana / totalCards).toFixed(2));
+  return totalManaValue / cardCount;
 }
 
-function manaCurve(deck: DeckRecord) {
-  const curve = {
-    "0–1": 0,
-    "2": 0,
-    "3": 0,
-    "4": 0,
-    "5+": 0
-  };
+/**
+ * Ermittelt eine einfache Mana-Kurve.
+ *
+ * 0 = Mana Value 0
+ * 1 = Mana Value 1
+ * ...
+ * 7 = Mana Value 7 oder höher
+ */
+function manaCurve(deck: DeckRecord): number[] {
+  const curve = Array(8).fill(0) as number[];
 
-  for (const card of deck.cards) {
-    if (/land/i.test(card.typeLine ?? "")) {
+  for (const entry of deck.cards) {
+    const card = entry.card;
+
+    if (card.typeLine?.includes("Land")) {
       continue;
     }
 
-    const mv = card.manaValue ?? 0;
+    const manaValue =
+      typeof card.cmc === "number"
+        ? Math.floor(card.cmc)
+        : 0;
 
-    let bucket: keyof typeof curve;
+    const index = Math.min(
+      Math.max(manaValue, 0),
+      7
+    );
 
-    if (mv <= 1) bucket = "0–1";
-    else if (mv === 2) bucket = "2";
-    else if (mv === 3) bucket = "3";
-    else if (mv === 4) bucket = "4";
-    else bucket = "5+";
-
-    curve[bucket] += card.count;
+    curve[index] += entry.quantity;
   }
 
   return curve;
 }
 
-function largestCurveArea(
-  curve: ReturnType<typeof manaCurve>
-): string {
-  const entries = Object.entries(curve);
+/**
+ * Zählt wichtige Kartentypen.
+ */
+function typeCounts(deck: DeckRecord) {
+  let lands = 0;
+  let creatures = 0;
+  let artifacts = 0;
+  let enchantments = 0;
+  let instants = 0;
+  let sorceries = 0;
+  let planeswalkers = 0;
 
-  if (!entries.length) return "nicht erkennbar";
+  for (const entry of deck.cards) {
+    const typeLine = entry.card.typeLine ?? "";
+    const quantity = entry.quantity;
 
-  return entries.sort((a, b) => b[1] - a[1])[0][0];
+    if (typeLine.includes("Land")) {
+      lands += quantity;
+    }
+
+    if (typeLine.includes("Creature")) {
+      creatures += quantity;
+    }
+
+    if (typeLine.includes("Artifact")) {
+      artifacts += quantity;
+    }
+
+    if (typeLine.includes("Enchantment")) {
+      enchantments += quantity;
+    }
+
+    if (typeLine.includes("Instant")) {
+      instants += quantity;
+    }
+
+    if (typeLine.includes("Sorcery")) {
+      sorceries += quantity;
+    }
+
+    if (typeLine.includes("Planeswalker")) {
+      planeswalkers += quantity;
+    }
+  }
+
+  return {
+    lands,
+    creatures,
+    artifacts,
+    enchantments,
+    instants,
+    sorceries,
+    planeswalkers
+  };
 }
 
-function createStrengths(
-  lands: number,
-  creatures: number,
-  ramp: number,
-  draw: number,
-  interaction: number,
-  avgMv: number
-): string[] {
-  const strengths: string[] = [];
+/**
+ * Erkennt einfache strategische Rollen anhand des Oracle-Texts.
+ *
+ * Das ist bewusst eine Heuristik:
+ * Sie liefert der Gen-AI Fakten und Anhaltspunkte,
+ * ohne die KI selbst Zahlen erraten zu lassen.
+ */
+function roleCounts(deck: DeckRecord) {
+  let ramp = 0;
+  let draw = 0;
+  let interaction = 0;
+  let boardWipes = 0;
+  let graveyard = 0;
 
-  if (ramp >= 8) {
-    strengths.push(
-      `Mit ${ramp} Ramp-Karten besitzt das Deck eine gute Mana-Beschleunigung.`
-    );
+  for (const entry of deck.cards) {
+    const text =
+      entry.card.oracleText?.toLowerCase() ?? "";
+
+    const quantity = entry.quantity;
+
+    if (
+      text.includes("add {") ||
+      text.includes("search your library for a basic land") ||
+      text.includes("search your library for a land card")
+    ) {
+      ramp += quantity;
+    }
+
+    if (
+      text.includes("draw a card") ||
+      text.includes("draw two cards") ||
+      text.includes("draw three cards")
+    ) {
+      draw += quantity;
+    }
+
+    if (
+      text.includes("destroy target") ||
+      text.includes("exile target") ||
+      text.includes("counter target")
+    ) {
+      interaction += quantity;
+    }
+
+    if (
+      text.includes("destroy all") ||
+      text.includes("exile all")
+    ) {
+      boardWipes += quantity;
+    }
+
+    if (
+      text.includes("graveyard") ||
+      text.includes("from your graveyard")
+    ) {
+      graveyard += quantity;
+    }
   }
 
-  if (draw >= 7) {
-    strengths.push(
-      `${draw} Karten für Kartennachschub helfen dabei, im Spiel nicht zu schnell die Ressourcen zu verlieren.`
-    );
-  }
-
-  if (interaction >= 7) {
-    strengths.push(
-      `${interaction} Interaktionskarten geben dem Deck gute Möglichkeiten, auf gegnerische Bedrohungen zu reagieren.`
-    );
-  }
-
-  if (creatures >= 20) {
-    strengths.push(
-      `Mit ${creatures} Kreaturen hat das Deck eine deutliche Präsenz auf dem Spielfeld.`
-    );
-  }
-
-  if (avgMv > 0 && avgMv <= 3.2) {
-    strengths.push(
-      `Der durchschnittliche Mana Value von ${avgMv} spricht für eine vergleichsweise niedrige und gut spielbare Mana-Kurve.`
-    );
-  }
-
-  if (lands > 0 && strengths.length === 0) {
-    strengths.push(
-      "Die Deckstruktur ist grundsätzlich spielbar, sollte aber nach einigen Testspielen weiter abgestimmt werden."
-    );
-  }
-
-  return strengths;
+  return {
+    ramp,
+    draw,
+    interaction,
+    boardWipes,
+    graveyard
+  };
 }
 
-function createWeaknesses(
-  deck: DeckRecord,
-  lands: number,
-  ramp: number,
-  draw: number,
-  interaction: number,
-  avgMv: number
-): string[] {
-  const weaknesses: string[] = [];
+/**
+ * Erstellt eine kompakte Kartenliste für die KI.
+ *
+ * Oracle-Texte werden absichtlich mitgeschickt,
+ * damit die KI echte Karteneffekte und Synergien
+ * erklären kann, statt Karten zu erfinden.
+ */
+function createCardList(deck: DeckRecord): string {
+  return deck.cards
+    .map(entry => {
+      const card = entry.card;
 
-  if (deck.format === "commander") {
-    if (lands < 33) {
-      weaknesses.push(
-        `Mit nur ${lands} Ländern könnte das Deck Schwierigkeiten haben, zuverlässig genug Mana zu ziehen.`
-      );
-    }
+      const oracleText =
+        card.oracleText
+          ?.replace(/\s+/g, " ")
+          .trim() || "Kein Oracle-Text vorhanden";
 
-    if (lands > 42) {
-      weaknesses.push(
-        `Mit ${lands} Ländern ist der Länderanteil relativ hoch; möglicherweise können einige davon durch wirkungsvolle Nichtländer ersetzt werden.`
-      );
-    }
-
-    if (ramp < 7) {
-      weaknesses.push(
-        `Nur ${ramp} Ramp-Karten könnten für Commander etwas wenig Mana-Beschleunigung sein.`
-      );
-    }
-
-    if (draw < 6) {
-      weaknesses.push(
-        `Mit nur ${draw} Karten für Kartennachschub könnte dem Deck in längeren Spielen die Hand ausgehen.`
-      );
-    }
-
-    if (interaction < 6) {
-      weaknesses.push(
-        `Mit nur ${interaction} Interaktionskarten könnte das Deck Schwierigkeiten gegen gegnerische Schlüsselpermanents haben.`
-      );
-    }
-  }
-
-  if (deck.format === "standard") {
-    if (lands < 20) {
-      weaknesses.push(
-        `Mit ${lands} Ländern könnte die Manabasis für ein Standard-Deck zu knapp sein.`
-      );
-    }
-
-    if (lands > 28) {
-      weaknesses.push(
-        `Mit ${lands} Ländern könnte das Deck häufiger zu viele Länder ziehen.`
-      );
-    }
-
-    if (interaction < 4) {
-      weaknesses.push(
-        "Das Deck besitzt nur wenig Interaktion mit dem gegnerischen Spielplan."
-      );
-    }
-  }
-
-  if (avgMv >= 4) {
-    weaknesses.push(
-      `Der durchschnittliche Mana Value von ${avgMv} ist relativ hoch. Das Deck könnte dadurch langsam ins Spiel kommen.`
-    );
-  }
-
-  if (weaknesses.length === 0) {
-    weaknesses.push(
-      "Aus den reinen Deckdaten ist keine besonders auffällige strukturelle Schwäche erkennbar. Testspiele bleiben für die Feinabstimmung wichtig."
-    );
-  }
-
-  return weaknesses;
+      return [
+        `${entry.quantity}x ${card.name}`,
+        `Typ: ${card.typeLine ?? "Unbekannt"}`,
+        `Mana Value: ${card.cmc ?? 0}`,
+        `Text: ${oracleText}`
+      ].join(" | ");
+    })
+    .join("\n");
 }
 
+/**
+ * Lokale, deterministische Deckanalyse.
+ *
+ * Diese Funktion benötigt keine externe KI.
+ * Sie dient gleichzeitig als:
+ *
+ * 1. Faktenbasis für Groq
+ * 2. Fallback, falls Groq oder Cloudflare ausfällt
+ */
 export function generateDeckExplanation(
   deck: DeckRecord
 ): string {
-  const mainDeckCards = deck.cards.reduce(
-    (sum, card) => sum + card.count,
-    0
-  );
-
-  const commanderCount =
-    deck.format === "commander"
-      ? deck.commanderIds?.length ?? 0
-      : 0;
-
-  const total = mainDeckCards + commanderCount;
-
-  const lands = countCards(
-    deck,
-    card => /land/i.test(card.typeLine ?? "")
-  );
-
-  const creatures = countCards(
-    deck,
-    card => /creature/i.test(card.typeLine ?? "")
-  );
-
-  const nonlands = mainDeckCards - lands;
-  const avgMv = averageManaValue(deck);
+  const total = countCards(deck);
+  const types = typeCounts(deck);
   const roles = roleCounts(deck);
-
-  const ramp = findRole(
-    roles,
-    ["ramp", "mana", "beschleunigung"]
-  );
-
-  const draw = findRole(
-    roles,
-    ["draw", "card draw", "kartenziehen", "karten ziehen"]
-  );
-
-  const interaction = findRole(
-    roles,
-    [
-      "interaction",
-      "interaktion",
-      "removal",
-      "counter",
-      "entfernung"
-    ]
-  );
-
-  const tutors = findRole(
-    roles,
-    ["tutor", "suche"]
-  );
-
   const curve = manaCurve(deck);
-  const curvePeak = largestCurveArea(curve);
+  const avgMana = averageManaValue(deck);
 
-  const strengths = createStrengths(
-    lands,
-    creatures,
-    ramp,
-    draw,
-    interaction,
-    avgMv
-  );
+  const nonlands = total - types.lands;
 
-  const weaknesses = createWeaknesses(
-    deck,
-    lands,
-    ramp,
-    draw,
-    interaction,
-    avgMv
-  );
+  const curveText = curve
+    .map((count, index) => {
+      const label =
+        index === 7 ? "7+" : String(index);
 
-  const roleParts: string[] = [];
+      return `MV ${label}: ${count}`;
+    })
+    .join(", ");
 
-  if (ramp > 0) roleParts.push(`${ramp} Ramp`);
-  if (draw > 0) roleParts.push(`${draw} Kartennachschub`);
-  if (interaction > 0) {
-    roleParts.push(`${interaction} Interaktion`);
-  }
-  if (tutors > 0) roleParts.push(`${tutors} Tutoren`);
-
-  const roleText =
-    roleParts.length > 0
-      ? roleParts.join(", ")
-      : "keine eindeutig klassifizierten Spezialrollen";
+  const commanderText =
+    deck.commander?.name
+      ? deck.commander.name
+      : "Kein Commander angegeben";
 
   return [
-    `DECKANALYSE – ${deck.name}`,
+    `Deck: ${deck.name}`,
+    `Format: ${deck.format}`,
+    `Commander: ${commanderText}`,
     "",
-    `Format: ${
-      deck.format === "commander"
-        ? "Commander"
-        : "Standard"
-    }`,
-    `Karten: ${total} insgesamt · ${lands} Länder · ${nonlands} Nichtländer`,
-    `Kreaturen: ${creatures}`,
-    `Durchschnittlicher Mana Value: ${avgMv}`,
+    `Karten gesamt: ${total}`,
+    `Länder: ${types.lands}`,
+    `Nichtländer: ${nonlands}`,
+    `Kreaturen: ${types.creatures}`,
+    `Artefakte: ${types.artifacts}`,
+    `Verzauberungen: ${types.enchantments}`,
+    `Spontanzauber: ${types.instants}`,
+    `Hexereien: ${types.sorceries}`,
+    `Planeswalker: ${types.planeswalkers}`,
+    `Durchschnittlicher Mana Value: ${avgMana.toFixed(2)}`,
+    `Ziel-Mana-Value: ${deck.targetManaValue}`,
     "",
-    "MANA-KURVE",
-    `MV 0–1: ${curve["0–1"]}`,
-    `MV 2: ${curve["2"]}`,
-    `MV 3: ${curve["3"]}`,
-    `MV 4: ${curve["4"]}`,
-    `MV 5+: ${curve["5+"]}`,
-    `Der größte Teil der Mana-Kurve liegt bei MV ${curvePeak}.`,
+    "Mana-Kurve:",
+    curveText,
     "",
-    "KARTENROLLEN",
-    roleText,
-    "",
-    "STÄRKEN",
-    ...strengths.map(text => `• ${text}`),
-    "",
-    "MÖGLICHE SCHWÄCHEN",
-    ...weaknesses.map(text => `• ${text}`)
+    "Erkannte Kartenrollen:",
+    `Ramp: ${roles.ramp}`,
+    `Kartennachschub: ${roles.draw}`,
+    `Interaktion: ${roles.interaction}`,
+    `Boardwipes: ${roles.boardWipes}`,
+    `Friedhofsbezug: ${roles.graveyard}`
   ].join("\n");
 }
 
-const AI_WORKER_URL =
-  "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
+/**
+ * Erstellt die ausführliche Faktenbasis,
+ * die an unseren Cloudflare Worker gesendet wird.
+ */
+function createAiAnalysis(deck: DeckRecord): string {
+  const statistics =
+    generateDeckExplanation(deck);
 
+  const cards =
+    createCardList(deck);
+
+  return [
+    statistics,
+    "",
+    "Karten im Deck:",
+    cards
+  ].join("\n");
+}
+
+/**
+ * Ruft die echte generative KI über unseren
+ * Cloudflare Worker auf.
+ *
+ * Der Groq API-Key befindet sich NICHT hier.
+ * Er bleibt als Secret im Cloudflare Worker.
+ */
 export async function generateAiDeckExplanation(
   deck: DeckRecord
 ): Promise<string> {
   const user = auth?.currentUser;
 
   if (!user) {
-    throw new Error("Du musst angemeldet sein, um die KI-Analyse zu verwenden.");
-  }
-
-  const idToken = await user.getIdToken();
-
-  const analysis = generateDeckExplanation(deck);
-
-  const response = await fetch(AI_WORKER_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${idToken}`
-    },
-    body: JSON.stringify({
-      analysis
-    })
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
     throw new Error(
-      data?.error ?? "Die KI-Analyse ist fehlgeschlagen."
+      "Du musst angemeldet sein, um die KI-Analyse zu verwenden."
     );
   }
 
-  if (!data?.explanation) {
-    throw new Error("Die KI hat keine Erklärung zurückgegeben.");
+  /*
+   * Firebase erstellt hier automatisch ein ID-Token
+   * für den aktuell eingeloggten Benutzer.
+   */
+  const idToken =
+    await user.getIdToken();
+
+  /*
+   * Die lokale Analyse liefert der KI die Fakten.
+   * Dadurch muss Groq beispielsweise Kartenanzahl,
+   * Mana-Kurve oder Kartentexte nicht erraten.
+   */
+  const analysis =
+    createAiAnalysis(deck);
+
+  const response = await fetch(
+    AI_WORKER_URL,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json",
+
+        /*
+         * Der Worker überprüft dieses Firebase-Token.
+         * Nur angemeldete Arcane-Decksmith-Nutzer
+         * sollen die KI verwenden können.
+         */
+        Authorization:
+          `Bearer ${idToken}`
+      },
+
+      body: JSON.stringify({
+        analysis
+      })
+    }
+  );
+
+  let data: {
+    explanation?: string;
+    error?: string;
+  };
+
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(
+      "Der KI-Dienst hat eine ungültige Antwort geliefert."
+    );
   }
 
-  return data.explanation;
+  if (!response.ok) {
+    throw new Error(
+      data.error ??
+        `KI-Anfrage fehlgeschlagen (${response.status}).`
+    );
+  }
+
+  if (
+    typeof data.explanation !== "string" ||
+    !data.explanation.trim()
+  ) {
+    throw new Error(
+      "Die KI hat keine Erklärung zurückgegeben."
+    );
+  }
+
+  return data.explanation.trim();
 }
