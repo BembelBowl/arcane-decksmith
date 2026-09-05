@@ -5,6 +5,15 @@ const AI_WORKER_URL =
   "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
 
 /*
+ * Der Cloudflare Worker akzeptiert aktuell
+ * maximal ungefähr 12.000 Zeichen Analyse-Text.
+ *
+ * Wir bleiben bewusst etwas darunter, damit
+ * auch JSON-/Prompt-Overhead kein Problem wird.
+ */
+const MAX_ANALYSIS_LENGTH = 10500;
+
+/*
  * Bei einer leeren, aber technisch erfolgreichen
  * KI-Antwort versuchen wir die Anfrage genau
  * ein weiteres Mal.
@@ -13,10 +22,6 @@ const EMPTY_RESPONSE_RETRIES = 1;
 
 /*
  * Kurze Wartezeit vor dem Retry.
- *
- * Wir halten sie bewusst klein, damit sich die
- * Analyse in der Oberfläche nicht unnötig langsam
- * anfühlt.
  */
 const RETRY_DELAY_MS = 700;
 
@@ -188,10 +193,6 @@ function typeCounts(
 /**
  * Zählt die Rollen, die der Deckbuilder
  * den Karten bereits zugewiesen hat.
- *
- * Wir verwenden hier absichtlich die vorhandenen
- * Rollen aus deckBuilder.ts und versuchen nicht,
- * Kartentexte erneut zu erraten.
  */
 function roleCounts(
   deck: DeckRecord
@@ -235,7 +236,7 @@ function manaCurveText(
 
 /**
  * Erstellt eine lesbare Darstellung
- * der vom Builder vergebenen Kartenrollen.
+ * der Kartenrollen.
  */
 function rolesText(
   deck: DeckRecord
@@ -254,17 +255,13 @@ function rolesText(
       ([role, count]) =>
         `${role}: ${count}`
     )
-    .join("\n");
+    .join(", ");
 }
 
 /**
  * Gibt die Commander-IDs aus.
  *
- * DeckRecord speichert aktuell nur
- * commanderIds.
- *
- * Deshalb erfinden wir hier keinen
- * Commander-Namen.
+ * DeckRecord enthält hier nur die IDs.
  */
 function commanderText(
   deck: DeckRecord
@@ -283,14 +280,46 @@ function commanderText(
 }
 
 /**
- * Erstellt die Kartenliste, die an
- * die KI weitergegeben wird.
+ * Kürzt Text nur für die Übertragung
+ * an die generative KI.
  *
- * Verwendet ausschließlich Felder,
- * die in DeckCard tatsächlich
- * vorhanden sind.
+ * Die eigentlichen Kartendaten im Deck
+ * werden dadurch nicht verändert.
  */
-function cardListText(
+function shorten(
+  value: string,
+  maxLength: number
+): string {
+  const clean =
+    value.replace(/\s+/g, " ").trim();
+
+  if (clean.length <= maxLength) {
+    return clean;
+  }
+
+  return (
+    clean.slice(
+      0,
+      Math.max(0, maxLength - 1)
+    ) + "…"
+  );
+}
+
+/**
+ * Kompakte Kartenliste für normale
+ * vollständige Commander-Decks.
+ *
+ * Statt langer Begründungen senden wir
+ * nur die Informationen, die für eine
+ * Deckanalyse wirklich wichtig sind:
+ *
+ * - Anzahl
+ * - Kartenname
+ * - Mana Value
+ * - Rolle
+ * - Kartentyp
+ */
+function compactCardListText(
   deck: DeckRecord
 ): string {
   if (deck.cards.length === 0) {
@@ -299,51 +328,62 @@ function cardListText(
 
   return deck.cards
     .map(card => {
-      const parts = [
-        `${card.count}x ${card.name}`,
-        `Typ: ${
+      const role =
+        card.role?.trim() ||
+        "Keine";
+
+      const typeLine =
+        shorten(
           card.typeLine ||
-          "Unbekannt"
-        }`,
-        `Mana Value: ${
-          card.manaValue ?? 0
-        }`,
-        `Rolle: ${
-          card.role || "Keine"
-        }`
-      ];
-
-      if (card.reason) {
-        parts.push(
-          `Begründung: ${card.reason}`
+            "Unbekannt",
+          70
         );
-      }
 
-      if (
-        typeof card.available ===
-        "number"
-      ) {
-        parts.push(
-          "In Sammlung verfügbar: " +
-          card.available
-        );
-      }
-
-      return parts.join(" | ");
+      return [
+        `${card.count}x ${card.name}`,
+        `MV ${card.manaValue ?? 0}`,
+        role,
+        typeLine
+      ].join(" | ");
     })
     .join("\n");
 }
 
 /**
- * Lokale, deterministische
- * Deckanalyse.
+ * Noch kompaktere Kartenliste.
  *
- * Diese Funktion benötigt weder
- * Cloudflare noch Groq.
+ * Diese Variante wird nur verwendet,
+ * wenn ein ungewöhnlich großes Deck
+ * trotz der normalen Komprimierung
+ * noch nahe am Worker-Limit liegt.
  *
- * Sie dient als Fallback, falls
- * die generative KI nicht
- * erreichbar ist.
+ * Alle Karten bleiben enthalten.
+ */
+function ultraCompactCardListText(
+  deck: DeckRecord
+): string {
+  if (deck.cards.length === 0) {
+    return "Keine Karten im Deck.";
+  }
+
+  return deck.cards
+    .map(card => {
+      const role =
+        card.role?.trim();
+
+      return role
+        ? `${card.count}x ${card.name} | ${role}`
+        : `${card.count}x ${card.name}`;
+    })
+    .join("\n");
+}
+
+/**
+ * Lokale, deterministische Deckanalyse.
+ *
+ * Diese Analyse benötigt weder
+ * Cloudflare noch Groq und bleibt
+ * weiterhin unser Fallback.
  */
 export function generateDeckExplanation(
   deck: DeckRecord
@@ -402,17 +442,23 @@ export function generateDeckExplanation(
 }
 
 /**
- * Erstellt die Faktenbasis für Groq.
- *
- * Die KI bekommt Zahlen, Rollen
- * und Kartenliste aus
- * Arcane Decksmith und soll diese
- * erklären, statt selbst
- * Deckdaten zu berechnen.
+ * Erstellt die gemeinsame Faktenbasis
+ * für die generative Analyse.
  */
-function createAiAnalysis(
+function analysisHeader(
   deck: DeckRecord
 ): string {
+  /*
+   * Sehr lange freie Decknotizen können
+   * die Anfrage unnötig aufblasen.
+   *
+   * 800 Zeichen reichen als zusätzlicher
+   * Kontext für die generative Analyse.
+   */
+  const notes = deck.notes
+    ? shorten(deck.notes, 800)
+    : "Keine Notizen vorhanden.";
+
   return [
     "TECHNISCHE DECKDATEN",
     generateDeckExplanation(deck),
@@ -421,19 +467,75 @@ function createAiAnalysis(
     commanderText(deck),
     "",
     "NOTIZEN DES DECKBUILDERS",
-    deck.notes ||
-      "Keine Notizen vorhanden.",
+    notes
+  ].join("\n");
+}
+
+/**
+ * Erstellt die Faktenbasis für Groq.
+ *
+ * Zuerst verwenden wir die normale
+ * kompakte Kartenliste.
+ *
+ * Falls das Ergebnis trotzdem zu groß
+ * wäre, verwenden wir automatisch die
+ * Ultra-Kompakt-Darstellung.
+ */
+function createAiAnalysis(
+  deck: DeckRecord
+): string {
+  const header =
+    analysisHeader(deck);
+
+  const normalAnalysis = [
+    header,
     "",
     "KARTENLISTE",
-    cardListText(deck)
+    compactCardListText(deck)
   ].join("\n");
+
+  if (
+    normalAnalysis.length <=
+    MAX_ANALYSIS_LENGTH
+  ) {
+    return normalAnalysis;
+  }
+
+  const compactAnalysis = [
+    header,
+    "",
+    "KARTENLISTE",
+    ultraCompactCardListText(deck)
+  ].join("\n");
+
+  if (
+    compactAnalysis.length <=
+    MAX_ANALYSIS_LENGTH
+  ) {
+    return compactAnalysis;
+  }
+
+  /*
+   * Dieser Fall sollte bei normalen
+   * 60-/100-Karten-Decks praktisch
+   * nicht auftreten.
+   *
+   * Wir behalten trotzdem einen Schutz,
+   * damit nie versehentlich eine riesige
+   * Anfrage an den Worker geschickt wird.
+   */
+  throw new Error(
+    "Die Deckdaten sind selbst in " +
+    "kompakter Form zu groß für eine " +
+    "einzelne KI-Analyse."
+  );
 }
 
 /**
  * Kurze Wartefunktion für einen
  * automatischen Retry.
  *
- * Promise bedeutet hier:
+ * Promise bedeutet:
  * Der Browser wartet asynchron,
  * ohne die Oberfläche zu blockieren.
  */
@@ -455,9 +557,6 @@ interface AiWorkerResponse {
 
 /**
  * Liest die JSON-Antwort des Workers.
- *
- * Dadurch haben alle Fehlerpfade
- * dieselbe Behandlung.
  */
 async function readWorkerResponse(
   response: Response
@@ -483,15 +582,11 @@ function workerError(
   data: AiWorkerResponse
 ): Error {
   /*
-   * HTTP 429 bedeutet:
-   * Zu viele Anfragen innerhalb
-   * des erlaubten Zeitfensters.
+   * HTTP 429 =
+   * zu viele Anfragen.
    *
-   * Dafür machen wir absichtlich
-   * KEINEN automatischen Retry.
-   * Ein sofortiger zweiter Versuch
-   * würde nur erneut das Rate-Limit
-   * treffen.
+   * Hier machen wir absichtlich keinen
+   * sofortigen Retry.
    */
   if (response.status === 429) {
     return new Error(
@@ -503,11 +598,6 @@ function workerError(
     );
   }
 
-  /*
-   * 401 bedeutet, dass die Anmeldung
-   * bzw. das Firebase-Token nicht
-   * akzeptiert wurde.
-   */
   if (response.status === 401) {
     return new Error(
       data.error ||
@@ -517,10 +607,6 @@ function workerError(
     );
   }
 
-  /*
-   * 403 bedeutet, dass der Worker
-   * die Anfrage nicht erlaubt.
-   */
   if (response.status === 403) {
     return new Error(
       data.error ||
@@ -529,10 +615,6 @@ function workerError(
     );
   }
 
-  /*
-   * Serverfehler werden separat
-   * beschrieben.
-   */
   if (response.status >= 500) {
     return new Error(
       data.error ||
@@ -552,10 +634,8 @@ function workerError(
  * Führt genau eine Anfrage an den
  * Cloudflare Worker aus.
  *
- * Wichtig:
- * Der geheime Groq API-Key befindet
- * sich weiterhin ausschließlich im
- * Worker und niemals im Browser.
+ * Der geheime Groq API-Key bleibt
+ * ausschließlich im Worker.
  */
 async function requestAiExplanation(
   idToken: string,
@@ -584,10 +664,6 @@ async function requestAiExplanation(
         }
       );
   } catch {
-    /*
-     * fetch() wirft z. B. bei
-     * Netzwerkfehlern.
-     */
     throw new Error(
       "Der KI-Dienst konnte nicht " +
       "erreicht werden. Bitte prüfe " +
@@ -609,13 +685,11 @@ async function requestAiExplanation(
   }
 
   /*
-   * Eine leere explanation ist kein
+   * Eine leere Erklärung ist kein
    * HTTP-Fehler.
    *
-   * Wir geben deshalb null zurück.
-   * generateAiDeckExplanation()
-   * entscheidet anschließend, ob
-   * ein Retry erfolgen soll.
+   * null signalisiert, dass ein
+   * automatischer Retry sinnvoll ist.
    */
   if (
     typeof data.explanation !==
@@ -629,32 +703,24 @@ async function requestAiExplanation(
 }
 
 /**
- * Ruft die generative Deckanalyse
- * über unseren Cloudflare Worker auf.
+ * Ruft die generative Deckanalyse über
+ * unseren Cloudflare Worker auf.
  *
  * Ablauf:
  *
  * Arcane Decksmith
+ * → kompakte vollständige Deckdaten
  * → Firebase ID-Token
  * → Cloudflare Worker
  * → Groq
  * → deutsche Deckanalyse
  *
- * Stabilitätslogik:
+ * Bei leerer Groq-Antwort wird genau
+ * ein zweiter Versuch ausgeführt.
  *
- * 1. normaler Versuch
- * 2. bei LEERER Groq-Antwort:
- *    genau ein automatischer Retry
- * 3. bei erneut leerer Antwort:
- *    Fehler an App.tsx
- * 4. App.tsx zeigt anschließend
- *    die lokale deterministische
- *    Analyse als Fallback
- *
- * Bei HTTP 429 wird nicht sofort
- * erneut angefragt, weil das den
- * Rate-Limiter nur erneut treffen
- * würde.
+ * Danach übernimmt weiterhin der
+ * lokale deterministische Fallback
+ * in App.tsx.
  */
 export async function generateAiDeckExplanation(
   deck: DeckRecord
@@ -673,20 +739,20 @@ export async function generateAiDeckExplanation(
    * getIdToken() liefert den
    * zeitlich begrenzten
    * Firebase-Anmeldenachweis.
-   *
-   * Dieser wird vom Cloudflare
-   * Worker geprüft.
    */
   const idToken =
     await user.getIdToken();
 
+  /*
+   * createAiAnalysis() komprimiert
+   * die vollständigen Deckdaten jetzt
+   * automatisch so weit, dass normale
+   * Commander-Decks unter dem
+   * Worker-Limit bleiben.
+   */
   const analysis =
     createAiAnalysis(deck);
 
-  /*
-   * Versuch 0 = normale Anfrage.
-   * Versuch 1 = unser einziger Retry.
-   */
   for (
     let attempt = 0;
     attempt <=
@@ -703,10 +769,6 @@ export async function generateAiDeckExplanation(
       return explanation;
     }
 
-    /*
-     * Nur wenn noch ein Retry
-     * übrig ist, warten wir kurz.
-     */
     if (
       attempt <
       EMPTY_RESPONSE_RETRIES
@@ -717,15 +779,6 @@ export async function generateAiDeckExplanation(
     }
   }
 
-  /*
-   * Erst jetzt geben wir den Fehler
-   * an App.tsx weiter.
-   *
-   * Der dort bereits vorhandene
-   * catch-Block erzeugt anschließend
-   * generateDeckExplanation(deck)
-   * als lokalen Fallback.
-   */
   throw new Error(
     "Die generative KI hat auch " +
     "nach einem automatischen " +
