@@ -6,7 +6,7 @@ import { subscribeAuth, login, logout, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
 import { loadCollection, loadDecks, removeCard, removeDeck, saveCard, saveDeck, uidFromEmail } from "./db";
 import { autocomplete, getCard, getPrintings, imageFor, searchCards, scryfallUrl, normalizeCard, type ScryfallCard } from "./scryfall";
-import { buildDeck, commanderCandidates, deckStats } from "./deckBuilder";
+import { buildDeck, cardLegalForDeck, commanderCandidates, commanderColorIdentity, commanderPairCandidates, deckCopyLimit, deckStats } from "./deckBuilder";
 import { deckText, download, parseList, toCsv } from "./importExport";
 import { generateAiDeckExplanation, generateDeckExplanation } from "./ai";
 import type { CardRecord, DeckRecord, Format, GroupBy, ViewMode } from "./types";
@@ -1036,46 +1036,117 @@ function Builder({
   demoMode:boolean;
 }) {
   const [format,setFormat]=useState<Format>("commander");
-  const [colors,setColors]=useState<string[]>(["G"]);
+  const [colors,setColors]=useState<string[]>([...COLORS]);
   const [commanderId,setCommanderId]=useState("");
+  const [secondCommanderId,setSecondCommanderId]=useState("");
   const [target,setTarget]=useState(3);
-  const [min,setMin]=useState("");
-  const [max,setMax]=useState("");
+  const [min,setMin]=useState(0);
+  const [max,setMax]=useState(15);
   const [name,setName]=useState("Neues Deck");
   const [result,setResult]=useState<DeckRecord|null>(null);
   const [analysisText,setAnalysisText]=useState("");
   const [aiBusy,setAiBusy]=useState(false);
 
   const commanders=useMemo(
-    ()=>commanderCandidates(pool,colors),
-    [pool,colors]
+    ()=>commanderCandidates(pool),
+    [pool]
   );
 
+  const primaryCommander=useMemo(
+    ()=>commanders.find(card=>card.id===commanderId),
+    [commanders,commanderId]
+  );
+
+  const secondCommanderOptions=useMemo(
+    ()=>primaryCommander
+      ?commanderPairCandidates(pool,primaryCommander)
+      :[],
+    [pool,primaryCommander]
+  );
+
+  const secondCommander=useMemo(
+    ()=>secondCommanderOptions.find(
+      card=>card.id===secondCommanderId
+    ),
+    [secondCommanderOptions,secondCommanderId]
+  );
+
+  const selectedCommanders=useMemo(
+    ()=>[
+      primaryCommander,
+      secondCommander
+    ].filter(
+      (card):card is CardRecord=>Boolean(card)
+    ),
+    [primaryCommander,secondCommander]
+  );
+
+  const activeColors=
+    format==="commander"
+      ?commanderColorIdentity(selectedCommanders)
+      :colors;
+
   useEffect(()=>{
-    if(!commanders.some(c=>c.id===commanderId)){
-      setCommanderId(commanders[0]?.id??"");
+    if(
+      secondCommanderId &&
+      !secondCommanderOptions.some(
+        card=>card.id===secondCommanderId
+      )
+    ){
+      setSecondCommanderId("");
     }
-  },[commanders,commanderId]);
+  },[
+    secondCommanderId,
+    secondCommanderOptions
+  ]);
+
+  const changeFormat=(next:Format)=>{
+    setFormat(next);
+    setResult(null);
+    setAnalysisText("");
+
+    if(next==="standard"){
+      setCommanderId("");
+      setSecondCommanderId("");
+    }
+  };
+
+  const chooseCommander=(id:string)=>{
+    setCommanderId(id);
+    setSecondCommanderId("");
+    setResult(null);
+    setAnalysisText("");
+  };
+
+  const chooseSecondCommander=(id:string)=>{
+    setSecondCommanderId(id);
+    setResult(null);
+    setAnalysisText("");
+  };
 
   const build=()=>{
-    const cmd=commanders.find(c=>c.id===commanderId);
-
-    const d=buildDeck(pool,{
+    const deck=buildDeck(pool,{
       name,
       format,
-      colors,
-      commander:format==="commander"?cmd:undefined,
+      colors:activeColors,
+      commanders:
+        format==="commander"
+          ?selectedCommanders
+          :undefined,
       targetManaValue:target,
-      minManaValue:min===""?undefined:Number(min),
-      maxManaValue:max===""?undefined:Number(max)
+      minManaValue:min,
+      maxManaValue:max
     });
 
-    setResult(d);
+    setResult(deck);
     setAnalysisText("");
   };
 
   const explain=async()=>{
-    if(!result) {
+    if(
+      !result ||
+      result.cards.length===0
+    ) {
       return;
     }
 
@@ -1110,6 +1181,21 @@ function Builder({
     }
   };
 
+  const resultHasCards=
+    (result?.cards.reduce(
+      (sum,card)=>sum+card.count,
+      0
+    )??0)>0;
+
+  const builderDisabled=
+    pool.length===0 ||
+    (
+      format==="commander"
+        ?selectedCommanders.length===0
+        :colors.length===0
+    ) ||
+    min>max;
+
   return (
     <section>
       <div className="pagehead">
@@ -1138,61 +1224,132 @@ function Builder({
 
             <select
               value={format}
-              onChange={e=>setFormat(e.target.value as Format)}
+              onChange={e=>changeFormat(e.target.value as Format)}
             >
               <option value="commander">Commander</option>
               <option value="standard">Standard</option>
             </select>
           </label>
 
-          <label>
-            Deckfarben
+          {format==="standard"
+            ? <label>
+                Deckfarben
 
-            <div className="color-pills">
-              {COLORS.map(c=>
-                <button
-                  key={c}
-                  className={colors.includes(c)?"color active":"color"}
-                  onClick={()=>setColors(x=>
-                    x.includes(c)
-                      ?x.filter(v=>v!==c)
-                      :[...x,c]
+                <div className="color-pills">
+                  {COLORS.map(color=>
+                    <button
+                      key={color}
+                      type="button"
+                      className={
+                        colors.includes(color)
+                          ?"color active"
+                          :"color"
+                      }
+                      onClick={()=>setColors(current=>
+                        current.includes(color)
+                          ?current.filter(value=>value!==color)
+                          :[
+                              ...current,
+                              color
+                            ]
+                      )}
+                    >
+                      {color}
+                      <span>{COLOR_NAMES[color]}</span>
+                    </button>
                   )}
-                >
-                  {c}
-                  <span>{COLOR_NAMES[c]}</span>
-                </button>
-              )}
-            </div>
-          </label>
+                </div>
 
-          {format==="commander"&&
-            <label>
-              Commander
+                <small className="muted">
+                  Die Farbauswahl ist hier ein Filter für den automatischen Builder.
+                  Sie ist keine zusätzliche Standard-Legalitätsregel.
+                </small>
+              </label>
 
-              <select
-                value={commanderId}
-                onChange={e=>setCommanderId(e.target.value)}
-              >
-                <option value="">— wählen —</option>
+            : <>
+                <label>
+                  Commander
 
-                {commanders.map(c=>
-                  <option
-                    key={c.id}
-                    value={c.id}
+                  <select
+                    value={commanderId}
+                    onChange={e=>chooseCommander(e.target.value)}
                   >
-                    {c.name}
-                  </option>
-                )}
-              </select>
-            </label>
+                    <option value="">
+                      — Commander wählen —
+                    </option>
+
+                    {commanders.map(card=>
+                      <option
+                        key={card.id}
+                        value={card.id}
+                      >
+                        {card.name}
+                      </option>
+                    )}
+                  </select>
+                </label>
+
+                {primaryCommander&&
+                  secondCommanderOptions.length>0&&
+                  <label>
+                    Zweiter Commander (optional)
+
+                    <select
+                      value={secondCommanderId}
+                      onChange={e=>chooseSecondCommander(e.target.value)}
+                    >
+                      <option value="">
+                        — kein zweiter Commander —
+                      </option>
+
+                      {secondCommanderOptions.map(card=>
+                        <option
+                          key={card.id}
+                          value={card.id}
+                        >
+                          {card.name}
+                        </option>
+                      )}
+                    </select>
+
+                    <small className="muted">
+                      Unterstützt werden Partner, Partner with,
+                      Friends forever, Doctor&apos;s Companion und Background.
+                    </small>
+                  </label>
+                }
+
+                {primaryCommander&&
+                  <div className="ai-box">
+                    <strong>
+                      Farbidentität automatisch:
+                    </strong>{" "}
+
+                    {activeColors.length
+                      ?activeColors
+                          .map(color=>COLOR_NAMES[color]??color)
+                          .join(", ")
+                      :"Farblos"
+                    }
+
+                    {secondCommander&&
+                      <>
+                        <br />
+                        <span>
+                          Zwei Commander: {primaryCommander.name} + {secondCommander.name}
+                        </span>
+                      </>
+                    }
+                  </div>
+                }
+              </>
           }
 
           <label>
-            Ziel-Mana Value
+            Ziel-Mana Value: <strong>{target.toFixed(1)}</strong>
 
             <input
-              type="number"
+              type="range"
               min="0"
               max="15"
               step="0.1"
@@ -1201,34 +1358,42 @@ function Builder({
             />
           </label>
 
-          <div className="two">
-            <label>
-              Min. MV
+          <label>
+            Minimum Mana Value: <strong>{min.toFixed(1)}</strong>
 
-              <input
-                type="number"
-                min="0"
-                value={min}
-                onChange={e=>setMin(e.target.value)}
-              />
-            </label>
+            <input
+              type="range"
+              min="0"
+              max="15"
+              step="0.5"
+              value={min}
+              onChange={e=>setMin(Number(e.target.value))}
+            />
+          </label>
 
-            <label>
-              Max. MV
+          <label>
+            Maximum Mana Value: <strong>{max.toFixed(1)}</strong>
 
-              <input
-                type="number"
-                min="0"
-                value={max}
-                onChange={e=>setMax(e.target.value)}
-              />
-            </label>
-          </div>
+            <input
+              type="range"
+              min="0"
+              max="15"
+              step="0.5"
+              value={max}
+              onChange={e=>setMax(Number(e.target.value))}
+            />
+          </label>
+
+          {min>max&&
+            <div className="error">
+              Minimum Mana Value darf nicht größer als Maximum Mana Value sein.
+            </div>
+          }
 
           <button
             className="primary full"
             onClick={build}
-            disabled={!colors.length||pool.length===0}
+            disabled={builderDisabled}
           >
             Deck erstellen
           </button>
@@ -1238,6 +1403,22 @@ function Builder({
               Deine Sammlung ist leer. Füge zuerst Karten über die Kartensuche hinzu.
             </div>
           }
+
+          {format==="commander"&&
+            pool.length>0&&
+            commanders.length===0&&
+            <div className="notice">
+              In deiner Sammlung wurde aktuell kein Commander-Kandidat gefunden.
+            </div>
+          }
+
+          {format==="commander"&&
+            commanders.length>0&&
+            !primaryCommander&&
+            <div className="notice">
+              Wähle zuerst einen Commander. Seine Farbidentität wird automatisch für den Deckbau verwendet.
+            </div>
+          }
         </div>
 
         {result
@@ -1245,45 +1426,85 @@ function Builder({
               <h3>{result.name}</h3>
 
               <div className="stats">
-                {Object.entries(deckStats(result))
-                  .filter(([k])=>k!=="roleCounts")
-                  .map(([k,v])=>
-                    <div key={k}>
-                      <strong>{String(v)}</strong>
-                      <span>{k}</span>
-                    </div>
-                  )
-                }
+                <div>
+                  <strong>{deckStats(result).total}</strong>
+                  <span>Karten gesamt</span>
+                </div>
+
+                <div>
+                  <strong>{deckStats(result).lands}</strong>
+                  <span>Länder</span>
+                </div>
+
+                <div>
+                  <strong>{deckStats(result).nonland}</strong>
+                  <span>Nichtländer</span>
+                </div>
+
+                <div>
+                  <strong>{deckStats(result).averageManaValue}</strong>
+                  <span>Ø Mana Value</span>
+                </div>
               </div>
 
               <p>{result.notes}</p>
 
+              {result.format==="commander"&&
+                result.commanderIds.length>0&&
+                <div className="commander-card">
+                  <strong>
+                    {result.commanderIds.length===1
+                      ?"Commander"
+                      :"Commander"
+                    }
+                  </strong>
+
+                  {result.commanderIds.map(id=>{
+                    const commander=pool.find(card=>card.id===id);
+
+                    return commander
+                      ? <span key={id}>
+                          {commander.name}
+                        </span>
+                      : null;
+                  })}
+                </div>
+              }
+
               <div className="role-list">
-                {Object.entries(deckStats(result).roleCounts).map(([r,n])=>
-                  <span key={r}>
-                    {r}: {n}
+                {Object.entries(deckStats(result).roleCounts).map(([role,count])=>
+                  <span key={role}>
+                    {role}: {count}
                   </span>
                 )}
               </div>
 
               <div className="deck-list">
-                {result.cards.map(c=>
-                  <div key={c.id}>
+                {result.cards.map(card=>
+                  <div key={card.id}>
                     <span>
-                      <b>{c.count}×</b> {c.name}
+                      <b>{card.count}×</b> {card.name}
                     </span>
 
                     <small>
-                      {c.role} · {c.reason}
+                      {card.role} · {card.reason}
                     </small>
                   </div>
                 )}
               </div>
 
+              {!resultHasCards&&
+                <div className="notice">
+                  Es wurden keine passenden Karten für das Hauptdeck gefunden.
+                  Speichern, Export und Analyse sind deshalb deaktiviert.
+                </div>
+              }
+
               <div className="row">
                 <button
                   className="primary"
                   onClick={()=>onSave(result)}
+                  disabled={!resultHasCards}
                 >
                   Deck speichern
                 </button>
@@ -1294,6 +1515,7 @@ function Builder({
                     `${result.name}.txt`,
                     deckText(result)
                   )}
+                  disabled={!resultHasCards}
                 >
                   Export
                 </button>
@@ -1301,11 +1523,17 @@ function Builder({
                 <button
                   className="secondary"
                   onClick={explain}
-                  disabled={aiBusy||demoMode}
+                  disabled={
+                    aiBusy ||
+                    demoMode ||
+                    !resultHasCards
+                  }
                   title={
                     demoMode
                       ?"Die generative KI benötigt eine Firebase-Anmeldung."
-                      :undefined
+                      :!resultHasCards
+                        ?"Für ein leeres Deck ist keine Analyse sinnvoll."
+                        :undefined
                   }
                 >
                   {aiBusy
@@ -1557,95 +1785,252 @@ function DeckEditor({
   const all=[...d.cards];
 
   const availableCommanders=useMemo(
-    ()=>commanderCandidates(pool,COLORS),
+    ()=>commanderCandidates(pool),
     [pool]
   );
 
-  const selectedCommander=
-    d.format==="commander"
-      ?pool.find(c=>d.commanderIds?.includes(c.id))
-      :undefined;
-
-  const mainDeckCount=all.reduce(
-    (sum,card)=>sum+card.count,
-    0
+  const selectedCommanders=useMemo(
+    ()=>d.format==="commander"
+      ?d.commanderIds
+          .map(id=>pool.find(card=>card.id===id))
+          .filter(
+            (card):card is CardRecord=>Boolean(card)
+          )
+          .slice(0,2)
+      :[],
+    [d.commanderIds,d.format,pool]
   );
 
+  const primaryCommander=
+    selectedCommanders[0];
+
+  const secondCommander=
+    selectedCommanders[1];
+
+  const secondCommanderOptions=useMemo(
+    ()=>primaryCommander
+      ?commanderPairCandidates(pool,primaryCommander)
+      :[],
+    [pool,primaryCommander]
+  );
+
+  const commanderColors=
+    commanderColorIdentity(selectedCommanders);
+
+  const mainDeckCount=
+    all.reduce(
+      (sum,card)=>sum+card.count,
+      0
+    );
+
+  const commanderCount=
+    d.format==="commander"
+      ?selectedCommanders.length
+      :0;
+
   const totalCards=
-    mainDeckCount+
-    (d.format==="commander"&&selectedCommander ? 1 : 0);
+    mainDeckCount+commanderCount;
 
-  const commanderColorIdentity=
-    selectedCommander?.colorIdentity??[];
+  const commanderMainTarget=
+    100-Math.max(1,commanderCount);
 
-  const isCommanderColorLegal=(card:CardRecord)=>{
-    if(!selectedCommander) {
+  const isSourceLegal=(card:CardRecord)=>{
+    if(d.format==="standard"){
+      return cardLegalForDeck(
+        card,
+        "standard"
+      );
+    }
+
+    if(selectedCommanders.length===0){
       return false;
     }
 
-    return (card.colorIdentity??[]).every(
-      color=>commanderColorIdentity.includes(color)
+    return (
+      !d.commanderIds.includes(card.id) &&
+      cardLegalForDeck(
+        card,
+        "commander",
+        commanderColors
+      )
     );
   };
 
-  const commanderLegalPool=
-    d.format==="commander"
-      ?pool.filter(card=>
-          card.id!==selectedCommander?.id &&
-          card.legalities?.commander!=="banned" &&
-          isCommanderColorLegal(card)
-        )
-      :pool;
+  const legalPool=
+    pool.filter(isSourceLegal);
 
-  const illegalCommanderCards=
-    d.format==="commander"&&selectedCommander
-      ?all.filter(deckCard=>{
-          const source=pool.find(c=>c.id===deckCard.id);
+  const illegalCards=
+    all.filter(deckCard=>{
+      const source=pool.find(
+        card=>card.id===deckCard.id
+      );
 
-          if(!source) {
-            return false;
-          }
+      return source
+        ?!isSourceLegal(source)
+        :true;
+    });
 
-          return (
-            source.legalities?.commander==="banned" ||
-            !isCommanderColorLegal(source)
-          );
-        })
-      :[];
+  const deckCountByName=
+    all.reduce<Record<string,number>>(
+      (counts,card)=>{
+        const key=card.name.toLowerCase();
 
-  const add=(c:CardRecord)=>{
-    setD(x=>({
-      ...x,
-      cards:x.cards.some(y=>y.id===c.id)
-        ?x.cards.map(y=>
-            y.id===c.id
-              ?{
-                  ...y,
-                  count:y.count+1,
-                  available:c.count
-                }
-              :y
-          )
-        :[
-            ...x.cards,
-            {
-              id:c.id,
-              name:c.name,
-              count:1,
-              manaValue:c.manaValue,
-              typeLine:c.typeLine,
-              role:"Manuell",
-              reason:"Manuell hinzugefügt",
-              available:c.count
+        counts[key]=
+          (counts[key]??0)+
+          card.count;
+
+        return counts;
+      },
+      {}
+    );
+
+  const copyViolationNames=
+    Array.from(
+      new Set(
+        all
+          .filter(deckCard=>{
+            const source=pool.find(
+              card=>card.id===deckCard.id
+            );
+
+            if(!source){
+              return false;
             }
-          ]
-    }));
+
+            const ruleLimit=
+              deckCopyLimit(
+                source,
+                d.format
+              );
+
+            const totalByName=
+              deckCountByName[
+                deckCard.name.toLowerCase()
+              ]??0;
+
+            return (
+              totalByName>ruleLimit ||
+              deckCard.count>source.count
+            );
+          })
+          .map(card=>card.name)
+      )
+    );
+
+  const pairInvalid=
+    d.format==="commander" &&
+    secondCommander &&
+    !secondCommanderOptions.some(
+      card=>card.id===secondCommander.id
+    );
+
+  const commanderTooLarge=
+    d.format==="commander" &&
+    totalCards>100;
+
+  const hasBlockingError=
+    illegalCards.length>0 ||
+    copyViolationNames.length>0 ||
+    Boolean(pairInvalid) ||
+    commanderTooLarge;
+
+  const add=(card:CardRecord)=>{
+    if(!isSourceLegal(card)){
+      return;
+    }
+
+    setD(current=>{
+      const existing=
+        current.cards.find(
+          item=>item.id===card.id
+        );
+
+      const currentCount=
+        existing?.count??0;
+
+      const currentByName=
+        current.cards
+          .filter(
+            item=>
+              item.name.toLowerCase()===
+              card.name.toLowerCase()
+          )
+          .reduce(
+            (sum,item)=>sum+item.count,
+            0
+          );
+
+      const ruleLimit=
+        deckCopyLimit(
+          card,
+          current.format
+        );
+
+      if(
+        currentCount>=card.count ||
+        currentByName>=ruleLimit
+      ){
+        return current;
+      }
+
+      const currentCommanderCount=
+        current.format==="commander"
+          ?current.commanderIds.length
+          :0;
+
+      const currentMainCount=
+        current.cards.reduce(
+          (sum,item)=>sum+item.count,
+          0
+        );
+
+      const maxMain=
+        current.format==="commander"
+          ?100-Math.max(1,currentCommanderCount)
+          :Infinity;
+
+      if(currentMainCount>=maxMain){
+        return current;
+      }
+
+      if(existing){
+        return {
+          ...current,
+          cards:current.cards.map(item=>
+            item.id===card.id
+              ?{
+                  ...item,
+                  count:item.count+1,
+                  available:card.count
+                }
+              :item
+          )
+        };
+      }
+
+      return {
+        ...current,
+        cards:[
+          ...current.cards,
+          {
+            id:card.id,
+            name:card.name,
+            count:1,
+            manaValue:card.manaValue,
+            typeLine:card.typeLine,
+            role:"Manuell",
+            reason:"Manuell hinzugefügt",
+            available:card.count
+          }
+        ]
+      };
+    });
   };
 
-  const chooseCommander=(id:string)=>{
+  const choosePrimaryCommander=(id:string)=>{
     if(!id){
-      setD(x=>({
-        ...x,
+      setD(current=>({
+        ...current,
         commanderIds:[],
         colors:[]
       }));
@@ -1653,26 +2038,70 @@ function DeckEditor({
       return;
     }
 
-    const commander=pool.find(c=>c.id===id);
+    const commander=pool.find(
+      card=>card.id===id
+    );
 
-    if(!commander) {
+    if(!commander){
       return;
     }
 
-    setD(x=>({
-      ...x,
+    setD(current=>({
+      ...current,
       commanderIds:[commander.id],
       colors:commander.colorIdentity??[]
     }));
   };
 
+  const chooseSecondCommander=(id:string)=>{
+    if(!primaryCommander){
+      return;
+    }
+
+    if(!id){
+      setD(current=>({
+        ...current,
+        commanderIds:[primaryCommander.id],
+        colors:primaryCommander.colorIdentity??[]
+      }));
+
+      return;
+    }
+
+    const second=
+      secondCommanderOptions.find(
+        card=>card.id===id
+      );
+
+    if(!second){
+      return;
+    }
+
+    const commanders=[
+      primaryCommander,
+      second
+    ];
+
+    setD(current=>({
+      ...current,
+      commanderIds:commanders.map(
+        card=>card.id
+      ),
+      colors:commanderColorIdentity(commanders)
+    }));
+  };
+
   const changeFormat=(format:Format)=>{
-    setD(x=>({
-      ...x,
+    setD(current=>({
+      ...current,
       format,
       commanderIds:
         format==="commander"
-          ?x.commanderIds
+          ?current.commanderIds.slice(0,2)
+          :[],
+      colors:
+        format==="commander"
+          ?current.colors
           :[]
     }));
   };
@@ -1697,8 +2126,18 @@ function DeckEditor({
 
         <button
           className="primary"
+          disabled={hasBlockingError}
+          title={
+            hasBlockingError
+              ?"Behebe zuerst die Regelverstöße im Deck."
+              :undefined
+          }
           onClick={()=>onSave({
             ...d,
+            colors:
+              d.format==="commander"
+                ?commanderColors
+                :d.colors,
             updatedAt:Date.now()
           })}
         >
@@ -1716,8 +2155,8 @@ function DeckEditor({
             <input
               value={d.name}
               onChange={e=>
-                setD(x=>({
-                  ...x,
+                setD(current=>({
+                  ...current,
                   name:e.target.value
                 }))
               }
@@ -1731,7 +2170,9 @@ function DeckEditor({
             <select
               value={d.format}
               onChange={e=>
-                changeFormat(e.target.value as Format)
+                changeFormat(
+                  e.target.value as Format
+                )
               }
             >
               <option value="standard">
@@ -1750,19 +2191,45 @@ function DeckEditor({
             Commander
 
             <select
-              value={selectedCommander?.id??""}
-              onChange={e=>chooseCommander(e.target.value)}
+              value={primaryCommander?.id??""}
+              onChange={e=>choosePrimaryCommander(e.target.value)}
             >
               <option value="">
                 — Commander wählen —
               </option>
 
-              {availableCommanders.map(c=>
+              {availableCommanders.map(card=>
                 <option
-                  key={c.id}
-                  value={c.id}
+                  key={card.id}
+                  value={card.id}
                 >
-                  {c.name}
+                  {card.name}
+                </option>
+              )}
+            </select>
+          </label>
+        }
+
+        {d.format==="commander"&&
+          primaryCommander&&
+          secondCommanderOptions.length>0&&
+          <label>
+            Zweiter Commander (optional)
+
+            <select
+              value={secondCommander?.id??""}
+              onChange={e=>chooseSecondCommander(e.target.value)}
+            >
+              <option value="">
+                — kein zweiter Commander —
+              </option>
+
+              {secondCommanderOptions.map(card=>
+                <option
+                  key={card.id}
+                  value={card.id}
+                >
+                  {card.name}
                 </option>
               )}
             </select>
@@ -1777,17 +2244,28 @@ function DeckEditor({
           </div>
         }
 
-        {d.format==="commander"&&selectedCommander&&
+        {d.format==="commander"&&
+          selectedCommanders.length>0&&
           <div className="ai-box">
-            <strong>Commander:</strong>{" "}
-            {selectedCommander.name}
+            <strong>
+              {selectedCommanders.length===1
+                ?"Commander:"
+                :"Commander:"
+              }
+            </strong>{" "}
+
+            {selectedCommanders
+              .map(card=>card.name)
+              .join(" + ")
+            }
+
             <br />
 
             <span>
               Farbidentität:{" "}
-              {commanderColorIdentity.length
-                ?commanderColorIdentity
-                    .map(c=>COLOR_NAMES[c]??c)
+              {commanderColors.length
+                ?commanderColors
+                    .map(color=>COLOR_NAMES[color]??color)
                     .join(", ")
                 :"Farblos"
               }
@@ -1803,35 +2281,46 @@ function DeckEditor({
 
           <div>
             <strong>
-              {d.format==="commander" ? "100" : "60"}
+              {d.format==="commander"
+                ?"100"
+                :"60+"
+              }
             </strong>
-            <span>Deckgröße</span>
+            <span>
+              {d.format==="commander"
+                ?"Deckgröße"
+                :"Mindestgröße"
+              }
+            </span>
           </div>
 
           {d.format==="commander"&&
             <div>
-              <strong>{mainDeckCount}</strong>
+              <strong>
+                {mainDeckCount}/{commanderMainTarget}
+              </strong>
               <span>Karten ohne Commander</span>
             </div>
           }
         </div>
 
-        {d.format==="standard"&&totalCards<60&&
+        {d.format==="standard"&&
+          totalCards<60&&
           <div className="notice">
             Für ein Standard-Deck fehlen aktuell noch{" "}
-            {60-totalCards} Karten.
-          </div>
-        }
-
-        {d.format==="commander"&&!selectedCommander&&
-          <div className="notice">
-            Wähle zuerst einen Commander. Danach werden nur Karten
-            angezeigt, die zu seiner Farbidentität passen.
+            {60-totalCards} Karten bis zur Mindestgröße.
           </div>
         }
 
         {d.format==="commander"&&
-          selectedCommander&&
+          selectedCommanders.length===0&&
+          <div className="notice">
+            Wähle zuerst einen Commander. Danach werden nur Commander-legale Karten seiner Farbidentität angezeigt.
+          </div>
+        }
+
+        {d.format==="commander"&&
+          selectedCommanders.length>0&&
           totalCards<100&&
           <div className="notice">
             Für das Commander-Deck fehlen aktuell noch{" "}
@@ -1839,41 +2328,57 @@ function DeckEditor({
           </div>
         }
 
-        {d.format==="standard"&&totalCards>=60&&
+        {d.format==="standard"&&
+          totalCards>=60&&
           <div className="ai-box">
-            Die Mindestgröße von 60 Karten ist erreicht.
+            Die Standard-Mindestgröße von 60 Karten ist erreicht.
           </div>
         }
 
         {d.format==="commander"&&
-          selectedCommander&&
+          selectedCommanders.length>0&&
           totalCards===100&&
           <div className="ai-box">
-            Die Deckgröße von 100 Karten ist erreicht.
+            Die Commander-Deckgröße von 100 Karten ist erreicht.
           </div>
         }
 
-        {d.format==="commander"&&
-          selectedCommander&&
-          totalCards>100&&
+        {commanderTooLarge&&
           <div className="error">
             Das Deck enthält {totalCards} Karten.
             Ein Commander-Deck darf insgesamt nur 100 Karten enthalten.
           </div>
         }
 
-        {illegalCommanderCards.length>0&&
+        {pairInvalid&&
+          <div className="error">
+            Die beiden ausgewählten Commander dürfen nach den unterstützten Partner-Regeln nicht gemeinsam als Commander verwendet werden.
+          </div>
+        }
+
+        {illegalCards.length>0&&
           <div className="error">
             <strong>
-              {illegalCommanderCards.length} Karten passen nicht
-              zum ausgewählten Commander:
+              {illegalCards.length} Karten sind im gewählten Format bzw. mit der Commander-Farbidentität nicht erlaubt:
             </strong>
 
             <div>
-              {illegalCommanderCards
-                .map(c=>c.name)
+              {illegalCards
+                .map(card=>card.name)
                 .join(", ")
               }
+            </div>
+          </div>
+        }
+
+        {copyViolationNames.length>0&&
+          <div className="error">
+            <strong>
+              Bei diesen Karten ist die erlaubte bzw. vorhandene Anzahl überschritten:
+            </strong>
+
+            <div>
+              {copyViolationNames.join(", ")}
             </div>
           </div>
         }
@@ -1883,23 +2388,33 @@ function DeckEditor({
         <div className="panel">
           <h3>
             {d.format==="commander"
-              ?`Deck · ${mainDeckCount}/99 Karten`
+              ?`Deck · ${mainDeckCount}/${commanderMainTarget} Karten`
               :`Deck · ${totalCards} Karten`
             }
           </h3>
 
-          {d.format==="commander"&&selectedCommander&&
-            <div className="commander-card">
-              <strong>Commander</strong>
+          {d.format==="commander"&&
+            selectedCommanders.map((commander,index)=>
+              <div
+                className="commander-card"
+                key={commander.id}
+              >
+                <strong>
+                  {index===0
+                    ?"Commander"
+                    :"Zweiter Commander"
+                  }
+                </strong>
 
-              <span>
-                {selectedCommander.name}
-              </span>
+                <span>
+                  {commander.name}
+                </span>
 
-              <small>
-                {selectedCommander.typeLine}
-              </small>
-            </div>
+                <small>
+                  {commander.typeLine}
+                </small>
+              </div>
+            )
           }
 
           {all.length===0&&
@@ -1908,21 +2423,51 @@ function DeckEditor({
             </p>
           }
 
-          {all.map(c=>{
+          {all.map(card=>{
+            const source=pool.find(
+              item=>item.id===card.id
+            );
+
             const illegal=
-              illegalCommanderCards.some(x=>x.id===c.id);
+              illegalCards.some(
+                item=>item.id===card.id
+              );
+
+            const copyViolation=
+              copyViolationNames.includes(
+                card.name
+              );
+
+            const ruleLimit=
+              source
+                ?deckCopyLimit(
+                    source,
+                    d.format
+                  )
+                :0;
+
+            const allowedLabel=
+              Number.isFinite(ruleLimit)
+                ?String(ruleLimit)
+                :"beliebig";
 
             return (
               <div
                 className="edit-row"
-                key={c.id}
+                key={card.id}
               >
                 <span>
-                  {c.count}× {c.name}
+                  {card.count}× {card.name}
 
                   {illegal&&
                     <small className="illegal-card">
                       {" "}· nicht erlaubt
+                    </small>
+                  }
+
+                  {copyViolation&&
+                    <small className="illegal-card">
+                      {" "}· Maximum {allowedLabel}
                     </small>
                   }
                 </span>
@@ -1930,18 +2475,21 @@ function DeckEditor({
                 <div>
                   <button
                     onClick={()=>
-                      setD(x=>({
-                        ...x,
-                        cards:x.cards
-                          .map(y=>
-                            y.id===c.id
+                      setD(current=>({
+                        ...current,
+                        cards:current.cards
+                          .map(item=>
+                            item.id===card.id
                               ?{
-                                  ...y,
-                                  count:Math.max(0,y.count-1)
+                                  ...item,
+                                  count:Math.max(
+                                    0,
+                                    item.count-1
+                                  )
                                 }
-                              :y
+                              :item
                           )
-                          .filter(y=>y.count>0)
+                          .filter(item=>item.count>0)
                       }))
                     }
                   >
@@ -1949,13 +2497,32 @@ function DeckEditor({
                   </button>
 
                   <button
+                    disabled={
+                      !source ||
+                      card.count>=source.count ||
+                      (
+                        (
+                          deckCountByName[
+                            card.name.toLowerCase()
+                          ]??0
+                        )>=
+                        (
+                          source
+                            ?deckCopyLimit(
+                                source,
+                                d.format
+                              )
+                            :0
+                        )
+                      ) ||
+                      (
+                        d.format==="commander" &&
+                        mainDeckCount>=commanderMainTarget
+                      )
+                    }
                     onClick={()=>{
-                      const src=pool.find(
-                        x=>x.id===c.id
-                      );
-
-                      if(src&&c.count<src.count){
-                        add(src);
+                      if(source){
+                        add(source);
                       }
                     }}
                   >
@@ -1970,7 +2537,8 @@ function DeckEditor({
         <div className="panel">
           <h3>Karten hinzufügen</h3>
 
-          {d.format==="commander"&&!selectedCommander
+          {d.format==="commander"&&
+            selectedCommanders.length===0
             ? <p className="muted">
                 Wähle zuerst einen Commander.
               </p>
@@ -1979,37 +2547,79 @@ function DeckEditor({
                 <input
                   placeholder="Karte filtern…"
                   onChange={e=>{
-                    const v=e.target.value.toLowerCase();
+                    const value=e.target.value.toLowerCase();
 
                     document
                       .querySelectorAll<HTMLElement>("[data-card]")
-                      .forEach(x=>{
-                        x.hidden=!x.dataset.card!.includes(v);
+                      .forEach(element=>{
+                        element.hidden=
+                          !element.dataset.card!.includes(value);
                       });
                   }}
                 />
 
                 <div className="add-list">
-                  {commanderLegalPool
+                  {legalPool
                     .slice(0,200)
-                    .map(c=>
-                      <div
-                        data-card={c.name.toLowerCase()}
-                        key={c.id}
-                      >
-                        <span>
-                          {c.name}
-                        </span>
+                    .map(card=>{
+                      const current=
+                        all.find(
+                          item=>item.id===card.id
+                        )?.count??0;
 
-                        <button
-                          onClick={()=>add(c)}
+                      const currentByName=
+                        deckCountByName[
+                          card.name.toLowerCase()
+                        ]??0;
+
+                      const ruleLimit=
+                        deckCopyLimit(
+                          card,
+                          d.format
+                        );
+
+                      const ruleLimitLabel=
+                        Number.isFinite(ruleLimit)
+                          ?String(ruleLimit)
+                          :"beliebig";
+
+                      const commanderFull=
+                        d.format==="commander" &&
+                        mainDeckCount>=commanderMainTarget;
+
+                      return (
+                        <div
+                          data-card={card.name.toLowerCase()}
+                          key={card.id}
                         >
-                          +1
-                        </button>
-                      </div>
-                    )
+                          <span>
+                            {card.name}
+                            <small className="muted">
+                              {" "}({currentByName}/{ruleLimitLabel})
+                            </small>
+                          </span>
+
+                          <button
+                            disabled={
+                              current>=card.count ||
+                              currentByName>=ruleLimit ||
+                              commanderFull
+                            }
+                            onClick={()=>add(card)}
+                          >
+                            +1
+                          </button>
+                        </div>
+                      );
+                    })
                   }
                 </div>
+
+                {legalPool.length===0&&
+                  <div className="notice">
+                    Für die aktuelle Auswahl sind keine legalen Karten aus deiner Sammlung verfügbar.
+                  </div>
+                }
               </>
           }
         </div>
