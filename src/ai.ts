@@ -806,27 +806,347 @@ function collectionContext(
   ].join("\n");
 }
 
-function replacementCandidateLine(
+function inferredCardRole(
+  card: CardRecord
+): string {
+  const typeLine =
+    (card.typeLine ?? "").toLowerCase();
+
+  const oracle =
+    (card.oracleText ?? "").toLowerCase();
+
+  const text =
+    `${typeLine} ${oracle}`;
+
+  if (typeLine.includes("land")) {
+    return "Land";
+  }
+
+  if (
+    /add \{?[wubrgc]/.test(text) ||
+    /search your library for (a|an) (basic )?land/.test(text) ||
+    /mana.*pool/.test(text)
+  ) {
+    return "Ramp";
+  }
+
+  if (
+    /draw (a|one|two|three|x|cards?)|draws? a card/.test(text)
+  ) {
+    return "Card Advantage";
+  }
+
+  if (
+    /destroy target|exile target|return target.*hand|counter target|deals? .* damage to target|target creature gets -/.test(text)
+  ) {
+    return "Interaction";
+  }
+
+  if (/search your library/.test(text)) {
+    return "Tutor";
+  }
+
+  if (
+    /when .* enters|whenever|at the beginning|combat/.test(text)
+  ) {
+    return typeLine.includes("creature")
+      ? "Synergie"
+      : "Value";
+  }
+
+  if (typeLine.includes("creature")) {
+    return "Creature";
+  }
+
+  return "Value";
+}
+
+function roleForDeckCard(
+  deckCard:
+    DeckRecord["cards"][number],
+  source: CardRecord | undefined
+): string {
+  const explicitRole =
+    deckCard.role?.trim();
+
+  if (explicitRole) {
+    return explicitRole;
+  }
+
+  if (source) {
+    return inferredCardRole(source);
+  }
+
+  return "Value";
+}
+
+function broadCardType(
+  typeLine: string | undefined
+): string {
+  const value =
+    (typeLine ?? "").toLowerCase();
+
+  if (value.includes("land")) {
+    return "Land";
+  }
+
+  if (value.includes("creature")) {
+    return "Creature";
+  }
+
+  if (value.includes("artifact")) {
+    return "Artifact";
+  }
+
+  if (value.includes("enchantment")) {
+    return "Enchantment";
+  }
+
+  if (value.includes("instant")) {
+    return "Instant";
+  }
+
+  if (value.includes("sorcery")) {
+    return "Sorcery";
+  }
+
+  if (value.includes("planeswalker")) {
+    return "Planeswalker";
+  }
+
+  return "Other";
+}
+
+function functionalRole(
+  role: string
+): boolean {
+  return [
+    "Ramp",
+    "Card Advantage",
+    "Interaction",
+    "Tutor"
+  ].includes(role);
+}
+
+interface ReplacementMatch {
+  card: CardRecord;
+  available: number;
+  role: string;
+  score: number;
+}
+
+function replacementMatchesForDeckCard(
+  deck: DeckRecord,
   deckCard:
     DeckRecord["cards"][number],
   collection: CardRecord[]
-): string {
+): ReplacementMatch[] {
   const source =
     collectionCardForDeckCard(
       deckCard,
       collection
     );
 
+  const sourceRole =
+    roleForDeckCard(
+      deckCard,
+      source
+    );
+
+  const sourceType =
+    broadCardType(
+      source?.typeLine ??
+        deckCard.typeLine
+    );
+
+  const available =
+    availableCollectionCards(
+      deck,
+      collection
+    );
+
+  return available
+    .filter(item =>
+      normalizeCardName(
+        item.card.name
+      ) !==
+      normalizeCardName(
+        deckCard.name
+      )
+    )
+    .map(item => {
+      const targetRole =
+        inferredCardRole(
+          item.card
+        );
+
+      const targetType =
+        broadCardType(
+          item.card.typeLine
+        );
+
+      let score = 0;
+
+      /*
+       * Länder werden nur durch Länder ersetzt.
+       * Nichtländer werden nur durch Nichtländer ersetzt.
+       * Dadurch vermeiden wir unbegründete Tausche wie
+       * Card Draw -> Land, ohne die Manabasis künstlich
+       * anhand des Mana Values zu verändern.
+       */
+      if (
+        (sourceType === "Land") !==
+        (targetType === "Land")
+      ) {
+        return {
+          card: item.card,
+          available: item.available,
+          role: targetRole,
+          score: -100
+        };
+      }
+
+      if (sourceRole === targetRole) {
+        score += 12;
+      }
+
+      if (
+        !functionalRole(sourceRole) &&
+        functionalRole(targetRole)
+      ) {
+        score += 7;
+      }
+
+      if (
+        sourceType === targetType
+      ) {
+        score += 3;
+      }
+
+      if (
+        sourceRole === "Synergie" &&
+        targetRole === "Value"
+      ) {
+        score += 2;
+      }
+
+      if (
+        sourceRole === "Value" &&
+        targetRole === "Synergie"
+      ) {
+        score += 3;
+      }
+
+      const sourceMv =
+        deckCard.manaValue ??
+        source?.manaValue ??
+        0;
+
+      const targetMv =
+        item.card.manaValue ?? 0;
+
+      if (
+        targetMv < sourceMv &&
+        score >= 3
+      ) {
+        score += 1;
+      }
+
+      return {
+        card: item.card,
+        available: item.available,
+        role: targetRole,
+        score
+      };
+    })
+    .filter(match =>
+      match.score >= 6
+    )
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.card.manaValue -
+          b.card.manaValue ||
+        a.card.name.localeCompare(
+          b.card.name,
+          "en",
+          {
+            sensitivity: "base"
+          }
+        )
+    )
+    .slice(0, 3);
+}
+
+function replacementMatchLine(
+  match: ReplacementMatch
+): string {
+  const oracleText =
+    match.card.oracleText?.trim();
+
   const parts = [
-    `${deckCard.count}x ${deckCard.name}`,
+    `${match.available}x frei: ${
+      match.card.name
+    }`,
+    `Rolle ${match.role}`,
+    `MV ${match.card.manaValue ?? 0}`,
+    shorten(
+      match.card.typeLine ??
+        "Unbekannt",
+      55
+    )
+  ];
+
+  if (oracleText) {
+    parts.push(
+      `Oracle ${
+        shorten(
+          oracleText,
+          180
+        )
+      }`
+    );
+  }
+
+  return parts.join(" | ");
+}
+
+function replacementCandidateBlock(
+  deck: DeckRecord,
+  deckCard:
+    DeckRecord["cards"][number],
+  collection: CardRecord[]
+): string | null {
+  const source =
+    collectionCardForDeckCard(
+      deckCard,
+      collection
+    );
+
+  const matches =
+    replacementMatchesForDeckCard(
+      deck,
+      deckCard,
+      collection
+    );
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const sourceRole =
+    roleForDeckCard(
+      deckCard,
+      source
+    );
+
+  const sourceParts = [
+    `DECKKARTE: ${deckCard.name}`,
+    `Rolle ${sourceRole}`,
     `MV ${
       deckCard.manaValue ??
       source?.manaValue ??
       0
-    }`,
-    `Rolle ${
-      deckCard.role?.trim() ||
-      "Keine"
     }`,
     shorten(
       source?.typeLine ??
@@ -836,21 +1156,28 @@ function replacementCandidateLine(
     )
   ];
 
-  const oracleText =
+  const sourceOracle =
     source?.oracleText?.trim();
 
-  if (oracleText) {
-    parts.push(
+  if (sourceOracle) {
+    sourceParts.push(
       `Oracle ${
         shorten(
-          oracleText,
+          sourceOracle,
           220
         )
       }`
     );
   }
 
-  return parts.join(" | ");
+  return [
+    sourceParts.join(" | "),
+    "ERLAUBTE FUNKTIONAL PLAUSIBLE ERSATZKARTEN FÜR DIESE DECKKARTE:",
+    ...matches.map(
+      match =>
+        `- ${replacementMatchLine(match)}`
+    )
+  ].join("\n");
 }
 
 function replacementCandidateContext(
@@ -860,8 +1187,11 @@ function replacementCandidateContext(
 ): string {
   const header = [
     "MÖGLICHE AUSTAUSCHKANDIDATEN AUS DEM DECK",
-    "Die folgenden Karten befinden sich bereits im Deck und dürfen als mögliche zu entfernende Karten geprüft werden.",
-    "Entferne eine Karte nur, wenn der Austausch anhand der gelieferten Daten tatsächlich sinnvoll begründet werden kann.",
+    "Die folgenden Austauschpaare wurden bereits lokal anhand von Besitz, Legalität, Copy-Limits, Kartentyp und Kartenfunktion vorgefiltert.",
+    "Für eine konkrete Austausch-Empfehlung darf ausschließlich eine unter der jeweiligen DECKKARTE als ERLAUBTE FUNKTIONAL PLAUSIBLE ERSATZKARTE aufgeführte Karte verwendet werden.",
+    "Kombiniere eine Deckkarte NICHT mit einer anderen Karte aus der allgemeinen Sammlungsliste, wenn diese nicht ausdrücklich unter dieser Deckkarte als erlaubte Ersatzkarte aufgeführt ist.",
+    "Die lokale Vorfilterung ist bewusst konservativ: Länder werden nur gegen Länder und Nichtländer nur gegen Nichtländer verglichen.",
+    "Groq soll aus diesen vorgefilterten Paaren die überzeugendsten 1 bis 3 auswählen und die Begründung ausschließlich aus den gelieferten Daten ableiten.",
     ""
   ].join("\n");
 
@@ -869,18 +1199,31 @@ function replacementCandidateContext(
     return header;
   }
 
-  const candidates =
-    [...deck.cards]
+  const candidateBlocks =
+    deck.cards
       .filter(card =>
         !deck.commanderIds.includes(
           card.id
         )
       )
+      .map(card => ({
+        card,
+        block:
+          replacementCandidateBlock(
+            deck,
+            card,
+            collection
+          )
+      }))
+      .filter(
+        item =>
+          item.block !== null
+      )
       .sort((a, b) => {
         const aRole =
-          a.role?.trim() || "";
+          a.card.role?.trim() || "";
         const bRole =
-          b.role?.trim() || "";
+          b.card.role?.trim() || "";
 
         const roleCompare =
           aRole.localeCompare(
@@ -896,10 +1239,10 @@ function replacementCandidateContext(
         }
 
         return (
-          (b.manaValue ?? 0) -
-            (a.manaValue ?? 0) ||
-          a.name.localeCompare(
-            b.name,
+          (b.card.manaValue ?? 0) -
+            (a.card.manaValue ?? 0) ||
+          a.card.name.localeCompare(
+            b.card.name,
             "en",
             {
               sensitivity: "base"
@@ -908,29 +1251,32 @@ function replacementCandidateContext(
         );
       });
 
-  const lines: string[] = [];
+  const blocks: string[] = [];
   let length = header.length;
   let complete = true;
 
-  for (const card of candidates) {
-    const line =
-      replacementCandidateLine(
-        card,
-        collection
-      );
+  for (const item of candidateBlocks) {
+    const block = item.block as string;
 
     if (
       length +
-        line.length +
-        1 >
+        block.length +
+        2 >
       maxLength
     ) {
       complete = false;
       break;
     }
 
-    lines.push(line);
-    length += line.length + 1;
+    blocks.push(block);
+    length += block.length + 2;
+  }
+
+  if (blocks.length === 0) {
+    return [
+      header,
+      "Keine lokal vorgefilterten plausiblen Austauschpaare verfügbar."
+    ].join("\n");
   }
 
   const status =
@@ -942,8 +1288,8 @@ function replacementCandidateContext(
     header,
     status,
     "",
-    ...lines
-  ].join("\n");
+    ...blocks
+  ].join("\n\n");
 }
 
 function recommendationRules(): string {
@@ -956,9 +1302,11 @@ function recommendationRules(): string {
     "5. Karten außerhalb der Sammlungsliste dürfen in dieser Ausbaustufe NICHT als konkrete Kauf- oder Austauschkarte empfohlen werden.",
     "6. Erfinde keine Karten und keine Karteneigenschaften.",
     "7. Nutze Oracle-Text und Rolle als wichtigste Grundlage für die Funktion einer Karte. Erfinde keine Funktion, die daraus nicht hervorgeht.",
-    "8. Ein Verbesserungsvorschlag soll möglichst ein echtes Austauschpaar nennen: eine konkrete Karte aus der Sektion MÖGLICHE AUSTAUSCHKANDIDATEN AUS DEM DECK entfernen und eine konkrete freie Karte AUS DER SAMMLUNG einsetzen.",
-    "9. Begründe den Austausch anhand der übermittelten Rollen, Kartentypen, Mana Values und Oracle-Texte beider Karten.",
-    "10. Gib 'Keine passende Ersatzkarte aus deiner Sammlung verfügbar.' nur aus, wenn du trotz der übermittelten Austauschskandidaten kein sinnvolles Austauschpaar begründen kannst."
+    "8. Für einen konkreten Austausch darf nur ein Paar verwendet werden, das in der Sektion MÖGLICHE AUSTAUSCHKANDIDATEN AUS DEM DECK bereits gemeinsam aufgeführt ist.",
+    "9. Die Ersatzkarte muss unter genau dieser DECKKARTE als ERLAUBTE FUNKTIONAL PLAUSIBLE ERSATZKARTE aufgeführt sein. Andere Kombinationen sind nicht erlaubt, auch wenn die Karte in der allgemeinen Sammlungsliste vorkommt.",
+    "10. Begründe den Austausch anhand der übermittelten Rolle, des Kartentyps, des Mana Values und vor allem des Oracle-Texts beider Karten. Erfinde keine zusätzliche Funktion.",
+    "11. Ein niedrigerer Mana Value allein ist kein ausreichender Austauschgrund.",
+    "12. Gib 'Keine passende Ersatzkarte aus deiner Sammlung verfügbar.' nur aus, wenn du aus den lokal vorgefilterten Paaren kein plausibles Austauschpaar begründen kannst."
   ].join("\n");
 }
 
