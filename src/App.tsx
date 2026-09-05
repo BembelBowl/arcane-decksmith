@@ -4,88 +4,32 @@ import remarkGfm from "remark-gfm";
 import type { User } from "firebase/auth";
 import { subscribeAuth, login, logout, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
-import {
-  loadCollection,
-  loadDecks,
-  removeCard,
-  removeDeck,
-  saveCard,
-  saveDeck,
-  uidFromEmail
-} from "./db";
-import {
-  autocomplete,
-  getCard,
-  getPrintings,
-  imageFor,
-  searchCards,
-  scryfallUrl,
-  normalizeCard,
-  type ScryfallCard
-} from "./scryfall";
-import {
-  buildDeck,
-  commanderCandidates,
-  deckStats
-} from "./deckBuilder";
-import {
-  deckText,
-  download,
-  parseList,
-  toCsv
-} from "./importExport";
-import {
-  generateAiDeckExplanation,
-  generateDeckExplanation
-} from "./ai";
-import type {
-  CardRecord,
-  DeckRecord,
-  Format,
-  GroupBy,
-  ViewMode
-} from "./types";
+import { loadCollection, loadDecks, removeCard, removeDeck, saveCard, saveDeck, uidFromEmail } from "./db";
+import { autocomplete, getCard, getPrintings, imageFor, searchCards, scryfallUrl, normalizeCard, type ScryfallCard } from "./scryfall";
+import { buildDeck, commanderCandidates, deckStats } from "./deckBuilder";
+import { deckText, download, parseList, toCsv } from "./importExport";
+import { generateAiDeckExplanation, generateDeckExplanation } from "./ai";
+import type { CardRecord, DeckRecord, Format, GroupBy, ViewMode } from "./types";
 import "./styles.css";
 
-const COLORS = ["W", "U", "B", "R", "G"];
-
-const COLOR_NAMES: Record<string, string> = {
-  W: "Weiß",
-  U: "Blau",
-  B: "Schwarz",
-  R: "Rot",
-  G: "Grün"
-};
+const COLORS = ["W","U","B","R","G"];
+const COLOR_NAMES: Record<string,string> = {W:"Weiß",U:"Blau",B:"Schwarz",R:"Rot",G:"Grün"};
 
 function App() {
-  const [auth, setAuth] = useState<{
-    user: User | null;
-    loading: boolean;
-  }>({
-    user: null,
-    loading: true
-  });
-
+  const [auth, setAuth] = useState<{user: User|null; loading: boolean}>({user:null,loading:true});
   const [demoEmail, setDemoEmail] = useState("");
   const [demoMode, setDemoMode] = useState(false);
 
-  useEffect(
-    () => subscribeAuth(setAuth),
-    []
-  );
+  useEffect(() => subscribeAuth(setAuth), []);
 
   if (auth.loading) {
-    return (
-      <div className="splash">
-        Arcane Decksmith wird geladen…
-      </div>
-    );
+    return <div className="splash">Arcane Decksmith wird geladen…</div>;
   }
 
   if (!auth.user && !demoMode) {
     return (
       <Auth
-        onDemo={(email) => {
+        onDemo={(email)=>{
           setDemoEmail(email);
           setDemoMode(true);
         }}
@@ -93,47 +37,32 @@ function App() {
     );
   }
 
-  const uid =
-    auth.user?.uid ??
-    uidFromEmail(demoEmail);
+  const uid = auth.user?.uid ?? uidFromEmail(demoEmail);
 
   return (
     <Main
       user={auth.user}
       uid={uid}
       demoMode={demoMode}
-      onExitDemo={() => setDemoMode(false)}
+      onExitDemo={()=>setDemoMode(false)}
     />
   );
 }
 
-function Auth({
-  onDemo
-}: {
-  onDemo: (email: string) => void;
-}) {
-  const [email, setEmail] =
-    useState("");
+function Auth({onDemo}:{onDemo:(email:string)=>void}) {
+  const [email,setEmail]=useState("");
+  const [pw,setPw]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [msg,setMsg]=useState("");
 
-  const [pw, setPw] =
-    useState("");
-
-  const [busy, setBusy] =
-    useState(false);
-
-  const [msg, setMsg] =
-    useState("");
-
-  const submit = async () => {
+  const submit=async()=>{
     setBusy(true);
     setMsg("");
 
     try {
-      await login(email, pw);
-    } catch (e: any) {
-      setMsg(
-        authMessage(e?.code ?? "")
-      );
+      await login(email,pw);
+    } catch(e:any) {
+      setMsg(authMessage(e?.code??""));
     } finally {
       setBusy(false);
     }
@@ -151,26 +80,20 @@ function Auth({
         <h1>Arcane Decksmith</h1>
 
         <p className="muted">
-          Deine Sammlung. Deine Karten.
-          Dein Deck.
+          Deine Sammlung. Deine Karten. Dein Deck.
         </p>
 
         {!firebaseConfigured &&
           <div className="notice">
-            Firebase ist noch nicht
-            konfiguriert. Du kannst den
-            lokalen Demo-Modus verwenden.
+            Firebase ist noch nicht konfiguriert. Du kannst den lokalen Demo-Modus verwenden.
           </div>
         }
 
         <label>
           E-Mail
-
           <input
             value={email}
-            onChange={e =>
-              setEmail(e.target.value)
-            }
+            onChange={e=>setEmail(e.target.value)}
             type="email"
             autoComplete="email"
           />
@@ -178,47 +101,29 @@ function Auth({
 
         <label>
           Passwort
-
           <input
             value={pw}
-            onChange={e =>
-              setPw(e.target.value)
-            }
+            onChange={e=>setPw(e.target.value)}
             type="password"
             autoComplete="current-password"
           />
         </label>
 
-        {msg &&
-          <div className="error">
-            {msg}
-          </div>
-        }
+        {msg&&<div className="error">{msg}</div>}
 
         <button
           className="primary full"
-          disabled={
-            busy ||
-            !email ||
-            !pw
-          }
+          disabled={busy||!email||!pw}
           onClick={submit}
         >
-          {busy ? "…" : "Anmelden"}
+          {busy?"…":"Anmelden"}
         </button>
 
-        <div className="divider">
-          oder
-        </div>
+        <div className="divider">oder</div>
 
         <button
           className="secondary full"
-          onClick={() =>
-            onDemo(
-              email ||
-              "demo@example.com"
-            )
-          }
+          onClick={()=>onDemo(email||"demo@example.com")}
         >
           Lokalen Demo-Modus verwenden
         </button>
@@ -232,258 +137,145 @@ function Main({
   uid,
   demoMode,
   onExitDemo
-}: {
-  user: User | null;
-  uid: string;
-  demoMode: boolean;
-  onExitDemo: () => void;
+}:{
+  user:User|null;
+  uid:string;
+  demoMode:boolean;
+  onExitDemo:()=>void;
 }) {
-  const [
-    collection,
-    setCollection
-  ] =
-    useState<CardRecord[]>([]);
+  const [collection,setCollection]=useState<CardRecord[]>([]);
+  const [decks,setDecks]=useState<DeckRecord[]>([]);
+  const [page,setPage]=useState<"collection"|"search"|"builder"|"decks">("collection");
+  const [busy,setBusy]=useState(true);
+  const [toast,setToast]=useState("");
 
-  const [
-    decks,
-    setDecks
-  ] =
-    useState<DeckRecord[]>([]);
-
-  const [
-    page,
-    setPage
-  ] =
-    useState<
-      "collection" |
-      "search" |
-      "builder" |
-      "decks"
-    >("collection");
-
-  const [
-    busy,
-    setBusy
-  ] =
-    useState(true);
-
-  const [
-    toast,
-    setToast
-  ] =
-    useState("");
-
-  useEffect(() => {
-    void (async () => {
+  useEffect(()=>{
+    void (async()=>{
       setBusy(true);
 
       try {
-        setCollection(
-          await loadCollection(uid)
-        );
-
-        setDecks(
-          await loadDecks(uid)
-        );
+        setCollection(await loadCollection(uid));
+        setDecks(await loadDecks(uid));
       } finally {
         setBusy(false);
       }
     })();
-  }, [uid]);
+  },[uid]);
 
-  const persistCard =
-    async (c: CardRecord) => {
-      await saveCard(uid, c);
+  const persistCard=async(c:CardRecord)=>{
+    await saveCard(uid,c);
+    setCollection(await loadCollection(uid));
+  };
 
-      setCollection(
-        await loadCollection(uid)
-      );
-    };
+  const persistDeck=async(d:DeckRecord)=>{
+    await saveDeck(uid,d);
+    setDecks(await loadDecks(uid));
+    setPage("decks");
+    setToast("Deck gespeichert.");
+    setTimeout(()=>setToast(""),2200);
+  };
 
-  const persistDeck =
-    async (d: DeckRecord) => {
-      await saveDeck(uid, d);
+  const delCard=async(id:string)=>{
+    await removeCard(uid,id);
+    setCollection(await loadCollection(uid));
+  };
 
-      setDecks(
-        await loadDecks(uid)
-      );
-
-      setPage("decks");
-
-      setToast(
-        "Deck gespeichert."
-      );
-
-      setTimeout(
-        () => setToast(""),
-        2200
-      );
-    };
-
-  const delCard =
-    async (id: string) => {
-      await removeCard(uid, id);
-
-      setCollection(
-        await loadCollection(uid)
-      );
-    };
-
-  const delDeck =
-    async (id: string) => {
-      await removeDeck(uid, id);
-
-      setDecks(
-        await loadDecks(uid)
-      );
-    };
+  const delDeck=async(id:string)=>{
+    await removeDeck(uid,id);
+    setDecks(await loadDecks(uid));
+  };
 
   return (
     <div className="app">
       <header className="topbar">
         <button
           className="logo"
-          onClick={() =>
-            setPage("collection")
-          }
+          onClick={()=>setPage("collection")}
         >
           <img
             src="./ad_logo.png"
             alt="Arcane Decksmith Logo"
           />
-
           Arcane Decksmith
         </button>
 
         <nav>
-          {(
-            [
-              "collection",
-              "search",
-              "builder",
-              "decks"
-            ] as const
-          ).map(p =>
+          {(["collection","search","builder","decks"] as const).map(p=>
             <button
               key={p}
-              className={
-                page === p
-                  ? "nav active"
-                  : "nav"
-              }
-              onClick={() =>
-                setPage(p)
-              }
+              className={page===p?"nav active":"nav"}
+              onClick={()=>setPage(p)}
             >
-              {p === "collection"
-                ? "Sammlung"
-                : p === "search"
-                  ? "Kartensuche"
-                  : p === "builder"
-                    ? "Deck bauen"
-                    : "Decks"
+              {p==="collection"
+                ?"Sammlung"
+                :p==="search"
+                  ?"Kartensuche"
+                  :p==="builder"
+                    ?"Deck bauen"
+                    :"Decks"
               }
             </button>
           )}
         </nav>
 
         <div className="userbox">
-          <span>
-            {demoMode
-              ? "Demo"
-              : user?.email
-            }
-          </span>
+          <span>{demoMode?"Demo":user?.email}</span>
 
-          <button
-            onClick={
-              demoMode
-                ? onExitDemo
-                : logout
-            }
-          >
+          <button onClick={demoMode?onExitDemo:logout}>
             Abmelden
           </button>
         </div>
       </header>
 
-      {toast &&
-        <div className="toast">
-          {toast}
-        </div>
-      }
+      {toast&&<div className="toast">{toast}</div>}
 
       <main>
         {busy
-          ? <div className="loading">
-              Daten werden geladen…
-            </div>
+          ? <div className="loading">Daten werden geladen…</div>
 
-          : page === "collection"
+          : page==="collection"
             ? <Collection
                 cards={collection}
                 onChange={persistCard}
                 onDelete={delCard}
-                onImport={async next => {
-                  for (
-                    const c of next
-                  ) {
-                    await saveCard(
-                      uid,
-                      c
-                    );
+                onImport={async(next)=>{
+                  for(const c of next){
+                    await saveCard(uid,c);
                   }
 
-                  setCollection(
-                    await loadCollection(
-                      uid
-                    )
-                  );
+                  setCollection(await loadCollection(uid));
                 }}
               />
 
-          : page === "search"
+          : page==="search"
             ? <Search
-                onAdd={async c => {
-                  const existing =
-                    collection.find(
-                      x =>
-                        x.id === c.id
-                    );
+                onAdd={async(c)=>{
+                  const existing=collection.find(x=>x.id===c.id);
 
                   await persistCard(
                     existing
                       ? {
                           ...existing,
-                          count:
-                            existing.count +
-                            1,
-                          updatedAt:
-                            Date.now()
+                          count:existing.count+1,
+                          updatedAt:Date.now()
                         }
                       : {
-                          ...normalizeCard(
-                            c
-                          ),
-                          count: 1
+                          ...normalizeCard(c),
+                          count:1
                         }
                   );
 
                   setToast(
                     existing
-                      ? `${c.name}: Anzahl auf ${existing.count + 1} erhöht.`
+                      ? `${c.name}: Anzahl auf ${existing.count+1} erhöht.`
                       : `${c.name} wurde zur Sammlung hinzugefügt.`
                   );
 
-                  setTimeout(
-                    () =>
-                      setToast(""),
-                    2200
-                  );
+                  setTimeout(()=>setToast(""),2200);
                 }}
               />
 
-          : page === "builder"
+          : page==="builder"
             ? <Builder
                 pool={collection}
                 onSave={persistDeck}
@@ -500,83 +292,44 @@ function Main({
       </main>
 
       <footer>
-        Scryfall-Daten & Bilder werden
-        direkt von Scryfall geladen.
-        Keine Kaufentscheidung aufgrund
-        von Preisen.
+        Scryfall-Daten & Bilder werden direkt von Scryfall geladen.
+        Keine Kaufentscheidung aufgrund von Preisen.
       </footer>
     </div>
   );
 }
 
-function Search({
-  onAdd
-}: {
-  onAdd: (
-    c: ScryfallCard
-  ) => Promise<void>;
-}) {
-  const [
-    q,
-    setQ
-  ] =
-    useState("");
+function Search({onAdd}:{onAdd:(c:ScryfallCard)=>Promise<void>}) {
+  const [q,setQ]=useState("");
+  const [results,setResults]=useState<ScryfallCard[]>([]);
+  const [suggestions,setSuggestions]=useState<string[]>([]);
+  const [busy,setBusy]=useState(false);
 
-  const [
-    results,
-    setResults
-  ] =
-    useState<ScryfallCard[]>([]);
-
-  const [
-    suggestions,
-    setSuggestions
-  ] =
-    useState<string[]>([]);
-
-  const [
-    busy,
-    setBusy
-  ] =
-    useState(false);
-
-  useEffect(() => {
-    const t =
-      setTimeout(() => {
-        if (
-          q.length >= 2
-        ) {
-          void autocomplete(q)
-            .then(
-              setSuggestions
-            )
-            .catch(
-              () =>
-                setSuggestions([])
-            );
-        } else {
-          setSuggestions([]);
-        }
-      }, 300);
-
-    return () =>
-      clearTimeout(t);
-  }, [q]);
-
-  const go =
-    async () => {
-      setBusy(true);
-
-      try {
-        setResults(
-          await searchCards(q)
-        );
-      } catch (e: any) {
-        alert(e.message);
-      } finally {
-        setBusy(false);
+  useEffect(()=>{
+    const t=setTimeout(()=>{
+      if(q.length>=2) {
+        void autocomplete(q)
+          .then(setSuggestions)
+          .catch(()=>setSuggestions([]));
+      } else {
+        setSuggestions([]);
       }
-    };
+    },300);
+
+    return()=>clearTimeout(t);
+  },[q]);
+
+  const go=async()=>{
+    setBusy(true);
+
+    try {
+      setResults(await searchCards(q));
+    } catch(e:any) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <section>
@@ -585,8 +338,7 @@ function Search({
           <h2>Kartensuche</h2>
 
           <p className="muted">
-            Scryfall-Suche mit lokalem
-            Sitzungscache.
+            Scryfall-Suche mit lokalem Sitzungscache.
           </p>
         </div>
       </div>
@@ -594,13 +346,8 @@ function Search({
       <div className="searchbar">
         <input
           value={q}
-          onChange={e =>
-            setQ(e.target.value)
-          }
-          onKeyDown={e =>
-            e.key === "Enter" &&
-            void go()
-          }
+          onChange={e=>setQ(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&void go()}
           placeholder="z. B. Lightning Bolt"
         />
 
@@ -612,14 +359,13 @@ function Search({
         </button>
       </div>
 
-      {suggestions.length > 0 &&
+      {suggestions.length>0&&
         <div className="suggestions">
-          {suggestions.map(s =>
+          {suggestions.map(s=>
             <button
               key={s}
-              onClick={() => {
+              onClick={()=>{
                 setQ(s);
-
                 setSuggestions([]);
               }}
             >
@@ -635,7 +381,7 @@ function Search({
           </div>
 
         : <div className="card-grid">
-            {results.map(c =>
+            {results.map(c=>
               <SearchCard
                 key={c.id}
                 card={c}
@@ -651,103 +397,49 @@ function Search({
 function SearchCard({
   card,
   onAdd
-}: {
-  card: ScryfallCard;
-  onAdd: (
-    card: ScryfallCard
-  ) =>
-    void |
-    Promise<void>;
+}:{
+  card:ScryfallCard;
+  onAdd:(card:ScryfallCard)=>void|Promise<void>;
 }) {
-  const [
-    selectedCard,
-    setSelectedCard
-  ] =
-    useState<ScryfallCard>(
-      card
-    );
+  const [selectedCard,setSelectedCard]=useState<ScryfallCard>(card);
+  const [printings,setPrintings]=useState<ScryfallCard[]>([]);
+  const [showPrintings,setShowPrintings]=useState(false);
+  const [loadingPrintings,setLoadingPrintings]=useState(false);
+  const [printingError,setPrintingError]=useState("");
 
-  const [
-    printings,
-    setPrintings
-  ] =
-    useState<ScryfallCard[]>(
-      []
-    );
-
-  const [
-    showPrintings,
-    setShowPrintings
-  ] =
-    useState(false);
-
-  const [
-    loadingPrintings,
-    setLoadingPrintings
-  ] =
-    useState(false);
-
-  const [
-    printingError,
-    setPrintingError
-  ] =
-    useState("");
-
-  useEffect(() => {
+  useEffect(()=>{
     setSelectedCard(card);
     setPrintings([]);
     setShowPrintings(false);
     setPrintingError("");
-  }, [card.id]);
+  },[card.id]);
 
-  const loadPrintings =
-    async () => {
-      if (
-        showPrintings
-      ) {
-        setShowPrintings(
-          false
-        );
+  const loadPrintings=async()=>{
+    if(showPrintings){
+      setShowPrintings(false);
+      return;
+    }
 
-        return;
-      }
+    setShowPrintings(true);
 
-      setShowPrintings(
-        true
+    if(printings.length>0) {
+      return;
+    }
+
+    setLoadingPrintings(true);
+    setPrintingError("");
+
+    try{
+      const variants=await getPrintings(card);
+      setPrintings(variants);
+    }catch{
+      setPrintingError(
+        "Die Varianten konnten nicht von Scryfall geladen werden."
       );
-
-      if (
-        printings.length >
-        0
-      ) {
-        return;
-      }
-
-      setLoadingPrintings(
-        true
-      );
-
-      setPrintingError("");
-
-      try {
-        const variants =
-          await getPrintings(
-            card
-          );
-
-        setPrintings(
-          variants
-        );
-      } catch {
-        setPrintingError(
-          "Die Varianten konnten nicht von Scryfall geladen werden."
-        );
-      } finally {
-        setLoadingPrintings(
-          false
-        );
-      }
-    };
+    }finally{
+      setLoadingPrintings(false);
+    }
+  };
 
   return (
     <article className="card-tile">
@@ -758,39 +450,25 @@ function SearchCard({
       />
 
       <div className="card-body">
-        <h3>
-          {selectedCard.name}
-        </h3>
+        <h3>{selectedCard.name}</h3>
 
         <div className="meta">
-          {selectedCard.mana_cost ??
-            "—"}{" "}
-          · MV{" "}
-          {selectedCard.cmc ??
-            0}{" "}
-          ·{" "}
-          {selectedCard.set.toUpperCase()}{" "}
-          #
-          {selectedCard.collector_number}
+          {selectedCard.mana_cost??"—"} · MV {selectedCard.cmc??0} ·{" "}
+          {selectedCard.set.toUpperCase()} #{selectedCard.collector_number}
         </div>
 
-        {selectedCard.set_name &&
+        {selectedCard.set_name&&
           <div className="meta">
             {selectedCard.set_name}
           </div>
         }
 
-        <p>
-          {selectedCard.type_line}
-        </p>
+        <p>{selectedCard.type_line}</p>
 
         <p className="oracle">
-          {selectedCard.oracle_text ??
+          {selectedCard.oracle_text??
             selectedCard.card_faces
-              ?.map(
-                f =>
-                  f.oracle_text
-              )
+              ?.map(f=>f.oracle_text)
               .filter(Boolean)
               .join(" / ")
           }
@@ -799,120 +477,85 @@ function SearchCard({
         <div className="variant-actions">
           <button
             className="secondary"
-            onClick={
-              loadPrintings
-            }
-            disabled={
-              loadingPrintings
-            }
+            onClick={loadPrintings}
+            disabled={loadingPrintings}
           >
             {loadingPrintings
-              ? "Varianten werden geladen…"
-              : showPrintings
-                ? "Varianten schließen"
-                : "Varianten / Drucke"
+              ?"Varianten werden geladen…"
+              :showPrintings
+                ?"Varianten schließen"
+                :"Varianten / Drucke"
             }
           </button>
         </div>
 
-        {showPrintings &&
+        {showPrintings&&
           <div className="variant-box">
-            {printingError &&
-              <div className="error">
-                {printingError}
-              </div>
+            {printingError&&
+              <div className="error">{printingError}</div>
             }
 
-            {!printingError &&
-              loadingPrintings &&
+            {!printingError&&loadingPrintings&&
               <div className="muted">
-                Scryfall lädt
-                verfügbare Drucke…
+                Scryfall lädt verfügbare Drucke…
               </div>
             }
 
-            {!loadingPrintings &&
-              printings.length >
-                0 &&
+            {!loadingPrintings&&printings.length>0&&
               <>
                 <label>
                   Ausgabe auswählen
 
                   <select
                     className="variant-select"
-                    value={
-                      selectedCard.id
-                    }
-                    onChange={e => {
-                      const chosen =
-                        printings.find(
-                          p =>
-                            p.id ===
-                            e.target
-                              .value
-                        );
+                    value={selectedCard.id}
+                    onChange={e=>{
+                      const chosen=printings.find(
+                        p=>p.id===e.target.value
+                      );
 
-                      if (
-                        chosen
-                      ) {
-                        setSelectedCard(
-                          chosen
-                        );
+                      if(chosen) {
+                        setSelectedCard(chosen);
                       }
                     }}
                   >
-                    {printings.map(
-                      p =>
-                        <option
-                          key={
-                            p.id
-                          }
-                          value={
-                            p.id
-                          }
-                        >
-                          {p.set_name ??
-                            p.set}
-                          {" · "}
-                          {p.set.toUpperCase()}
-                          {" #"}
-                          {p.collector_number}
-
-                          {p.lang &&
-                          p.lang !==
-                            "en"
-                            ? ` · ${p.lang.toUpperCase()}`
-                            : ""
-                          }
-                        </option>
+                    {printings.map(p=>
+                      <option
+                        key={p.id}
+                        value={p.id}
+                      >
+                        {(p.set_name??p.set)}
+                        {" · "}
+                        {p.set.toUpperCase()}
+                        {" #"}
+                        {p.collector_number}
+                        {p.lang&&p.lang!=="en"
+                          ?` · ${p.lang.toUpperCase()}`
+                          :""
+                        }
+                      </option>
                     )}
                   </select>
                 </label>
 
                 <div className="variant-info">
-                  <strong>
-                    Gewählte Ausgabe:
-                  </strong>
+                  <strong>Gewählte Ausgabe:</strong>
 
                   <span>
-                    {selectedCard.set_name ??
-                      selectedCard.set.toUpperCase()}
+                    {selectedCard.set_name??selectedCard.set.toUpperCase()}
                   </span>
 
                   <span>
-                    Set:{" "}
-                    {selectedCard.set.toUpperCase()}
+                    Set: {selectedCard.set.toUpperCase()}
                   </span>
 
                   <span>
-                    Collector Nr.:{" "}
-                    {selectedCard.collector_number}
+                    Collector Nr.: {selectedCard.collector_number}
                   </span>
 
-                  {selectedCard.rarity &&
+                  {selectedCard.rarity&&
                     <span>
-                      Seltenheit:{" "}
-                      {selectedCard.rarity}
+                      Seltenheit: {selectedCard.rarity}
                     </span>
                   }
                 </div>
@@ -924,19 +567,13 @@ function SearchCard({
         <div className="row search-card-actions">
           <button
             className="primary"
-            onClick={() =>
-              onAdd(
-                selectedCard
-              )
-            }
+            onClick={()=>onAdd(selectedCard)}
           >
             + Sammlung
           </button>
 
           <a
-            href={scryfallUrl(
-              selectedCard.id
-            )}
+            href={scryfallUrl(selectedCard.id)}
             target="_blank"
             rel="noreferrer"
           >
@@ -953,194 +590,87 @@ function Collection({
   onChange,
   onDelete,
   onImport
-}: {
-  cards: CardRecord[];
-  onChange: (
-    c: CardRecord
-  ) => Promise<void>;
-  onDelete: (
-    id: string
-  ) => Promise<void>;
-  onImport: (
-    c: CardRecord[]
-  ) => Promise<void>;
+}:{
+  cards:CardRecord[];
+  onChange:(c:CardRecord)=>Promise<void>;
+  onDelete:(id:string)=>Promise<void>;
+  onImport:(c:CardRecord[])=>Promise<void>;
 }) {
-  const [
-    query,
-    setQuery
-  ] =
-    useState("");
+  const [query,setQuery]=useState("");
+  const [group,setGroup]=useState<GroupBy>("none");
+  const [view,setView]=useState<ViewMode>("grid");
+  const [sort,setSort]=useState("name");
+  const [selected,setSelected]=useState<Set<string>>(new Set());
+  const [importText,setImportText]=useState("");
+  const [showImport,setShowImport]=useState(false);
 
-  const [
-    group,
-    setGroup
-  ] =
-    useState<GroupBy>(
-      "none"
-    );
+  const filtered=useMemo(
+    ()=>cards
+      .filter(c=>
+        `${c.name} ${c.set} ${c.typeLine} ${c.oracleText}`
+          .toLowerCase()
+          .includes(query.toLowerCase())
+      )
+      .sort((a,b)=>
+        sort==="mv"
+          ?a.manaValue-b.manaValue
+          :sort==="count"
+            ?b.count-a.count
+            :a.name.localeCompare(b.name)
+      ),
+    [cards,query,sort]
+  );
 
-  const [
-    view,
-    setView
-  ] =
-    useState<ViewMode>(
-      "grid"
-    );
+  const total=cards.reduce((n,c)=>n+c.count,0);
 
-  const [
-    sort,
-    setSort
-  ] =
-    useState("name");
+  const groups=
+    group==="none"
+      ? {Alle:filtered}
+      : filtered.reduce<Record<string,CardRecord[]>>((a,c)=>{
+          const k=
+            group==="color"
+              ?(c.colors.join("")||"Farblos")
+              :group==="type"
+                ?(c.typeLine?.split("—")[0]??"Unbekannt")
+                :group==="set"
+                  ?c.set.toUpperCase()
+                  :`MV ${c.manaValue}`;
 
-  const [
-    selected,
-    setSelected
-  ] =
-    useState<
-      Set<string>
-    >(new Set());
-
-  const [
-    importText,
-    setImportText
-  ] =
-    useState("");
-
-  const [
-    showImport,
-    setShowImport
-  ] =
-    useState(false);
-
-  const filtered =
-    useMemo(
-      () =>
-        cards
-          .filter(c =>
-            `${c.name} ${c.set} ${c.typeLine} ${c.oracleText}`
-              .toLowerCase()
-              .includes(
-                query.toLowerCase()
-              )
-          )
-          .sort((a, b) =>
-            sort === "mv"
-              ? a.manaValue -
-                b.manaValue
-              : sort ===
-                  "count"
-                ? b.count -
-                  a.count
-                : a.name.localeCompare(
-                    b.name
-                  )
-          ),
-      [
-        cards,
-        query,
-        sort
-      ]
-    );
-
-  const total =
-    cards.reduce(
-      (n, c) =>
-        n + c.count,
-      0
-    );
-
-  const groups =
-    group === "none"
-      ? {
-          Alle: filtered
-        }
-      : filtered.reduce<
-          Record<
-            string,
-            CardRecord[]
-          >
-        >((a, c) => {
-          const k =
-            group === "color"
-              ? (
-                  c.colors.join(
-                    ""
-                  ) ||
-                  "Farblos"
-                )
-              : group === "type"
-                ? (
-                    c.typeLine?.split(
-                      "—"
-                    )[0] ??
-                    "Unbekannt"
-                  )
-                : group === "set"
-                  ? c.set.toUpperCase()
-                  : `MV ${c.manaValue}`;
-
-          (
-            a[k] ??= []
-          ).push(c);
-
+          (a[k]??=[]).push(c);
           return a;
-        }, {});
+        },{});
 
-  const importList =
-    async () => {
-      const rows =
-        parseList(
-          importText
-        );
+  const importList=async()=>{
+    const rows=parseList(importText);
+    const out=[...cards];
 
-      const out =
-        [...cards];
+    for(const r of rows){
+      try{
+        const matches=await searchCards(r.name);
+        const c=matches[0];
 
-      for (
-        const r of rows
-      ) {
-        try {
-          const matches =
-            await searchCards(
-              r.name
-            );
-
-          const c =
-            matches[0];
-
-          if (!c) {
-            continue;
-          }
-
-          const n =
-            normalizeCard(
-              c,
-              r.count
-            );
-
-          const old =
-            out.find(
-              x =>
-                x.id === n.id
-            );
-
-          if (old) {
-            old.count +=
-              r.count;
-          } else {
-            out.push(n);
-          }
-        } catch {
-          // Ungültige Importzeile wird übersprungen.
+        if(!c) {
+          continue;
         }
+
+        const n=normalizeCard(c,r.count);
+        const old=out.find(x=>x.id===n.id);
+
+        if(old) {
+          old.count+=r.count;
+        } else {
+          out.push(n);
+        }
+      }catch{
+        // Fehlerhafte Importzeile überspringen.
       }
+    }
 
-      await onImport(out);
+    await onImport(out);
 
-      setImportText("");
-      setShowImport(false);
-    };
+    setImportText("");
+    setShowImport(false);
+  };
 
   return (
     <section>
@@ -1149,93 +679,64 @@ function Collection({
           <h2>Sammlung</h2>
 
           <p className="muted">
-            {cards.length} unterschiedliche
-            Karten · {total} physische Karten
+            {cards.length} unterschiedliche Karten · {total} physische Karten
           </p>
         </div>
 
         <div className="row">
           <button
             className="secondary"
-            onClick={() =>
-              download(
-                "collection.json",
-                JSON.stringify(
-                  cards,
-                  null,
-                  2
-                ),
-                "application/json"
-              )
-            }
+            onClick={()=>download(
+              "collection.json",
+              JSON.stringify(cards,null,2),
+              "application/json"
+            )}
           >
             JSON export
           </button>
 
           <button
             className="secondary"
-            onClick={() =>
-              download(
-                "collection.csv",
-                toCsv(cards),
-                "text/csv;charset=utf-8"
-              )
-            }
+            onClick={()=>download(
+              "collection.csv",
+              toCsv(cards),
+              "text/csv;charset=utf-8"
+            )}
           >
             CSV export
           </button>
 
           <button
             className="primary"
-            onClick={() =>
-              setShowImport(
-                !showImport
-              )
-            }
+            onClick={()=>setShowImport(!showImport)}
           >
             Import
           </button>
         </div>
       </div>
 
-      {showImport &&
+      {showImport&&
         <div className="panel">
-          <h3>
-            Textimport
-          </h3>
+          <h3>Textimport</h3>
 
           <textarea
-            value={
-              importText
-            }
-            onChange={e =>
-              setImportText(
-                e.target.value
-              )
-            }
-            placeholder={
-              "4 Lightning Bolt\n2x Counterspell\n1 Sol Ring"
-            }
+            value={importText}
+            onChange={e=>setImportText(e.target.value)}
+            placeholder={"4 Lightning Bolt\n2x Counterspell\n1 Sol Ring"}
             rows={6}
           />
 
           <div className="row">
             <button
               className="primary"
-              onClick={
-                importList
-              }
+              onClick={importList}
             >
               Import prüfen & übernehmen
             </button>
 
             <button
               className="secondary"
-              onClick={() =>
-                setShowImport(
-                  false
-                )
-              }
+              onClick={()=>setShowImport(false)}
             >
               Abbrechen
             </button>
@@ -1246,164 +747,80 @@ function Collection({
       <div className="toolbar">
         <input
           value={query}
-          onChange={e =>
-            setQuery(
-              e.target.value
-            )
-          }
+          onChange={e=>setQuery(e.target.value)}
           placeholder="Sammlung durchsuchen…"
         />
 
         <select
           value={sort}
-          onChange={e =>
-            setSort(
-              e.target.value
-            )
-          }
+          onChange={e=>setSort(e.target.value)}
         >
-          <option value="name">
-            Name
-          </option>
-
-          <option value="mv">
-            Mana Value
-          </option>
-
-          <option value="count">
-            Anzahl
-          </option>
+          <option value="name">Name</option>
+          <option value="mv">Mana Value</option>
+          <option value="count">Anzahl</option>
         </select>
 
         <select
           value={group}
-          onChange={e =>
-            setGroup(
-              e.target.value
-                as GroupBy
-            )
-          }
+          onChange={e=>setGroup(e.target.value as GroupBy)}
         >
-          <option value="none">
-            Keine Gruppierung
-          </option>
-
-          <option value="color">
-            Farbe
-          </option>
-
-          <option value="type">
-            Typ
-          </option>
-
-          <option value="set">
-            Set
-          </option>
-
-          <option value="manaValue">
-            Mana Value
-          </option>
+          <option value="none">Keine Gruppierung</option>
+          <option value="color">Farbe</option>
+          <option value="type">Typ</option>
+          <option value="set">Set</option>
+          <option value="manaValue">Mana Value</option>
         </select>
 
         <button
           className="secondary"
-          onClick={() =>
-            setView(
-              view === "grid"
-                ? "list"
-                : "grid"
-            )
-          }
+          onClick={()=>setView(view==="grid"?"list":"grid")}
         >
-          {view === "grid"
-            ? "Listenansicht"
-            : "Kartenansicht"
-          }
+          {view==="grid"?"Listenansicht":"Kartenansicht"}
         </button>
       </div>
 
-      {Object.entries(
-        groups
-      ).map(
-        ([name, list]) =>
-          <div key={name}>
-            <h3 className="group-title">
-              {name}
-            </h3>
+      {Object.entries(groups).map(([name,list])=>
+        <div key={name}>
+          <h3 className="group-title">{name}</h3>
 
-            <div
-              className={
-                view === "grid"
-                  ? "card-grid"
-                  : "list-view"
-              }
-            >
-              {list.map(c =>
-                <CollectionCard
-                  key={c.id}
-                  card={c}
-                  selected={
-                    selected.has(
-                      c.id
-                    )
-                  }
-                  toggle={() =>
-                    setSelected(
-                      s => {
-                        const n =
-                          new Set(
-                            s
-                          );
+          <div className={view==="grid"?"card-grid":"list-view"}>
+            {list.map(c=>
+              <CollectionCard
+                key={c.id}
+                card={c}
+                selected={selected.has(c.id)}
+                toggle={()=>
+                  setSelected(s=>{
+                    const n=new Set(s);
 
-                        if (
-                          n.has(
-                            c.id
-                          )
-                        ) {
-                          n.delete(
-                            c.id
-                          );
-                        } else {
-                          n.add(
-                            c.id
-                          );
-                        }
+                    if(n.has(c.id)){
+                      n.delete(c.id);
+                    }else{
+                      n.add(c.id);
+                    }
 
-                        return n;
-                      }
-                    )
-                  }
-                  onChange={
-                    onChange
-                  }
-                  onDelete={
-                    onDelete
-                  }
-                />
-              )}
-            </div>
+                    return n;
+                  })
+                }
+                onChange={onChange}
+                onDelete={onDelete}
+              />
+            )}
           </div>
+        </div>
       )}
 
-      {selected.size >
-        0 &&
+      {selected.size>0&&
         <div className="bulkbar">
           {selected.size} ausgewählt
 
           <button
-            onClick={async () => {
-              for (
-                const id
-                of selected
-              ) {
-                await onDelete(
-                  id
-                );
+            onClick={async()=>{
+              for(const id of selected){
+                await onDelete(id);
               }
 
-              setSelected(
-                new Set()
-              );
+              setSelected(new Set());
             }}
           >
             Ausgewählte löschen
@@ -1420,16 +837,12 @@ function CollectionCard({
   toggle,
   onChange,
   onDelete
-}: {
-  card: CardRecord;
-  selected: boolean;
-  toggle: () => void;
-  onChange: (
-    c: CardRecord
-  ) => Promise<void>;
-  onDelete: (
-    id: string
-  ) => Promise<void>;
+}:{
+  card:CardRecord;
+  selected:boolean;
+  toggle:()=>void;
+  onChange:(c:CardRecord)=>Promise<void>;
+  onDelete:(id:string)=>Promise<void>;
 }) {
   return (
     <article className="collection-card">
@@ -1441,7 +854,7 @@ function CollectionCard({
         />
       </div>
 
-      {card.imageUri &&
+      {card.imageUri&&
         <img
           src={card.imageUri}
           alt=""
@@ -1450,65 +863,40 @@ function CollectionCard({
       }
 
       <div className="card-body">
-        <h3>
-          {card.name}
-        </h3>
+        <h3>{card.name}</h3>
 
         <div className="meta">
-          {card.set.toUpperCase()}{" "}
-          #{card.collectorNumber} ·
-          MV {card.manaValue}
+          {card.set.toUpperCase()} #{card.collectorNumber} · MV {card.manaValue}
         </div>
 
-        <p>
-          {card.typeLine}
-        </p>
+        <p>{card.typeLine}</p>
 
         <div className="quantity">
           <button
-            onClick={() =>
-              onChange({
-                ...card,
-                count:
-                  Math.max(
-                    1,
-                    card.count -
-                      1
-                  ),
-                updatedAt:
-                  Date.now()
-              })
-            }
+            onClick={()=>onChange({
+              ...card,
+              count:Math.max(1,card.count-1),
+              updatedAt:Date.now()
+            })}
           >
             −
           </button>
 
-          <strong>
-            {card.count}
-          </strong>
+          <strong>{card.count}</strong>
 
           <button
-            onClick={() =>
-              onChange({
-                ...card,
-                count:
-                  card.count +
-                  1,
-                updatedAt:
-                  Date.now()
-              })
-            }
+            onClick={()=>onChange({
+              ...card,
+              count:card.count+1,
+              updatedAt:Date.now()
+            })}
           >
             +
           </button>
 
           <button
             className="danger ghost"
-            onClick={() =>
-              onDelete(
-                card.id
-              )
-            }
+            onClick={()=>onDelete(card.id)}
           >
             Löschen
           </button>
@@ -1522,200 +910,86 @@ function Builder({
   pool,
   onSave,
   demoMode
-}: {
-  pool: CardRecord[];
-  onSave: (
-    d: DeckRecord
-  ) => Promise<void>;
-  demoMode: boolean;
+}:{
+  pool:CardRecord[];
+  onSave:(d:DeckRecord)=>Promise<void>;
+  demoMode:boolean;
 }) {
-  const [
-    format,
-    setFormat
-  ] =
-    useState<Format>(
-      "commander"
-    );
+  const [format,setFormat]=useState<Format>("commander");
+  const [colors,setColors]=useState<string[]>(["G"]);
+  const [commanderId,setCommanderId]=useState("");
+  const [target,setTarget]=useState(3);
+  const [min,setMin]=useState("");
+  const [max,setMax]=useState("");
+  const [name,setName]=useState("Neues Deck");
+  const [result,setResult]=useState<DeckRecord|null>(null);
+  const [analysisText,setAnalysisText]=useState("");
+  const [aiBusy,setAiBusy]=useState(false);
 
-  const [
-    colors,
-    setColors
-  ] =
-    useState<string[]>(
-      ["G"]
-    );
+  const commanders=useMemo(
+    ()=>commanderCandidates(pool,colors),
+    [pool,colors]
+  );
 
-  const [
-    commanderId,
-    setCommanderId
-  ] =
-    useState("");
-
-  const [
-    target,
-    setTarget
-  ] =
-    useState(3);
-
-  const [
-    min,
-    setMin
-  ] =
-    useState("");
-
-  const [
-    max,
-    setMax
-  ] =
-    useState("");
-
-  const [
-    name,
-    setName
-  ] =
-    useState(
-      "Neues Deck"
-    );
-
-  const [
-    result,
-    setResult
-  ] =
-    useState<
-      DeckRecord | null
-    >(null);
-
-  const [
-    analysisText,
-    setAnalysisText
-  ] =
-    useState("");
-
-  const [
-    aiBusy,
-    setAiBusy
-  ] =
-    useState(false);
-
-  const commanders =
-    useMemo(
-      () =>
-        commanderCandidates(
-          pool,
-          colors
-        ),
-      [
-        pool,
-        colors
-      ]
-    );
-
-  useEffect(() => {
-    if (
-      !commanders.some(
-        c =>
-          c.id ===
-          commanderId
-      )
-    ) {
-      setCommanderId(
-        commanders[0]?.id ??
-        ""
-      );
+  useEffect(()=>{
+    if(!commanders.some(c=>c.id===commanderId)){
+      setCommanderId(commanders[0]?.id??"");
     }
-  }, [
-    commanders,
-    commanderId
-  ]);
+  },[commanders,commanderId]);
 
-  const build = () => {
-    const cmd =
-      commanders.find(
-        c =>
-          c.id ===
-          commanderId
-      );
+  const build=()=>{
+    const cmd=commanders.find(c=>c.id===commanderId);
 
-    const d =
-      buildDeck(
-        pool,
-        {
-          name,
-          format,
-          colors,
-          commander:
-            format ===
-            "commander"
-              ? cmd
-              : undefined,
-          targetManaValue:
-            target,
-          minManaValue:
-            min === ""
-              ? undefined
-              : Number(min),
-          maxManaValue:
-            max === ""
-              ? undefined
-              : Number(max)
-        }
-      );
+    const d=buildDeck(pool,{
+      name,
+      format,
+      colors,
+      commander:format==="commander"?cmd:undefined,
+      targetManaValue:target,
+      minManaValue:min===""?undefined:Number(min),
+      maxManaValue:max===""?undefined:Number(max)
+    });
 
     setResult(d);
     setAnalysisText("");
   };
 
-  const explain =
-    async () => {
-      if (!result) {
-        return;
-      }
+  const explain=async()=>{
+    if(!result) {
+      return;
+    }
 
-      setAiBusy(true);
-      setAnalysisText("");
+    setAiBusy(true);
+    setAnalysisText("");
 
-      try {
-        const text =
-          await generateAiDeckExplanation(
-            result
-          );
+    try {
+      const text=await generateAiDeckExplanation(result);
+      setAnalysisText(text);
+    } catch(error) {
+      console.error(
+        "KI-Analyse fehlgeschlagen:",
+        error
+      );
 
-        setAnalysisText(
-          text
-        );
-      } catch (error) {
-        console.error(
-          "KI-Analyse fehlgeschlagen:",
-          error
-        );
+      const fallback=generateDeckExplanation(result);
 
-        const fallback =
-          generateDeckExplanation(
-            result
-          );
-
-        setAnalysisText(
-          fallback +
-          "\n\nHinweis: Die generative KI war gerade nicht erreichbar. Deshalb wird die lokale Deckanalyse angezeigt."
-        );
-      } finally {
-        setAiBusy(false);
-      }
-    };
+      setAnalysisText(
+        fallback+
+        "\n\nHinweis: Die generative KI war gerade nicht erreichbar. Deshalb wird die lokale Deckanalyse angezeigt."
+      );
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   return (
     <section>
       <div className="pagehead">
         <div>
-          <h2>
-            Deck automatisch bauen
-          </h2>
+          <h2>Deck automatisch bauen</h2>
 
           <p className="muted">
-            Der Optimierer verwendet
-            ausschließlich Karten aus
-            deiner Sammlung und erklärt
-            jede Auswahl.
+            Der Optimierer verwendet ausschließlich Karten aus deiner Sammlung und erklärt jede Auswahl.
           </p>
         </div>
       </div>
@@ -1727,11 +1001,7 @@ function Builder({
 
             <input
               value={name}
-              onChange={e =>
-                setName(
-                  e.target.value
-                )
-              }
+              onChange={e=>setName(e.target.value)}
             />
           </label>
 
@@ -1740,21 +1010,10 @@ function Builder({
 
             <select
               value={format}
-              onChange={e =>
-                setFormat(
-                  e.target
-                    .value
-                    as Format
-                )
-              }
+              onChange={e=>setFormat(e.target.value as Format)}
             >
-              <option value="commander">
-                Commander
-              </option>
-
-              <option value="standard">
-                Standard
-              </option>
+              <option value="commander">Commander</option>
+              <option value="standard">Standard</option>
             </select>
           </label>
 
@@ -1762,72 +1021,40 @@ function Builder({
             Deckfarben
 
             <div className="color-pills">
-              {COLORS.map(
-                c =>
-                  <button
-                    key={c}
-                    className={
-                      colors.includes(
-                        c
-                      )
-                        ? "color active"
-                        : "color"
-                    }
-                    onClick={() =>
-                      setColors(
-                        x =>
-                          x.includes(
-                            c
-                          )
-                            ? x.filter(
-                                v =>
-                                  v !==
-                                  c
-                              )
-                            : [
-                                ...x,
-                                c
-                              ]
-                      )
-                    }
-                  >
-                    {c}
-
-                    <span>
-                      {COLOR_NAMES[c]}
-                    </span>
-                  </button>
+              {COLORS.map(c=>
+                <button
+                  key={c}
+                  className={colors.includes(c)?"color active":"color"}
+                  onClick={()=>setColors(x=>
+                    x.includes(c)
+                      ?x.filter(v=>v!==c)
+                      :[...x,c]
+                  )}
+                >
+                  {c}
+                  <span>{COLOR_NAMES[c]}</span>
+                </button>
               )}
             </div>
           </label>
 
-          {format ===
-            "commander" &&
+          {format==="commander"&&
             <label>
               Commander
 
               <select
-                value={
-                  commanderId
-                }
-                onChange={e =>
-                  setCommanderId(
-                    e.target.value
-                  )
-                }
+                value={commanderId}
+                onChange={e=>setCommanderId(e.target.value)}
               >
-                <option value="">
-                  — wählen —
-                </option>
+                <option value="">— wählen —</option>
 
-                {commanders.map(
-                  c =>
-                    <option
-                      key={c.id}
-                      value={c.id}
-                    >
-                      {c.name}
-                    </option>
+                {commanders.map(c=>
+                  <option
+                    key={c.id}
+                    value={c.id}
+                  >
+                    {c.name}
+                  </option>
                 )}
               </select>
             </label>
@@ -1842,14 +1069,7 @@ function Builder({
               max="15"
               step="0.1"
               value={target}
-              onChange={e =>
-                setTarget(
-                  Number(
-                    e.target
-                      .value
-                  )
-                )
-              }
+              onChange={e=>setTarget(Number(e.target.value))}
             />
           </label>
 
@@ -1861,12 +1081,7 @@ function Builder({
                 type="number"
                 min="0"
                 value={min}
-                onChange={e =>
-                  setMin(
-                    e.target
-                      .value
-                  )
-                }
+                onChange={e=>setMin(e.target.value)}
               />
             </label>
 
@@ -1877,12 +1092,7 @@ function Builder({
                 type="number"
                 min="0"
                 value={max}
-                onChange={e =>
-                  setMax(
-                    e.target
-                      .value
-                  )
-                }
+                onChange={e=>setMax(e.target.value)}
               />
             </label>
           </div>
@@ -1890,115 +1100,72 @@ function Builder({
           <button
             className="primary full"
             onClick={build}
-            disabled={
-              !colors.length ||
-              pool.length ===
-                0
-            }
+            disabled={!colors.length||pool.length===0}
           >
             Deck erstellen
           </button>
 
-          {pool.length ===
-            0 &&
+          {pool.length===0&&
             <div className="notice">
-              Deine Sammlung ist leer.
-              Füge zuerst Karten über
-              die Kartensuche hinzu.
+              Deine Sammlung ist leer. Füge zuerst Karten über die Kartensuche hinzu.
             </div>
           }
         </div>
 
         {result
           ? <div className="panel">
-              <h3>
-                {result.name}
-              </h3>
+              <h3>{result.name}</h3>
 
               <div className="stats">
-                {Object.entries(
-                  deckStats(result)
-                )
-                  .filter(
-                    ([k]) =>
-                      k !==
-                      "roleCounts"
-                  )
-                  .map(
-                    ([k, v]) =>
-                      <div key={k}>
-                        <strong>
-                          {String(v)}
-                        </strong>
-
-                        <span>
-                          {k}
-                        </span>
-                      </div>
+                {Object.entries(deckStats(result))
+                  .filter(([k])=>k!=="roleCounts")
+                  .map(([k,v])=>
+                    <div key={k}>
+                      <strong>{String(v)}</strong>
+                      <span>{k}</span>
+                    </div>
                   )
                 }
               </div>
 
-              <p>
-                {result.notes}
-              </p>
+              <p>{result.notes}</p>
 
               <div className="role-list">
-                {Object.entries(
-                  deckStats(
-                    result
-                  ).roleCounts
-                ).map(
-                  ([r, n]) =>
-                    <span key={r}>
-                      {r}: {n}
-                    </span>
+                {Object.entries(deckStats(result).roleCounts).map(([r,n])=>
+                  <span key={r}>
+                    {r}: {n}
+                  </span>
                 )}
               </div>
 
               <div className="deck-list">
-                {result.cards.map(
-                  c =>
-                    <div
-                      key={c.id}
-                    >
-                      <span>
-                        <b>
-                          {c.count}×
-                        </b>{" "}
-                        {c.name}
-                      </span>
+                {result.cards.map(c=>
+                  <div key={c.id}>
+                    <span>
+                      <b>{c.count}×</b> {c.name}
+                    </span>
 
-                      <small>
-                        {c.role} ·{" "}
-                        {c.reason}
-                      </small>
-                    </div>
+                    <small>
+                      {c.role} · {c.reason}
+                    </small>
+                  </div>
                 )}
               </div>
 
               <div className="row">
                 <button
                   className="primary"
-                  onClick={() =>
-                    onSave(
-                      result
-                    )
-                  }
+                  onClick={()=>onSave(result)}
                 >
                   Deck speichern
                 </button>
 
                 <button
                   className="secondary"
-                  onClick={() =>
-                    download(
-                      `${result.name}.txt`,
-                      deckText(
-                        result
-                      )
-                    )
-                  }
+                  onClick={()=>download(
+                    `${result.name}.txt`,
+                    deckText(result)
+                  )}
                 >
                   Export
                 </button>
@@ -2006,29 +1173,24 @@ function Builder({
                 <button
                   className="secondary"
                   onClick={explain}
-                  disabled={
-                    aiBusy ||
-                    demoMode
-                  }
+                  disabled={aiBusy||demoMode}
                   title={
                     demoMode
-                      ? "Die generative KI benötigt eine Firebase-Anmeldung."
-                      : undefined
+                      ?"Die generative KI benötigt eine Firebase-Anmeldung."
+                      :undefined
                   }
                 >
                   {aiBusy
-                    ? "KI analysiert…"
-                    : "Deck analysieren"
+                    ?"KI analysiert…"
+                    :"Deck analysieren"
                   }
                 </button>
               </div>
 
-              {analysisText &&
+              {analysisText&&
                 <div className="ai-box analysis-box markdown-content">
                   <ReactMarkdown
-                    remarkPlugins={[
-                      remarkGfm
-                    ]}
+                    remarkPlugins={[remarkGfm]}
                   >
                     {analysisText}
                   </ReactMarkdown>
@@ -2037,14 +1199,10 @@ function Builder({
             </div>
 
           : <div className="panel empty">
-              <h3>
-                Vorschau
-              </h3>
+              <h3>Vorschau</h3>
 
               <p>
-                Hier erscheinen Deckgröße,
-                Mana-Kurve, Rollen und
-                Auswahlbegründungen.
+                Hier erscheinen Deckgröße, Mana-Kurve, Rollen und Auswahlbegründungen.
               </p>
             </div>
         }
@@ -2058,166 +1216,90 @@ function Decks({
   pool,
   onDelete,
   onSave
-}: {
-  decks: DeckRecord[];
-  pool: CardRecord[];
-  onDelete: (
-    id: string
-  ) => Promise<void>;
-  onSave: (
-    d: DeckRecord
-  ) => Promise<void>;
+}:{
+  decks:DeckRecord[];
+  pool:CardRecord[];
+  onDelete:(id:string)=>Promise<void>;
+  onSave:(d:DeckRecord)=>Promise<void>;
 }) {
-  const [
-    editing,
-    setEditing
-  ] =
-    useState<
-      DeckRecord | null
-    >(null);
+  const [editing,setEditing]=useState<DeckRecord|null>(null);
+  const [importText,setImportText]=useState("");
+  const [showImport,setShowImport]=useState(false);
 
-  const [
-    importText,
-    setImportText
-  ] =
-    useState("");
+  const newManualDeck=()=>{
+    const now=Date.now();
 
-  const [
-    showImport,
-    setShowImport
-  ] =
-    useState(false);
-
-  const newManualDeck =
-    () => {
-      const now =
-        Date.now();
-
-      const deck:
-        DeckRecord = {
-          id:
-            crypto.randomUUID(),
-          name:
-            "Neues manuelles Deck",
-          format:
-            "standard",
-          commanderIds:
-            [],
-          cards:
-            [],
-          sideboard:
-            [],
-          colors:
-            [],
-          createdAt:
-            now,
-          updatedAt:
-            now,
-          notes:
-            "Manuell zusammengestelltes Deck."
-        };
-
-      setEditing(deck);
+    const deck:DeckRecord={
+      id:crypto.randomUUID(),
+      name:"Neues manuelles Deck",
+      format:"standard",
+      commanderIds:[],
+      cards:[],
+      sideboard:[],
+      colors:[],
+      createdAt:now,
+      updatedAt:now,
+      notes:"Manuell zusammengestelltes Deck."
     };
 
-  const importDeck =
-    async () => {
-      const rows =
-        parseList(
-          importText
+    setEditing(deck);
+  };
+
+  const importDeck=async()=>{
+    const rows=parseList(importText);
+    const cards:DeckRecord["cards"]=[];
+
+    for(const r of rows){
+      const hit=
+        pool.find(
+          c=>c.name.toLowerCase()===r.name.toLowerCase()
+        ) ??
+        pool.find(
+          c=>c.name.toLowerCase().includes(r.name.toLowerCase())
         );
 
-      const cards:
-        DeckRecord["cards"] =
-          [];
-
-      for (
-        const r of rows
-      ) {
-        const hit =
-          pool.find(
-            c =>
-              c.name
-                .toLowerCase() ===
-              r.name
-                .toLowerCase()
-          ) ??
-          pool.find(
-            c =>
-              c.name
-                .toLowerCase()
-                .includes(
-                  r.name
-                    .toLowerCase()
-                )
-          );
-
-        if (hit) {
-          cards.push({
-            id: hit.id,
-            name:
-              hit.name,
-            count:
-              Math.min(
-                r.count,
-                hit.count
-              ),
-            manaValue:
-              hit.manaValue,
-            typeLine:
-              hit.typeLine,
-            role:
-              "Import",
-            reason:
-              "Aus Deckliste importiert.",
-            available:
-              hit.count
-          });
-        }
+      if(hit){
+        cards.push({
+          id:hit.id,
+          name:hit.name,
+          count:Math.min(r.count,hit.count),
+          manaValue:hit.manaValue,
+          typeLine:hit.typeLine,
+          role:"Import",
+          reason:"Aus Deckliste importiert.",
+          available:hit.count
+        });
       }
+    }
 
-      const d:
-        DeckRecord = {
-          id:
-            crypto.randomUUID(),
-          name:
-            "Importiertes Deck",
-          format:
-            "standard",
-          commanderIds:
-            [],
-          cards,
-          sideboard:
-            [],
-          colors:
-            [],
-          createdAt:
-            Date.now(),
-          updatedAt:
-            Date.now(),
-          notes:
-            "Importierte Deckliste; bitte Format und Legalität im Editor prüfen."
-        };
-
-      if (
-        cards.length
-      ) {
-        await onSave(d);
-      }
-
-      setImportText("");
-      setShowImport(false);
+    const d:DeckRecord={
+      id:crypto.randomUUID(),
+      name:"Importiertes Deck",
+      format:"standard",
+      commanderIds:[],
+      cards,
+      sideboard:[],
+      colors:[],
+      createdAt:Date.now(),
+      updatedAt:Date.now(),
+      notes:"Importierte Deckliste; bitte Format und Legalität im Editor prüfen."
     };
 
-  if (editing) {
+    if(cards.length){
+      await onSave(d);
+    }
+
+    setImportText("");
+    setShowImport(false);
+  };
+
+  if(editing){
     return (
       <DeckEditor
         deck={editing}
         pool={pool}
-        onBack={() =>
-          setEditing(null)
-        }
-        onSave={async d => {
+        onBack={()=>setEditing(null)}
+        onSave={async d=>{
           await onSave(d);
           setEditing(null);
         }}
@@ -2229,9 +1311,7 @@ function Decks({
     <section>
       <div className="pagehead">
         <div>
-          <h2>
-            Gespeicherte Decks
-          </h2>
+          <h2>Gespeicherte Decks</h2>
 
           <p className="muted">
             {decks.length} Decks
@@ -2241,70 +1321,46 @@ function Decks({
         <div className="row">
           <button
             className="primary"
-            onClick={
-              newManualDeck
-            }
+            onClick={newManualDeck}
           >
             + Deck manuell erstellen
           </button>
 
           <button
             className="secondary"
-            onClick={() =>
-              setShowImport(
-                !showImport
-              )
-            }
+            onClick={()=>setShowImport(!showImport)}
           >
             Deckliste importieren
           </button>
         </div>
       </div>
 
-      {showImport &&
+      {showImport&&
         <div className="panel">
-          <h3>
-            Deckliste importieren
-          </h3>
+          <h3>Deckliste importieren</h3>
 
           <p className="muted">
-            Format: „4 Lightning Bolt“.
-            Die Karten werden gegen deine
-            Sammlung aufgelöst.
+            Format: „4 Lightning Bolt“. Die Karten werden gegen deine Sammlung aufgelöst.
           </p>
 
           <textarea
-            value={
-              importText
-            }
-            onChange={e =>
-              setImportText(
-                e.target.value
-              )
-            }
+            value={importText}
+            onChange={e=>setImportText(e.target.value)}
             rows={8}
-            placeholder={
-              "4 Lightning Bolt\n4 Counterspell\n20 Island"
-            }
+            placeholder={"4 Lightning Bolt\n4 Counterspell\n20 Island"}
           />
 
           <div className="row">
             <button
               className="primary"
-              onClick={
-                importDeck
-              }
+              onClick={importDeck}
             >
               Importieren
             </button>
 
             <button
               className="secondary"
-              onClick={() =>
-                setShowImport(
-                  false
-                )
-              }
+              onClick={()=>setShowImport(false)}
             >
               Abbrechen
             </button>
@@ -2313,58 +1369,39 @@ function Decks({
       }
 
       <div className="deck-grid">
-        {decks.map(d =>
+        {decks.map(d=>
           <article
             className="panel"
             key={d.id}
           >
-            <h3>
-              {d.name}
-            </h3>
+            <h3>{d.name}</h3>
 
             <div className="meta">
-              {d.format} · Score{" "}
-              {d.score ?? "—"} ·{" "}
-              {deckStats(d).total} Karten
+              {d.format} · Score {d.score??"—"} · {deckStats(d).total} Karten
             </div>
 
             <p>
-              MV{" "}
-              {deckStats(d)
-                .averageManaValue}{" "}
-              · Länder{" "}
-              {deckStats(d).lands}
+              MV {deckStats(d).averageManaValue} · Länder {deckStats(d).lands}
             </p>
 
             <div className="row">
               <button
                 className="primary"
-                onClick={() =>
-                  setEditing(d)
-                }
+                onClick={()=>setEditing(d)}
               >
                 Bearbeiten
               </button>
 
               <button
                 className="secondary"
-                onClick={() =>
-                  download(
-                    `${d.name}.txt`,
-                    deckText(d)
-                  )
-                }
+                onClick={()=>download(`${d.name}.txt`,deckText(d))}
               >
                 Export
               </button>
 
               <button
                 className="danger ghost"
-                onClick={() =>
-                  onDelete(
-                    d.id
-                  )
-                }
+                onClick={()=>onDelete(d.id)}
               >
                 Löschen
               </button>
@@ -2381,258 +1418,136 @@ function DeckEditor({
   pool,
   onBack,
   onSave
-}: {
-  deck: DeckRecord;
-  pool: CardRecord[];
-  onBack: () => void;
-  onSave: (
-    d: DeckRecord
-  ) => Promise<void>;
+}:{
+  deck:DeckRecord;
+  pool:CardRecord[];
+  onBack:()=>void;
+  onSave:(d:DeckRecord)=>Promise<void>;
 }) {
-  const [
-    d,
-    setD
-  ] =
-    useState(deck);
+  const [d,setD]=useState(deck);
 
-  const all =
-    [...d.cards];
+  const all=[...d.cards];
 
-  const availableCommanders =
-    useMemo(
-      () =>
-        commanderCandidates(
-          pool,
-          COLORS
-        ),
-      [pool]
+  const availableCommanders=useMemo(
+    ()=>commanderCandidates(pool,COLORS),
+    [pool]
+  );
+
+  const selectedCommander=
+    d.format==="commander"
+      ?pool.find(c=>d.commanderIds?.includes(c.id))
+      :undefined;
+
+  const mainDeckCount=all.reduce(
+    (sum,card)=>sum+card.count,
+    0
+  );
+
+  const totalCards=
+    mainDeckCount+
+    (d.format==="commander"&&selectedCommander ? 1 : 0);
+
+  const commanderColorIdentity=
+    selectedCommander?.colorIdentity??[];
+
+  const isCommanderColorLegal=(card:CardRecord)=>{
+    if(!selectedCommander) {
+      return false;
+    }
+
+    return (card.colorIdentity??[]).every(
+      color=>commanderColorIdentity.includes(color)
     );
+  };
 
-  const selectedCommander =
-    d.format ===
-      "commander"
-      ? pool.find(c =>
-          d.commanderIds
-            ?.includes(
-              c.id
-            )
+  const commanderLegalPool=
+    d.format==="commander"
+      ?pool.filter(card=>
+          card.id!==selectedCommander?.id &&
+          card.legalities?.commander!=="banned" &&
+          isCommanderColorLegal(card)
         )
-      : undefined;
+      :pool;
 
-  const mainDeckCount =
-    all.reduce(
-      (sum, card) =>
-        sum +
-        card.count,
-      0
-    );
+  const illegalCommanderCards=
+    d.format==="commander"&&selectedCommander
+      ?all.filter(deckCard=>{
+          const source=pool.find(c=>c.id===deckCard.id);
 
-  const totalCards =
-    mainDeckCount +
-    (
-      d.format ===
-        "commander" &&
-      selectedCommander
-        ? 1
-        : 0
-    );
-
-  const commanderColorIdentity =
-    selectedCommander
-      ?.colorIdentity ??
-    [];
-
-  const isCommanderColorLegal =
-    (
-      card:
-        CardRecord
-    ) => {
-      if (
-        !selectedCommander
-      ) {
-        return false;
-      }
-
-      return (
-        card.colorIdentity ??
-        []
-      ).every(color =>
-        commanderColorIdentity
-          .includes(
-            color
-          )
-      );
-    };
-
-  const commanderLegalPool =
-    d.format ===
-      "commander"
-      ? pool.filter(
-          card =>
-            card.id !==
-              selectedCommander
-                ?.id &&
-            card.legalities
-              ?.commander !==
-              "banned" &&
-            isCommanderColorLegal(
-              card
-            )
-        )
-      : pool;
-
-  const illegalCommanderCards =
-    d.format ===
-      "commander" &&
-    selectedCommander
-      ? all.filter(
-          deckCard => {
-            const source =
-              pool.find(
-                c =>
-                  c.id ===
-                  deckCard.id
-              );
-
-            if (!source) {
-              return false;
-            }
-
-            return (
-              source
-                .legalities
-                ?.commander ===
-                "banned" ||
-              !isCommanderColorLegal(
-                source
-              )
-            );
+          if(!source) {
+            return false;
           }
-        )
-      : [];
 
-  const add =
-    (
-      c:
-        CardRecord
-    ) => {
-      setD(x => ({
-        ...x,
+          return (
+            source.legalities?.commander==="banned" ||
+            !isCommanderColorLegal(source)
+          );
+        })
+      :[];
 
-        cards:
-          x.cards.some(
-            y =>
-              y.id ===
-              c.id
-          )
-            ? x.cards.map(
-                y =>
-                  y.id ===
-                  c.id
-                    ? {
-                        ...y,
-                        count:
-                          y.count +
-                          1,
-                        available:
-                          c.count
-                      }
-                    : y
-              )
-
-            : [
-                ...x.cards,
-
-                {
-                  id:
-                    c.id,
-
-                  name:
-                    c.name,
-
-                  count:
-                    1,
-
-                  manaValue:
-                    c.manaValue,
-
-                  typeLine:
-                    c.typeLine,
-
-                  role:
-                    "Manuell",
-
-                  reason:
-                    "Manuell hinzugefügt",
-
-                  available:
-                    c.count
+  const add=(c:CardRecord)=>{
+    setD(x=>({
+      ...x,
+      cards:x.cards.some(y=>y.id===c.id)
+        ?x.cards.map(y=>
+            y.id===c.id
+              ?{
+                  ...y,
+                  count:y.count+1,
+                  available:c.count
                 }
-              ]
-      }));
-    };
+              :y
+          )
+        :[
+            ...x.cards,
+            {
+              id:c.id,
+              name:c.name,
+              count:1,
+              manaValue:c.manaValue,
+              typeLine:c.typeLine,
+              role:"Manuell",
+              reason:"Manuell hinzugefügt",
+              available:c.count
+            }
+          ]
+    }));
+  };
 
-  const chooseCommander =
-    (
-      id:
-        string
-    ) => {
-      if (!id) {
-        setD(x => ({
-          ...x,
-
-          commanderIds:
-            [],
-
-          colors:
-            []
-        }));
-
-        return;
-      }
-
-      const commander =
-        pool.find(
-          c =>
-            c.id === id
-        );
-
-      if (!commander) {
-        return;
-      }
-
-      setD(x => ({
+  const chooseCommander=(id:string)=>{
+    if(!id){
+      setD(x=>({
         ...x,
-
-        commanderIds:
-          [
-            commander.id
-          ],
-
-        colors:
-          commander
-            .colorIdentity ??
-          []
+        commanderIds:[],
+        colors:[]
       }));
-    };
 
-  const changeFormat =
-    (
-      format:
-        Format
-    ) => {
-      setD(x => ({
-        ...x,
+      return;
+    }
 
-        format,
+    const commander=pool.find(c=>c.id===id);
 
-        commanderIds:
-          format ===
-          "commander"
-            ? x.commanderIds
-            : []
-      }));
-    };
+    if(!commander) {
+      return;
+    }
+
+    setD(x=>({
+      ...x,
+      commanderIds:[commander.id],
+      colors:commander.colorIdentity??[]
+    }));
+  };
+
+  const changeFormat=(format:Format)=>{
+    setD(x=>({
+      ...x,
+      format,
+      commanderIds:
+        format==="commander"
+          ?x.commanderIds
+          :[]
+    }));
+  };
 
   return (
     <section>
@@ -2645,35 +1560,26 @@ function DeckEditor({
         </button>
 
         <div>
-          <h2>
-            {d.name}
-          </h2>
+          <h2>{d.name}</h2>
 
           <p className="muted">
-            Manueller Deck-Editor ·{" "}
-            {totalCards} Karten
+            Manueller Deck-Editor · {totalCards} Karten
           </p>
         </div>
 
         <button
           className="primary"
-          onClick={() =>
-            onSave({
-              ...d,
-
-              updatedAt:
-                Date.now()
-            })
-          }
+          onClick={()=>onSave({
+            ...d,
+            updatedAt:Date.now()
+          })}
         >
           Speichern
         </button>
       </div>
 
       <div className="panel">
-        <h3>
-          Deck-Einstellungen
-        </h3>
+        <h3>Deck-Einstellungen</h3>
 
         <div className="two">
           <label>
@@ -2681,13 +1587,10 @@ function DeckEditor({
 
             <input
               value={d.name}
-              onChange={e =>
-                setD(x => ({
+              onChange={e=>
+                setD(x=>({
                   ...x,
-
-                  name:
-                    e.target
-                      .value
+                  name:e.target.value
                 }))
               }
               placeholder="Name des Decks"
@@ -2698,15 +1601,9 @@ function DeckEditor({
             Format
 
             <select
-              value={
-                d.format
-              }
-              onChange={e =>
-                changeFormat(
-                  e.target
-                    .value
-                    as Format
-                )
+              value={d.format}
+              onChange={e=>
+                changeFormat(e.target.value as Format)
               }
             >
               <option value="standard">
@@ -2720,82 +1617,51 @@ function DeckEditor({
           </label>
         </div>
 
-        {d.format ===
-          "commander" &&
+        {d.format==="commander"&&
           <label>
             Commander
 
             <select
-              value={
-                selectedCommander
-                  ?.id ??
-                ""
-              }
-              onChange={e =>
-                chooseCommander(
-                  e.target
-                    .value
-                )
-              }
+              value={selectedCommander?.id??""}
+              onChange={e=>chooseCommander(e.target.value)}
             >
               <option value="">
                 — Commander wählen —
               </option>
 
-              {availableCommanders.map(
-                c =>
-                  <option
-                    key={c.id}
-                    value={c.id}
-                  >
-                    {c.name}
-                  </option>
+              {availableCommanders.map(c=>
+                <option
+                  key={c.id}
+                  value={c.id}
+                >
+                  {c.name}
+                </option>
               )}
             </select>
           </label>
         }
 
-        {d.format ===
-          "commander" &&
-          availableCommanders
-            .length ===
-            0 &&
+        {d.format==="commander"&&
+          availableCommanders.length===0&&
           <div className="notice">
-            In deiner Sammlung wurde
-            aktuell keine Karte gefunden,
-            die als Commander verwendet
-            werden kann.
+            In deiner Sammlung wurde aktuell keine Karte gefunden,
+            die als Commander verwendet werden kann.
           </div>
         }
 
-        {d.format ===
-          "commander" &&
-          selectedCommander &&
+        {d.format==="commander"&&selectedCommander&&
           <div className="ai-box">
-            <strong>
-              Commander:
-            </strong>{" "}
+            <strong>Commander:</strong>{" "}
             {selectedCommander.name}
-
             <br />
 
             <span>
               Farbidentität:{" "}
-
-              {commanderColorIdentity
-                .length
-                ? commanderColorIdentity
-                    .map(
-                      c =>
-                        COLOR_NAMES[
-                          c
-                        ] ??
-                        c
-                    )
-                    .join(
-                      ", "
-                    )
-                : "Farblos"
+              {commanderColorIdentity.length
+                ?commanderColorIdentity
+                    .map(c=>COLOR_NAMES[c]??c)
+                    .join(", ")
+                :"Farblos"
               }
             </span>
           </div>
@@ -2803,128 +1669,81 @@ function DeckEditor({
 
         <div className="stats">
           <div>
-            <strong>
-              {totalCards}
-            </strong>
-
-            <span>
-              Karten aktuell
-            </span>
+            <strong>{totalCards}</strong>
+            <span>Karten aktuell</span>
           </div>
 
           <div>
             <strong>
-              {d.format ===
-              "commander"
-                ? "100"
-                : "60"
-              }
+              {d.format==="commander" ? "100" : "60"}
             </strong>
-
-            <span>
-              Deckgröße
-            </span>
+            <span>Deckgröße</span>
           </div>
 
-          {d.format ===
-            "commander" &&
+          {d.format==="commander"&&
             <div>
-              <strong>
-                {mainDeckCount}
-              </strong>
-
-              <span>
-                Karten ohne Commander
-              </span>
+              <strong>{mainDeckCount}</strong>
+              <span>Karten ohne Commander</span>
             </div>
           }
         </div>
 
-        {d.format ===
-          "standard" &&
-          totalCards <
-            60 &&
+        {d.format==="standard"&&totalCards<60&&
           <div className="notice">
-            Für ein Standard-Deck fehlen
-            aktuell noch{" "}
-            {60 - totalCards} Karten.
+            Für ein Standard-Deck fehlen aktuell noch{" "}
+            {60-totalCards} Karten.
           </div>
         }
 
-        {d.format ===
-          "commander" &&
-          !selectedCommander &&
+        {d.format==="commander"&&!selectedCommander&&
           <div className="notice">
-            Wähle zuerst einen Commander.
-            Danach werden nur Karten
-            angezeigt, die zu seiner
-            Farbidentität passen.
+            Wähle zuerst einen Commander. Danach werden nur Karten
+            angezeigt, die zu seiner Farbidentität passen.
           </div>
         }
 
-        {d.format ===
-          "commander" &&
-          selectedCommander &&
-          totalCards <
-            100 &&
+        {d.format==="commander"&&
+          selectedCommander&&
+          totalCards<100&&
           <div className="notice">
-            Für das Commander-Deck fehlen
-            aktuell noch{" "}
-            {100 - totalCards} Karten.
+            Für das Commander-Deck fehlen aktuell noch{" "}
+            {100-totalCards} Karten.
           </div>
         }
 
-        {d.format ===
-          "standard" &&
-          totalCards >=
-            60 &&
+        {d.format==="standard"&&totalCards>=60&&
           <div className="ai-box">
-            Die Mindestgröße von 60 Karten
-            ist erreicht.
+            Die Mindestgröße von 60 Karten ist erreicht.
           </div>
         }
 
-        {d.format ===
-          "commander" &&
-          selectedCommander &&
-          totalCards ===
-            100 &&
+        {d.format==="commander"&&
+          selectedCommander&&
+          totalCards===100&&
           <div className="ai-box">
-            Die Deckgröße von 100 Karten
-            ist erreicht.
+            Die Deckgröße von 100 Karten ist erreicht.
           </div>
         }
 
-        {d.format ===
-          "commander" &&
-          selectedCommander &&
-          totalCards >
-            100 &&
+        {d.format==="commander"&&
+          selectedCommander&&
+          totalCards>100&&
           <div className="error">
-            Das Deck enthält{" "}
-            {totalCards} Karten. Ein
-            Commander-Deck darf insgesamt
-            nur 100 Karten enthalten.
+            Das Deck enthält {totalCards} Karten.
+            Ein Commander-Deck darf insgesamt nur 100 Karten enthalten.
           </div>
         }
 
-        {illegalCommanderCards
-          .length >
-          0 &&
+        {illegalCommanderCards.length>0&&
           <div className="error">
             <strong>
-              {illegalCommanderCards
-                .length}{" "}
-              Karten passen nicht zum
-              ausgewählten Commander:
+              {illegalCommanderCards.length} Karten passen nicht
+              zum ausgewählten Commander:
             </strong>
 
             <div>
               {illegalCommanderCards
-                .map(
-                  c =>
-                    c.name
-                )
+                .map(c=>c.name)
                 .join(", ")
               }
             </div>
@@ -2935,20 +1754,15 @@ function DeckEditor({
       <div className="editor-grid">
         <div className="panel">
           <h3>
-            {d.format ===
-              "commander"
-              ? `Deck · ${mainDeckCount}/99 Karten`
-              : `Deck · ${totalCards} Karten`
+            {d.format==="commander"
+              ?`Deck · ${mainDeckCount}/99 Karten`
+              :`Deck · ${totalCards} Karten`
             }
           </h3>
 
-          {d.format ===
-            "commander" &&
-            selectedCommander &&
+          {d.format==="commander"&&selectedCommander&&
             <div className="commander-card">
-              <strong>
-                Commander
-              </strong>
+              <strong>Commander</strong>
 
               <span>
                 {selectedCommander.name}
@@ -2960,22 +1774,15 @@ function DeckEditor({
             </div>
           }
 
-          {all.length ===
-            0 &&
+          {all.length===0&&
             <p className="muted">
-              Das Deck ist noch leer. Füge
-              rechts Karten aus deiner
-              Sammlung hinzu.
+              Das Deck ist noch leer. Füge rechts Karten aus deiner Sammlung hinzu.
             </p>
           }
 
-          {all.map(c => {
-            const illegal =
-              illegalCommanderCards.some(
-                x =>
-                  x.id ===
-                  c.id
-              );
+          {all.map(c=>{
+            const illegal=
+              illegalCommanderCards.some(x=>x.id===c.id);
 
             return (
               <div
@@ -2983,48 +1790,30 @@ function DeckEditor({
                 key={c.id}
               >
                 <span>
-                  {c.count}×{" "}
-                  {c.name}
+                  {c.count}× {c.name}
 
-                  {illegal &&
+                  {illegal&&
                     <small className="illegal-card">
-                      {" "}
-                      · nicht erlaubt
+                      {" "}· nicht erlaubt
                     </small>
                   }
                 </span>
 
                 <div>
                   <button
-                    onClick={() =>
-                      setD(x => ({
+                    onClick={()=>
+                      setD(x=>({
                         ...x,
-
-                        cards:
-                          x.cards
-                            .map(
-                              y =>
-                                y.id ===
-                                c.id
-                                  ? {
-                                      ...y,
-
-                                      count:
-                                        Math.max(
-                                          0,
-
-                                          y.count -
-                                            1
-                                        )
-                                    }
-
-                                  : y
-                            )
-                            .filter(
-                              y =>
-                                y.count >
-                                0
-                            )
+                        cards:x.cards
+                          .map(y=>
+                            y.id===c.id
+                              ?{
+                                  ...y,
+                                  count:Math.max(0,y.count-1)
+                                }
+                              :y
+                          )
+                          .filter(y=>y.count>0)
                       }))
                     }
                   >
@@ -3032,19 +1821,12 @@ function DeckEditor({
                   </button>
 
                   <button
-                    onClick={() => {
-                      const src =
-                        pool.find(
-                          x =>
-                            x.id ===
-                            c.id
-                        );
+                    onClick={()=>{
+                      const src=pool.find(
+                        x=>x.id===c.id
+                      );
 
-                      if (
-                        src &&
-                        c.count <
-                          src.count
-                      ) {
+                      if(src&&c.count<src.count){
                         add(src);
                       }
                     }}
@@ -3058,74 +1840,45 @@ function DeckEditor({
         </div>
 
         <div className="panel">
-          <h3>
-            Karten hinzufügen
-          </h3>
+          <h3>Karten hinzufügen</h3>
 
-          {d.format ===
-            "commander" &&
-          !selectedCommander
-
+          {d.format==="commander"&&!selectedCommander
             ? <p className="muted">
-                Wähle zuerst einen
-                Commander.
+                Wähle zuerst einen Commander.
               </p>
 
             : <>
                 <input
                   placeholder="Karte filtern…"
-                  onChange={e => {
-                    const v =
-                      e.target.value
-                        .toLowerCase();
+                  onChange={e=>{
+                    const v=e.target.value.toLowerCase();
 
                     document
-                      .querySelectorAll<
-                        HTMLElement
-                      >(
-                        "[data-card]"
-                      )
-                      .forEach(
-                        x => {
-                          x.hidden =
-                            !x
-                              .dataset
-                              .card!
-                              .includes(
-                                v
-                              );
-                        }
-                      );
+                      .querySelectorAll<HTMLElement>("[data-card]")
+                      .forEach(x=>{
+                        x.hidden=!x.dataset.card!.includes(v);
+                      });
                   }}
                 />
 
                 <div className="add-list">
                   {commanderLegalPool
-                    .slice(
-                      0,
-                      200
-                    )
-                    .map(
-                      c =>
-                        <div
-                          data-card={
-                            c.name
-                              .toLowerCase()
-                          }
-                          key={c.id}
-                        >
-                          <span>
-                            {c.name}
-                          </span>
+                    .slice(0,200)
+                    .map(c=>
+                      <div
+                        data-card={c.name.toLowerCase()}
+                        key={c.id}
+                      >
+                        <span>
+                          {c.name}
+                        </span>
 
-                          <button
-                            onClick={() =>
-                              add(c)
-                            }
-                          >
-                            +1
-                          </button>
-                        </div>
+                        <button
+                          onClick={()=>add(c)}
+                        >
+                          +1
+                        </button>
+                      </div>
                     )
                   }
                 </div>
