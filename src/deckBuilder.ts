@@ -93,70 +93,63 @@ function clamp(
   min: number,
   max: number
 ) {
-  return Math.min(
-    max,
-    Math.max(min, value)
-  );
+  return Math.min(max, Math.max(min, value));
 }
 
-function normalizeAdjustment(
-  value?: number
-) {
+function normalizeAdjustment(value?: number) {
   return clamp(
-    Number.isFinite(value)
-      ? Number(value)
-      : 0,
+    Number.isFinite(value) ? Number(value) : 0,
     -2,
     2
   );
 }
 
-function isLand(
-  card: CardRecord
-) {
-  return /\bLand\b/i.test(
-    card.typeLine ?? ""
-  );
+function isLand(card: CardRecord) {
+  return /\bLand\b/i.test(card.typeLine ?? "");
 }
 
-function isCreature(
-  card: CardRecord
-) {
-  return /\bCreature\b/i.test(
-    card.typeLine ?? ""
-  );
+function isCreature(card: CardRecord) {
+  return /\bCreature\b/i.test(card.typeLine ?? "");
 }
 
-function isInstantOrSorcery(
-  card: CardRecord
-) {
+function isInstantOrSorcery(card: CardRecord) {
   return /\bInstant\b|\bSorcery\b/i.test(
     card.typeLine ?? ""
   );
 }
 
-function cardText(
-  card: CardRecord
-) {
-  return `${
-    card.typeLine ?? ""
-  } ${
-    card.oracleText ?? ""
-  }`.toLowerCase();
+function stripReminderText(value: string) {
+  let result = value;
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = result.replace(/\([^()]*\)/g, " ");
+
+    if (next === result) {
+      break;
+    }
+
+    result = next;
+  }
+
+  return result;
 }
 
-function roleOf(
-  card: CardRecord
-): Role {
-  const text =
-    cardText(card);
+function cardText(card: CardRecord) {
+  return `${card.typeLine ?? ""} ${stripReminderText(card.oracleText ?? "")}`
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function roleOf(card: CardRecord): Role {
+  const text = cardText(card);
 
   if (isLand(card)) {
     return "Land";
   }
 
   if (
-    /destroy all|exile all|all creatures get -|deals? .* damage to each creature|each creature/.test(
+    /destroy all|exile all|all creatures get -|each creature gets -|deals? .* damage to each creature|each player sacrifices? .* creature|each opponent sacrifices? .* creature/.test(
       text
     )
   ) {
@@ -164,7 +157,7 @@ function roleOf(
   }
 
   if (
-    /hexproof|indestructible|phase out|phases out|protection from|prevent all damage|can't be destroyed/.test(
+    /hexproof|indestructible|protection from|prevent all damage|can't be destroyed|(?:permanents?|creatures?) you control (?:phase|phases) out|target .* you control phases out|any number of target .* you control phase out/.test(
       text
     )
   ) {
@@ -188,15 +181,15 @@ function roleOf(
   }
 
   if (
-    /add \{?[wubrgc]/.test(
+    /add \{?[wubrgc]/.test(text) ||
+    /add (?:one|two|three|four|x) mana/.test(text) ||
+    /search your library for[^.]{0,220}(?:land|forest|plains|island|swamp|mountain) cards?[^.]{0,220}(?:put|puts)[^.]{0,160}onto the battlefield/.test(
       text
     ) ||
-    /search your library for (a|an) (basic )?land/.test(
+    /put (?:a|an|one|up to one|those|that) [^.]{0,120}(?:land|forest|plains|island|swamp|mountain) cards?[^.]{0,100}onto the battlefield/.test(
       text
     ) ||
-    /mana.*pool/.test(
-      text
-    )
+    /mana.*pool/.test(text)
   ) {
     return "Ramp";
   }
@@ -209,11 +202,7 @@ function roleOf(
     return "Card Advantage";
   }
 
-  if (
-    /search your library/.test(
-      text
-    )
-  ) {
+  if (/search your library/.test(text)) {
     return "Tutor";
   }
 
@@ -242,175 +231,96 @@ function roleOf(
   return "Value";
 }
 
-function standardLegal(
-  card: CardRecord
-) {
+function standardLegal(card: CardRecord) {
+  return card.legalities?.standard === "legal";
+}
+
+function commanderFormatLegal(card: CardRecord) {
+  return card.legalities?.commander === "legal";
+}
+
+function isLegendaryCreature(card: CardRecord) {
   return (
-    card.legalities
-      ?.standard ===
-    "legal"
+    /\bLegendary\b/i.test(card.typeLine ?? "") &&
+    /\bCreature\b/i.test(card.typeLine ?? "")
   );
 }
 
-function commanderFormatLegal(
-  card: CardRecord
-) {
+function isBackground(card: CardRecord) {
   return (
-    card.legalities
-      ?.commander ===
-    "legal"
+    /\bLegendary\b/i.test(card.typeLine ?? "") &&
+    /\bBackground\b/i.test(card.typeLine ?? "")
   );
 }
 
-function isLegendaryCreature(
-  card: CardRecord
-) {
-  return (
-    /\bLegendary\b/i.test(
-      card.typeLine ?? ""
-    ) &&
-    /\bCreature\b/i.test(
-      card.typeLine ?? ""
-    )
-  );
-}
-
-function isBackground(
-  card: CardRecord
-) {
-  return (
-    /\bLegendary\b/i.test(
-      card.typeLine ?? ""
-    ) &&
-    /\bBackground\b/i.test(
-      card.typeLine ?? ""
-    )
-  );
-}
-
-function canBePrimaryCommander(
-  card: CardRecord
-) {
-  if (
-    !commanderFormatLegal(card)
-  ) {
+function canBePrimaryCommander(card: CardRecord) {
+  if (!commanderFormatLegal(card)) {
     return false;
   }
 
   return (
     isLegendaryCreature(card) ||
-    /can be your commander/i.test(
-      card.oracleText ?? ""
-    )
+    /can be your commander/i.test(card.oracleText ?? "")
   );
 }
 
-function hasGenericPartner(
-  card: CardRecord
-) {
-  const oracle =
-    card.oracleText ?? "";
+function hasGenericPartner(card: CardRecord) {
+  const oracle = card.oracleText ?? "";
 
   return (
-    /(^|\n)partner(\s|$|\()/i.test(
-      oracle
-    ) &&
-    !/partner with/i.test(
-      oracle
-    )
+    /(^|\n)partner(\s|$|\()/i.test(oracle) &&
+    !/partner with/i.test(oracle)
   );
 }
 
-function hasFriendsForever(
-  card: CardRecord
-) {
-  return /friends forever/i.test(
-    card.oracleText ?? ""
-  );
+function hasFriendsForever(card: CardRecord) {
+  return /friends forever/i.test(card.oracleText ?? "");
 }
 
-function hasDoctorsCompanion(
-  card: CardRecord
-) {
-  return /doctor'?s companion/i.test(
-    card.oracleText ?? ""
-  );
+function hasDoctorsCompanion(card: CardRecord) {
+  return /doctor'?s companion/i.test(card.oracleText ?? "");
 }
 
-function isDoctor(
-  card: CardRecord
-) {
-  return /\bDoctor\b/i.test(
-    card.typeLine ?? ""
-  );
+function isDoctor(card: CardRecord) {
+  return /\bDoctor\b/i.test(card.typeLine ?? "");
 }
 
-function choosesBackground(
-  card: CardRecord
-) {
-  return /choose a background/i.test(
-    card.oracleText ?? ""
-  );
+function choosesBackground(card: CardRecord) {
+  return /choose a background/i.test(card.oracleText ?? "");
 }
 
-function partnerWithName(
-  card: CardRecord
-) {
-  const match =
-    (
-      card.oracleText ?? ""
-    ).match(
-      /partner with ([^(\n.]+)/i
-    );
+function partnerWithName(card: CardRecord) {
+  const match = (card.oracleText ?? "").match(
+    /partner with ([^(\n.]+)/i
+  );
 
-  return match?.[1]
-    ?.trim()
-    .toLowerCase();
+  return match?.[1]?.trim().toLowerCase();
 }
 
 function identityOk(
   card: CardRecord,
   colors: string[]
 ) {
-  return (
-    card.colorIdentity ?? []
-  ).every(
-    color =>
-      colors.includes(color)
+  return (card.colorIdentity ?? []).every(
+    color => colors.includes(color)
   );
 }
 
 export function commanderColorIdentity(
   commanders: CardRecord[]
 ) {
-  const colors =
-    new Set<string>();
+  const colors = new Set<string>();
 
-  for (
-    const commander
-    of commanders
-  ) {
-    for (
-      const color
-      of commander.colorIdentity ??
-      []
-    ) {
+  for (const commander of commanders) {
+    for (const color of commander.colorIdentity ?? []) {
       colors.add(color);
     }
   }
 
   return [
-    ...COLOR_ORDER.filter(
-      color =>
-        colors.has(color)
-    ),
+    ...COLOR_ORDER.filter(color => colors.has(color)),
     ...[...colors]
-      .filter(
-        color =>
-          !COLOR_ORDER.includes(
-            color
-          )
-      )
+      .filter(color => !COLOR_ORDER.includes(color))
       .sort()
   ];
 }
@@ -421,27 +331,18 @@ export function commanderPairAllowed(
 ) {
   if (
     first.id === second.id ||
-    !commanderFormatLegal(
-      first
-    ) ||
-    !commanderFormatLegal(
-      second
-    )
+    !commanderFormatLegal(first) ||
+    !commanderFormatLegal(second)
   ) {
     return false;
   }
 
-  const firstPartnerWith =
-    partnerWithName(first);
-
-  const secondPartnerWith =
-    partnerWithName(second);
+  const firstPartnerWith = partnerWithName(first);
+  const secondPartnerWith = partnerWithName(second);
 
   if (
-    firstPartnerWith ===
-      second.name.toLowerCase() ||
-    secondPartnerWith ===
-      first.name.toLowerCase()
+    firstPartnerWith === second.name.toLowerCase() ||
+    secondPartnerWith === first.name.toLowerCase()
   ) {
     return true;
   }
@@ -461,35 +362,15 @@ export function commanderPairAllowed(
   }
 
   if (
-    (
-      hasDoctorsCompanion(
-        first
-      ) &&
-      isDoctor(second)
-    ) ||
-    (
-      hasDoctorsCompanion(
-        second
-      ) &&
-      isDoctor(first)
-    )
+    (hasDoctorsCompanion(first) && isDoctor(second)) ||
+    (hasDoctorsCompanion(second) && isDoctor(first))
   ) {
     return true;
   }
 
   if (
-    (
-      choosesBackground(
-        first
-      ) &&
-      isBackground(second)
-    ) ||
-    (
-      choosesBackground(
-        second
-      ) &&
-      isBackground(first)
-    )
+    (choosesBackground(first) && isBackground(second)) ||
+    (choosesBackground(second) && isBackground(first))
   ) {
     return true;
   }
@@ -501,18 +382,12 @@ export function commanderCandidates(
   pool: CardRecord[],
   colors?: string[]
 ) {
-  return pool.filter(
-    card =>
-      canBePrimaryCommander(
-        card
-      ) &&
-      (
-        colors === undefined ||
-        identityOk(
-          card,
-          colors
-        )
-      )
+  return pool.filter(card =>
+    canBePrimaryCommander(card) &&
+    (
+      colors === undefined ||
+      identityOk(card, colors)
+    )
   );
 }
 
@@ -520,12 +395,8 @@ export function commanderPairCandidates(
   pool: CardRecord[],
   primary: CardRecord
 ) {
-  return pool.filter(
-    card =>
-      commanderPairAllowed(
-        primary,
-        card
-      )
+  return pool.filter(card =>
+    commanderPairAllowed(primary, card)
   );
 }
 
@@ -535,9 +406,7 @@ export function deckCopyLimit(
 ) {
   const unlimited =
     card.isBasicLand ||
-    BASIC_NAMES.has(
-      card.name
-    ) ||
+    BASIC_NAMES.has(card.name) ||
     /a deck can have any number/i.test(
       card.oracleText ?? ""
     );
@@ -546,8 +415,7 @@ export function deckCopyLimit(
     return Number.POSITIVE_INFINITY;
   }
 
-  return format ===
-    "commander"
+  return format === "commander"
     ? 1
     : 4;
 }
@@ -557,101 +425,38 @@ export function cardLegalForDeck(
   format: Format,
   colors: string[] = []
 ) {
-  if (
-    format === "standard"
-  ) {
-    return standardLegal(
-      card
-    );
+  if (format === "standard") {
+    return standardLegal(card);
   }
 
   return (
-    commanderFormatLegal(
-      card
-    ) &&
-    identityOk(
-      card,
-      colors
-    )
+    commanderFormatLegal(card) &&
+    identityOk(card, colors)
   );
 }
 
-function themeTags(
-  card: CardRecord
-) {
-  const text =
-    cardText(card);
+function themeTags(card: CardRecord) {
+  const text = cardText(card);
+  const tags = new Set<string>();
 
-  const tags =
-    new Set<string>();
+  const rules: Array<[string, RegExp]> = [
+    ["tokens", /create .* token|tokens? you control/],
+    ["counters", /\+1\/\+1 counter|counter on|counters on|proliferate/],
+    ["artifacts", /artifact|equipment|treasure/],
+    ["enchantments", /enchantment|aura|enchanted/],
+    ["graveyard", /graveyard|dies|died|discard/],
+    ["sacrifice", /sacrifice/],
+    ["lifegain", /gain .* life|lifelink|life total/],
+    ["spells", /instant|sorcery|cast .* spell|noncreature spell/],
+    ["creatures", /creature|creatures you control/],
+    ["combat", /combat|attacks|attacking|deals combat damage/],
+    ["equipment", /equipment|equipped|equip /],
+    ["lands", /landfall|land enters|lands you control/],
+    ["tribal", /choose a creature type|creatures? of the chosen type|creature type/]
+  ];
 
-  const rules:
-    Array<
-      [string, RegExp]
-    > = [
-      [
-        "tokens",
-        /create .* token|tokens? you control/
-      ],
-      [
-        "counters",
-        /\+1\/\+1 counter|counter on|counters on|proliferate/
-      ],
-      [
-        "artifacts",
-        /artifact|equipment|treasure/
-      ],
-      [
-        "enchantments",
-        /enchantment|aura|enchanted/
-      ],
-      [
-        "graveyard",
-        /graveyard|dies|died|discard/
-      ],
-      [
-        "sacrifice",
-        /sacrifice/
-      ],
-      [
-        "lifegain",
-        /gain .* life|lifelink|life total/
-      ],
-      [
-        "spells",
-        /instant|sorcery|cast .* spell|noncreature spell/
-      ],
-      [
-        "creatures",
-        /creature|creatures you control/
-      ],
-      [
-        "combat",
-        /combat|attacks|attacking|deals combat damage/
-      ],
-      [
-        "equipment",
-        /equipment|equipped|equip /
-      ],
-      [
-        "lands",
-        /landfall|land enters|lands you control/
-      ],
-      [
-        "tribal",
-        /choose a creature type|creatures? of the chosen type|creature type/
-      ]
-    ];
-
-  for (
-    const [
-      tag,
-      pattern
-    ] of rules
-  ) {
-    if (
-      pattern.test(text)
-    ) {
+  for (const [tag, pattern] of rules) {
+    if (pattern.test(text)) {
       tags.add(tag);
     }
   }
@@ -663,44 +468,24 @@ function commanderSynergyScore(
   card: CardRecord,
   commanders: CardRecord[]
 ) {
-  if (
-    commanders.length === 0
-  ) {
+  if (commanders.length === 0) {
     return 0;
   }
 
-  const cardTags =
-    themeTags(card);
-
+  const cardTags = themeTags(card);
   let overlap = 0;
 
-  for (
-    const commander
-    of commanders
-  ) {
-    const commanderTags =
-      themeTags(
-        commander
-      );
+  for (const commander of commanders) {
+    const commanderTags = themeTags(commander);
 
-    for (
-      const tag
-      of cardTags
-    ) {
-      if (
-        commanderTags.has(
-          tag
-        )
-      ) {
+    for (const tag of cardTags) {
+      if (commanderTags.has(tag)) {
         overlap += 1;
       }
     }
   }
 
-  return Math.min(
-    6,
-    overlap * 1.5
-  );
+  return Math.min(6, overlap * 1.5);
 }
 
 function curveScore(
@@ -712,25 +497,17 @@ function curveScore(
     return 0;
   }
 
-  const adjustedTarget =
-    clamp(
-      targetManaValue +
-        curveAdjustment *
-          0.35,
-      1.5,
-      6
-    );
-
-  const distance =
-    Math.abs(
-      card.manaValue -
-        adjustedTarget
-    );
-
-  return Math.max(
-    0,
-    6 - distance * 2
+  const adjustedTarget = clamp(
+    targetManaValue + curveAdjustment * 0.35,
+    1.5,
+    6
   );
+
+  const distance = Math.abs(
+    card.manaValue - adjustedTarget
+  );
+
+  return Math.max(0, 6 - distance * 2);
 }
 
 function strategyScore(
@@ -739,26 +516,12 @@ function strategyScore(
   role: Role,
   aggressionWeight: number
 ) {
-  const text =
-    cardText(card);
-
+  const text = cardText(card);
   let score = 0;
 
-  if (
-    strategy ===
-    "aggressive"
-  ) {
-    if (
-      isCreature(card)
-    ) {
-      score += 3;
-    }
-
-    if (
-      card.manaValue <= 3
-    ) {
-      score += 3;
-    }
+  if (strategy === "aggressive") {
+    if (isCreature(card)) score += 3;
+    if (card.manaValue <= 3) score += 3;
 
     if (
       /haste|attacks|combat damage|double strike|trample/.test(
@@ -769,36 +532,23 @@ function strategyScore(
     }
   }
 
-  if (
-    strategy ===
-    "control"
-  ) {
+  if (strategy === "control") {
     if (
-      role ===
-        "Interaction" ||
-      role ===
-        "Boardwipe" ||
-      role ===
-        "Card Advantage" ||
-      role ===
-        "Protection"
+      role === "Interaction" ||
+      role === "Boardwipe" ||
+      role === "Card Advantage" ||
+      role === "Protection"
     ) {
       score += 4;
     }
   }
 
-  if (
-    strategy === "value"
-  ) {
+  if (strategy === "value") {
     if (
-      role ===
-        "Card Advantage" ||
-      role ===
-        "Recursion" ||
-      role ===
-        "Tutor" ||
-      role ===
-        "Value"
+      role === "Card Advantage" ||
+      role === "Recursion" ||
+      role === "Tutor" ||
+      role === "Value"
     ) {
       score += 4;
     }
@@ -812,14 +562,8 @@ function strategyScore(
     }
   }
 
-  if (
-    strategy ===
-    "synergy"
-  ) {
-    if (
-      role ===
-      "Synergie"
-    ) {
+  if (strategy === "synergy") {
+    if (role === "Synergie") {
       score += 5;
     }
 
@@ -832,81 +576,51 @@ function strategyScore(
     }
   }
 
-  if (
-    strategy ===
-    "creatures"
-  ) {
-    if (
-      isCreature(card)
-    ) {
+  if (strategy === "creatures") {
+    if (isCreature(card)) {
       score += 5;
     }
   }
 
-  if (
-    strategy ===
-    "spells"
-  ) {
-    if (
-      isInstantOrSorcery(
-        card
-      )
-    ) {
+  if (strategy === "spells") {
+    if (isInstantOrSorcery(card)) {
       score += 5;
     }
 
     if (
-      role ===
-        "Interaction" ||
-      role ===
-        "Card Advantage"
+      role === "Interaction" ||
+      role === "Card Advantage"
     ) {
       score += 2;
     }
   }
 
-  if (
-    aggressionWeight > 0
-  ) {
-    if (
-      isCreature(card)
-    ) {
-      score +=
-        aggressionWeight;
+  if (aggressionWeight > 0) {
+    if (isCreature(card)) {
+      score += aggressionWeight;
     }
 
-    if (
-      card.manaValue <= 3
-    ) {
-      score +=
-        aggressionWeight;
+    if (card.manaValue <= 3) {
+      score += aggressionWeight;
     }
   }
 
-  if (
-    aggressionWeight < 0
-  ) {
+  if (aggressionWeight < 0) {
     if (
-      role ===
-        "Interaction" ||
-      role ===
-        "Protection" ||
-      role ===
-        "Card Advantage"
+      role === "Interaction" ||
+      role === "Protection" ||
+      role === "Card Advantage"
     ) {
-      score +=
-        Math.abs(
-          aggressionWeight
-        );
+      score += Math.abs(
+        aggressionWeight
+      );
     }
   }
 
   return score;
 }
 
-function baseRoleScore(
-  role: Role
-) {
+function baseRoleScore(role: Role) {
   switch (role) {
     case "Ramp":
       return 9;
@@ -952,11 +666,9 @@ function cardScore(
   profile: DeckProfile,
   commanders: CardRecord[]
 ) {
-  const role =
-    roleOf(card);
+  const role = roleOf(card);
 
-  let score =
-    baseRoleScore(role);
+  let score = baseRoleScore(role);
 
   score += curveScore(
     card,
@@ -976,12 +688,10 @@ function cardScore(
       card,
       commanders
     ) *
-    profile
-      .commanderSynergyWeight;
+    profile.commanderSynergyWeight;
 
   if (
-    format ===
-      "standard" &&
+    format === "standard" &&
     standardLegal(card)
   ) {
     score += 2;
@@ -1001,24 +711,17 @@ function landScore(
   card: CardRecord,
   colors: string[]
 ) {
-  const text =
-    cardText(card);
-
+  const text = cardText(card);
   let score = 0;
 
   if (
     !card.isBasicLand &&
-    !BASIC_NAMES.has(
-      card.name
-    )
+    !BASIC_NAMES.has(card.name)
   ) {
     score += 5;
   }
 
-  for (
-    const color
-    of colors
-  ) {
+  for (const color of colors) {
     if (
       new RegExp(
         `\\{${color.toLowerCase()}\\}`,
@@ -1056,11 +759,8 @@ function landScore(
   return score;
 }
 
-function roleStep(
-  format: Format
-) {
-  return format ===
-    "commander"
+function roleStep(format: Format) {
+  return format === "commander"
     ? 2
     : 1;
 }
@@ -1085,59 +785,45 @@ export function deckProfileFor(
   const adjustedTargetManaValue =
     clamp(
       targetManaValue +
-        curveAdjustment *
-          0.35,
+        curveAdjustment * 0.35,
       1.5,
       6
     );
 
   const commander =
-    format ===
-    "commander";
+    format === "commander";
 
   let lands =
-    commander
-      ? 36
-      : 24;
+    commander ? 36 : 24;
 
   if (
-    adjustedTargetManaValue <=
-    2.4
+    adjustedTargetManaValue <= 2.4
   ) {
-    lands -= commander
-      ? 2
-      : 1;
+    lands -= commander ? 2 : 1;
   }
 
   if (
-    adjustedTargetManaValue >=
-    3.8
+    adjustedTargetManaValue >= 3.8
   ) {
-    lands += commander
-      ? 2
-      : 1;
+    lands += commander ? 2 : 1;
   }
 
   if (
-    strategy ===
-    "aggressive"
+    strategy === "aggressive"
   ) {
     lands -= 1;
   }
 
   if (
-    strategy ===
-      "control" &&
-    commander
+    strategy === "control"
   ) {
-    lands += 1;
+    lands += commander ? 1 : 0;
   }
 
   lands +=
     normalizeAdjustment(
       tuning.lands
-    ) *
-    step;
+    ) * step;
 
   const base =
     commander
@@ -1165,99 +851,68 @@ export function deckProfileFor(
         };
 
   if (
-    strategy ===
-    "aggressive"
+    strategy === "aggressive"
   ) {
     base.interaction -= 1;
-    base.synergy += commander
-      ? 3
-      : 2;
-    base.finishers += commander
-      ? 2
-      : 1;
+    base.synergy +=
+      commander ? 3 : 2;
+    base.finishers +=
+      commander ? 2 : 1;
   }
 
   if (
-    strategy ===
-    "control"
+    strategy === "control"
   ) {
-    base.draw += commander
-      ? 2
-      : 1;
-
+    base.draw +=
+      commander ? 2 : 1;
     base.interaction +=
-      commander
-        ? 3
-        : 2;
-
+      commander ? 3 : 2;
     base.boardwipes += 1;
     base.protection += 1;
-
     base.synergy -=
-      commander
-        ? 2
-        : 1;
+      commander ? 2 : 1;
   }
 
   if (
     strategy === "value"
   ) {
-    base.draw += commander
-      ? 2
-      : 1;
-
+    base.draw +=
+      commander ? 2 : 1;
     base.recursion +=
-      commander
-        ? 2
-        : 1;
-
+      commander ? 2 : 1;
     base.synergy += 1;
   }
 
   if (
-    strategy ===
-    "synergy"
+    strategy === "synergy"
   ) {
     base.synergy +=
-      commander
-        ? 5
-        : 3;
+      commander ? 5 : 3;
 
     base.tutors +=
-      commander
-        ? 1
-        : 0;
+      commander ? 1 : 0;
   }
 
   if (
-    strategy ===
-    "creatures"
+    strategy === "creatures"
   ) {
     base.synergy +=
-      commander
-        ? 3
-        : 2;
+      commander ? 3 : 2;
 
     base.finishers += 1;
   }
 
   if (
-    strategy ===
-    "spells"
+    strategy === "spells"
   ) {
-    base.draw += commander
-      ? 2
-      : 1;
+    base.draw +=
+      commander ? 2 : 1;
 
     base.interaction +=
-      commander
-        ? 2
-        : 1;
+      commander ? 2 : 1;
 
     base.synergy +=
-      commander
-        ? 2
-        : 1;
+      commander ? 2 : 1;
   }
 
   const adjust = (
@@ -1270,67 +925,54 @@ export function deckProfileFor(
         normalizeAdjustment(
           userValue
         ) *
-        step
+          step
     );
 
   return {
     strategy,
 
-    lands:
-      clamp(
-        lands,
-        commander
-          ? 30
-          : 20,
-        commander
-          ? 42
-          : 28
-      ),
+    lands: clamp(
+      lands,
+      commander ? 30 : 20,
+      commander ? 42 : 28
+    ),
 
-    ramp:
-      adjust(
-        base.ramp,
-        tuning.ramp
-      ),
+    ramp: adjust(
+      base.ramp,
+      tuning.ramp
+    ),
 
-    draw:
-      adjust(
-        base.draw,
-        tuning.draw
-      ),
+    draw: adjust(
+      base.draw,
+      tuning.draw
+    ),
 
-    interaction:
-      adjust(
-        base.interaction,
-        tuning.interaction
-      ),
+    interaction: adjust(
+      base.interaction,
+      tuning.interaction
+    ),
 
-    boardwipes:
-      adjust(
-        base.boardwipes,
-        tuning.boardwipes
-      ),
+    boardwipes: adjust(
+      base.boardwipes,
+      tuning.boardwipes
+    ),
 
-    protection:
-      adjust(
-        base.protection,
-        tuning.protection
-      ),
+    protection: adjust(
+      base.protection,
+      tuning.protection
+    ),
 
-    recursion:
-      adjust(
-        base.recursion,
-        tuning.recursion
-      ),
+    recursion: adjust(
+      base.recursion,
+      tuning.recursion
+    ),
 
-    tutors:
-      base.tutors,
+    tutors: base.tutors,
 
-    synergy:
-      adjust(
-        base.synergy,
-        tuning.synergy
-      ),
+    synergy: adjust(
+      base.synergy,
+      tuning.synergy
+    ),
 
     finishers:
       base.finishers,
@@ -1342,8 +984,7 @@ export function deckProfileFor(
       commander
         ? 1 +
           normalizeAdjustment(
-            tuning
-              .commanderSynergy
+            tuning.commanderSynergy
           ) *
             0.35
         : 0,
@@ -1365,12 +1006,9 @@ function makeDeckCard(
     id: card.id,
     name: card.name,
     count,
-    manaValue:
-      card.manaValue,
-    typeLine:
-      card.typeLine,
-    role:
-      roleOf(card),
+    manaValue: card.manaValue,
+    typeLine: card.typeLine,
+    role: roleOf(card),
     reason,
     available
   };
@@ -1381,10 +1019,6 @@ export interface BuildOptions {
   format: Format;
   colors: string[];
 
-  /*
-   * Bleibt für bestehende
-   * Aufrufer kompatibel.
-   */
   commander?: CardRecord;
   commanders?: CardRecord[];
 
@@ -1392,20 +1026,9 @@ export interface BuildOptions {
   minManaValue?: number;
   maxManaValue?: number;
 
-  /*
-   * Paket 1:
-   * Diese Optionen sind
-   * zunächst optional.
-   * Paket 2 verbindet sie
-   * mit der Oberfläche.
-   */
   tuning?: DeckTuning;
-
-  lockedCards?:
-    LockedDeckCard[];
-
-  excludedCardIds?:
-    string[];
+  lockedCards?: LockedDeckCard[];
+  excludedCardIds?: string[];
 }
 
 export function buildDeck(
@@ -1413,24 +1036,18 @@ export function buildDeck(
   options: BuildOptions
 ): DeckRecord {
   const commanders =
-    options.format ===
-    "commander"
+    options.format === "commander"
       ? (
-          options.commanders
-            ?.length
+          options.commanders?.length
             ? options.commanders
             : options.commander
-              ? [
-                  options
-                    .commander
-                ]
+              ? [options.commander]
               : []
         ).slice(0, 2)
       : [];
 
   const colors =
-    options.format ===
-      "commander" &&
+    options.format === "commander" &&
     commanders.length > 0
       ? commanderColorIdentity(
           commanders
@@ -1440,31 +1057,25 @@ export function buildDeck(
   const profile =
     deckProfileFor(
       options.format,
-      options
-        .targetManaValue,
+      options.targetManaValue,
       options.tuning
     );
 
   const colorEligible =
-    pool.filter(
-      card =>
-        identityOk(
-          card,
-          colors
-        )
+    pool.filter(card =>
+      identityOk(
+        card,
+        colors
+      )
     );
 
   const eligible =
-    colorEligible.filter(
-      card =>
-        options.format ===
-        "commander"
-          ? commanderFormatLegal(
-              card
-            )
-          : standardLegal(
-              card
-            )
+    colorEligible.filter(card =>
+      options.format === "commander"
+        ? commanderFormatLegal(
+            card
+          )
+        : standardLegal(card)
     );
 
   const commanderIds =
@@ -1476,25 +1087,22 @@ export function buildDeck(
 
   const excludedIds =
     new Set(
-      options
-        .excludedCardIds ??
+      options.excludedCardIds ??
         []
     );
 
   const filtered =
-    eligible.filter(
-      card =>
-        !commanderIds.has(
-          card.id
-        ) &&
-        !excludedIds.has(
-          card.id
-        )
+    eligible.filter(card =>
+      !commanderIds.has(
+        card.id
+      ) &&
+      !excludedIds.has(
+        card.id
+      )
     );
 
   const commanderSlots =
-    options.format ===
-    "commander"
+    options.format === "commander"
       ? Math.max(
           1,
           commanders.length
@@ -1502,10 +1110,8 @@ export function buildDeck(
       : 0;
 
   const target =
-    options.format ===
-    "commander"
-      ? 100 -
-        commanderSlots
+    options.format === "commander"
+      ? 100 - commanderSlots
       : 60;
 
   const selected =
@@ -1534,8 +1140,7 @@ export function buildDeck(
     wanted = 1
   ): number => {
     const nameKey =
-      card.name
-        .toLowerCase();
+      card.name.toLowerCase();
 
     const ruleLimit =
       deckCopyLimit(
@@ -1563,9 +1168,7 @@ export function buildDeck(
         slots
       );
 
-    if (
-      amount <= 0
-    ) {
+    if (amount <= 0) {
       return 0;
     }
 
@@ -1614,13 +1217,11 @@ export function buildDeck(
   };
 
   const minManaValue =
-    options
-      .minManaValue ??
+    options.minManaValue ??
     0;
 
   const maxManaValue =
-    options
-      .maxManaValue ??
+    options.maxManaValue ??
     Infinity;
 
   const inManaRange = (
@@ -1659,32 +1260,22 @@ export function buildDeck(
     filtered.filter(
       card =>
         !isLand(card) &&
-        inManaRange(
-          card
-        )
+        inManaRange(card)
     );
 
   const byId =
     new Map(
       filtered.map(
-        card =>
-          [
-            card.id,
-            card
-          ] as const
+        card => [
+          card.id,
+          card
+        ]
       )
     );
 
-  /*
-   * Bereits fixierte Karten
-   * werden zuerst eingesetzt.
-   * Paket 2 stellt dafür
-   * die Bedienoberfläche bereit.
-   */
   for (
     const locked
-    of options
-      .lockedCards ??
+    of options.lockedCards ??
       []
   ) {
     const card =
@@ -1717,14 +1308,10 @@ export function buildDeck(
     ]
       .filter(
         card =>
-          card.role ===
-          role
+          card.role === role
       )
       .reduce(
-        (
-          sum,
-          card
-        ) =>
+        (sum, card) =>
           sum +
           card.count,
         0
@@ -1736,14 +1323,10 @@ export function buildDeck(
     ]
       .filter(
         card =>
-          card.role ===
-          "Land"
+          card.role === "Land"
       )
       .reduce(
-        (
-          sum,
-          card
-        ) =>
+        (sum, card) =>
           sum +
           card.count,
         0
@@ -1752,19 +1335,7 @@ export function buildDeck(
   let currentLandCount =
     countLands();
 
-  /*
-   * Zuerst wird die
-   * Manabasis aufgebaut.
-   *
-   * Nicht-Basics mit
-   * Farbfixing oder
-   * Zusatznutzen werden
-   * bevorzugt.
-   */
-  for (
-    const card
-    of lands
-  ) {
+  for (const card of lands) {
     if (
       slots <= 0 ||
       currentLandCount >=
@@ -1801,41 +1372,25 @@ export function buildDeck(
       );
   }
 
-  /*
-   * Jede Nichtland-Karte
-   * erhält jetzt bereits
-   * VOR der Deckauswahl
-   * eine Gesamtbewertung.
-   */
   const scoredNonlands:
     ScoredCard[] =
-    nonlands.map(
-      card => ({
-        card,
+      nonlands.map(
+        card => ({
+          card,
 
-        role:
-          roleOf(card),
+          role:
+            roleOf(card),
 
-        score:
-          cardScore(
-            card,
-            options.format,
-            profile,
-            commanders
-          )
-      })
-    );
+          score:
+            cardScore(
+              card,
+              options.format,
+              profile,
+              commanders
+            )
+        })
+      );
 
-  /*
-   * Diese Zielwerte sind
-   * das Herzstück des
-   * neuen Builders.
-   *
-   * Eine Karte wird also
-   * nicht erst hinterher
-   * als Verbesserung
-   * erkannt.
-   */
   const roleTargets:
     Array<{
       role: Role;
@@ -1843,105 +1398,73 @@ export function buildDeck(
       reason: string;
     }> = [
       {
-        role:
-          "Ramp",
-
+        role: "Ramp",
         target:
           profile.ramp,
-
         reason:
           "Ausgewählt, um den Zielwert für Mana-Beschleunigung zu erreichen."
       },
-
       {
         role:
           "Card Advantage",
-
         target:
           profile.draw,
-
         reason:
           "Ausgewählt, um den Zielwert für Kartennachschub und Kartenvorteil zu erreichen."
       },
-
       {
         role:
           "Interaction",
-
         target:
-          profile
-            .interaction,
-
+          profile.interaction,
         reason:
           "Ausgewählt, um genügend direkte Interaktion und Antworten bereitzustellen."
       },
-
       {
         role:
           "Boardwipe",
-
         target:
-          profile
-            .boardwipes,
-
+          profile.boardwipes,
         reason:
           "Ausgewählt, um den Zielwert für breite Antworten auf das Spielfeld zu erreichen."
       },
-
       {
         role:
           "Protection",
-
         target:
-          profile
-            .protection,
-
+          profile.protection,
         reason:
           "Ausgewählt, um wichtige Karten und die eigene Strategie besser zu schützen."
       },
-
       {
         role:
           "Recursion",
-
         target:
-          profile
-            .recursion,
-
+          profile.recursion,
         reason:
           "Ausgewählt, um Ressourcen aus dem Friedhof erneut nutzbar zu machen."
       },
-
       {
         role:
           "Tutor",
-
         target:
           profile.tutors,
-
         reason:
           "Ausgewählt, um die Konsistenz des Decks zu erhöhen."
       },
-
       {
         role:
           "Synergie",
-
         target:
           profile.synergy,
-
         reason:
           "Ausgewählt, weil die Karte zur gewünschten Deckstrategie bzw. zu erkannten Commander-Themen passt."
       },
-
       {
         role:
           "Finisher",
-
         target:
-          profile
-            .finishers,
-
+          profile.finishers,
         reason:
           "Ausgewählt als möglicher Abschluss für die Deckstrategie."
       }
@@ -1984,10 +1507,9 @@ export function buildDeck(
               .manaValue -
               b.card
                 .manaValue ||
-            a.card.name
-              .localeCompare(
-                b.card.name
-              )
+            a.card.name.localeCompare(
+              b.card.name
+            )
         );
 
     for (
@@ -2001,14 +1523,16 @@ export function buildDeck(
         break;
       }
 
+      const before =
+        slots;
+
       const added =
         add(
           item.card,
           reason,
           Math.min(
             missing,
-            item.card
-              .count,
+            item.card.count,
             deckCopyLimit(
               item.card,
               options.format
@@ -2016,20 +1540,20 @@ export function buildDeck(
           )
         );
 
+      if (added > 0) {
+        missing -= added;
+      }
+
       if (
-        added > 0
+        slots ===
+          before &&
+        added === 0
       ) {
-        missing -=
-          added;
+        continue;
       }
     }
   };
 
-  /*
-   * Erst werden die
-   * strukturellen Rollen
-   * erfüllt.
-   */
   for (
     const roleTarget
     of roleTargets
@@ -2041,18 +1565,6 @@ export function buildDeck(
     );
   }
 
-  /*
-   * Die verbleibenden
-   * Plätze werden nicht
-   * zufällig aufgefüllt.
-   *
-   * Sie werden nach der
-   * Gesamtbewertung aus
-   * Rolle, Kurve,
-   * Strategie und
-   * Commander-Synergie
-   * sortiert.
-   */
   const remaining =
     [
       ...scoredNonlands
@@ -2060,21 +1572,20 @@ export function buildDeck(
       (a, b) =>
         b.score -
           a.score ||
-        a.card.manaValue -
-          b.card.manaValue ||
-        a.card.name
-          .localeCompare(
-            b.card.name
-          )
+        a.card
+          .manaValue -
+          b.card
+            .manaValue ||
+        a.card.name.localeCompare(
+          b.card.name
+        )
     );
 
   for (
     const item
     of remaining
   ) {
-    if (
-      slots <= 0
-    ) {
+    if (slots <= 0) {
       break;
     }
 
@@ -2103,24 +1614,12 @@ export function buildDeck(
     );
   }
 
-  /*
-   * Nur wenn die Sammlung
-   * nicht genügend passende
-   * Nichtland-Karten
-   * enthält, dürfen
-   * zusätzliche Länder
-   * zum Auffüllen dienen.
-   */
-  if (
-    slots > 0
-  ) {
+  if (slots > 0) {
     for (
       const card
       of lands
     ) {
-      if (
-        slots <= 0
-      ) {
+      if (slots <= 0) {
         break;
       }
 
@@ -2159,10 +1658,7 @@ export function buildDeck(
 
   const mainDeckCount =
     deckCards.reduce(
-      (
-        sum,
-        card
-      ) =>
+      (sum, card) =>
         sum +
         card.count,
       0
@@ -2176,10 +1672,7 @@ export function buildDeck(
           "Land"
       )
       .reduce(
-        (
-          sum,
-          card
-        ) =>
+        (sum, card) =>
           sum +
           card.count,
         0
@@ -2197,10 +1690,7 @@ export function buildDeck(
           "Land"
       )
       .reduce(
-        (
-          sum,
-          card
-        ) =>
+        (sum, card) =>
           sum +
           card.manaValue *
             card.count,
@@ -2224,10 +1714,7 @@ export function buildDeck(
           role
       )
       .reduce(
-        (
-          sum,
-          card
-        ) =>
+        (sum, card) =>
           sum +
           card.count,
         0
@@ -2235,12 +1722,13 @@ export function buildDeck(
 
   const targetPairs:
     Array<
-      [number, number]
+      [
+        number,
+        number
+      ]
     > = [
       [
-        roleCount(
-          "Ramp"
-        ),
+        roleCount("Ramp"),
         profile.ramp
       ],
       [
@@ -2253,29 +1741,25 @@ export function buildDeck(
         roleCount(
           "Interaction"
         ),
-        profile
-          .interaction
+        profile.interaction
       ],
       [
         roleCount(
           "Boardwipe"
         ),
-        profile
-          .boardwipes
+        profile.boardwipes
       ],
       [
         roleCount(
           "Protection"
         ),
-        profile
-          .protection
+        profile.protection
       ],
       [
         roleCount(
           "Recursion"
         ),
-        profile
-          .recursion
+        profile.recursion
       ],
       [
         roleCount(
@@ -2297,7 +1781,9 @@ export function buildDeck(
         if (
           wanted <= 0
         ) {
-          return sum + 1;
+          return (
+            sum + 1
+          );
         }
 
         return (
@@ -2331,8 +1817,7 @@ export function buildDeck(
       1 -
         Math.abs(
           averageManaValue -
-            profile
-              .targetManaValue
+            profile.targetManaValue
         ) /
           3,
       0,
@@ -2346,11 +1831,6 @@ export function buildDeck(
       target
     );
 
-  /*
-   * Deck-Score ist nun
-   * an tatsächliche
-   * Zielerfüllung gekoppelt.
-   */
   const score =
     Math.round(
       clamp(
@@ -2369,9 +1849,7 @@ export function buildDeck(
 
   let notes: string;
 
-  if (
-    slots <= 0
-  ) {
+  if (slots <= 0) {
     notes =
       options.format ===
       "commander"
@@ -2422,20 +1900,16 @@ export function buildDeck(
     cards:
       deckCards,
 
-    sideboard:
-      [],
+    sideboard: [],
 
     targetManaValue:
-      profile
-        .targetManaValue,
+      profile.targetManaValue,
 
     minManaValue:
-      options
-        .minManaValue,
+      options.minManaValue,
 
     maxManaValue:
-      options
-        .maxManaValue,
+      options.maxManaValue,
 
     colors,
 
@@ -2459,10 +1933,7 @@ export function deckStats(
 
   const mainDeckCount =
     cards.reduce(
-      (
-        sum,
-        card
-      ) =>
+      (sum, card) =>
         sum +
         card.count,
       0
@@ -2482,18 +1953,14 @@ export function deckStats(
 
   const lands =
     cards
-      .filter(
-        card =>
-          /\bLand\b/i.test(
-            card.typeLine ??
-              ""
-          )
+      .filter(card =>
+        /\bLand\b/i.test(
+          card.typeLine ??
+            ""
+        )
       )
       .reduce(
-        (
-          sum,
-          card
-        ) =>
+        (sum, card) =>
           sum +
           card.count,
         0
@@ -2513,10 +1980,7 @@ export function deckStats(
           )
       )
       .reduce(
-        (
-          sum,
-          card
-        ) =>
+        (sum, card) =>
           sum +
           card.manaValue *
             card.count,
@@ -2532,15 +1996,14 @@ export function deckStats(
 
   return {
     total,
-
     lands,
-
     nonland,
 
     averageManaValue:
       Number(
-        averageManaValue
-          .toFixed(2)
+        averageManaValue.toFixed(
+          2
+        )
       ),
 
     roleCounts:
