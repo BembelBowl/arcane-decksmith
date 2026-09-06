@@ -1,14 +1,23 @@
 import { auth } from "./firebase";
 import { loadCollection } from "./db";
-import type { CardRecord, DeckRecord } from "./types";
+import type {
+  CardRecord,
+  DeckRecord
+} from "./types";
 
-const AI_WORKER_URL = "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
+const AI_WORKER_URL =
+  "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
+
 const MAX_ANALYSIS_LENGTH = 10500;
 const EMPTY_RESPONSE_RETRIES = 1;
 const RETRY_DELAY_MS = 700;
+
 const SCRYFALL_REQUEST_DELAY_MS = 120;
+
+const SCRYFALL_SEARCH_URL =
+  "https://api.scryfall.com/cards/search";
+
 const PURCHASE_CONTEXT_LIMIT = 2600;
-const SCRYFALL_SEARCH_URL = "https://api.scryfall.com/cards/search";
 
 interface ScryfallCandidateCard {
   id: string;
@@ -28,12 +37,19 @@ interface PurchaseCandidate {
   id: string;
   name: string;
   category: string;
+  roleName: string;
   manaValue: number;
   typeLine: string;
   oracleText: string;
+  currentRoleCount: number;
+  targetRoleCount: number;
+  deficit: number;
 }
 
-type CardTokenKind = "commander" | "deck" | "purchase";
+type CardTokenKind =
+  | "commander"
+  | "deck"
+  | "purchase";
 
 interface CardTokenEntry {
   token: string;
@@ -44,142 +60,289 @@ interface CardTokenEntry {
 interface AiRequestContext {
   analysis: string;
   cardMap: Record<string, string>;
-  purchaseCandidates: PurchaseCandidate[];
-  deckNames: string[];
+  purchaseByToken: Record<
+    string,
+    PurchaseCandidate
+  >;
 }
 
 interface WorkerResponse {
   explanation?: string;
+  selectedPurchaseTokens?: string[];
   error?: string;
 }
 
 let lastScryfallRequestAt = 0;
 
-function wait(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function wait(
+  ms: number
+): Promise<void> {
+  return new Promise(
+    resolve =>
+      setTimeout(
+        resolve,
+        ms
+      )
+  );
 }
 
 async function searchScryfallCandidates(
   query: string,
   order: "edhrec" | "cmc"
 ): Promise<ScryfallCandidateCard[]> {
-  const elapsed = Date.now() - lastScryfallRequestAt;
-  const delay = Math.max(0, SCRYFALL_REQUEST_DELAY_MS - elapsed);
+  const elapsed =
+    Date.now() -
+    lastScryfallRequestAt;
+
+  const delay =
+    Math.max(
+      0,
+      SCRYFALL_REQUEST_DELAY_MS -
+        elapsed
+    );
 
   if (delay > 0) {
     await wait(delay);
   }
 
-  lastScryfallRequestAt = Date.now();
+  lastScryfallRequestAt =
+    Date.now();
 
-  const params = new URLSearchParams({
-    q: query,
-    unique: "cards",
-    order
-  });
+  const params =
+    new URLSearchParams({
+      q: query,
+      unique: "cards",
+      order
+    });
 
   let response: Response;
 
   try {
-    response = await fetch(`${SCRYFALL_SEARCH_URL}?${params.toString()}`, {
-      headers: {
-        Accept: "application/json;q=0.9,*/*;q=0.8"
-      }
-    });
+    response =
+      await fetch(
+        `${SCRYFALL_SEARCH_URL}?${params.toString()}`,
+        {
+          headers: {
+            Accept:
+              "application/json;q=0.9,*/*;q=0.8"
+          }
+        }
+      );
   } catch {
     return [];
   }
 
-  if (response.status === 404 || !response.ok) {
+  if (
+    response.status === 404 ||
+    !response.ok
+  ) {
     return [];
   }
 
   try {
-    const data = (await response.json()) as ScryfallSearchResponse;
-    return Array.isArray(data.data) ? data.data : [];
+    const data =
+      (
+        await response.json()
+      ) as ScryfallSearchResponse;
+
+    return Array.isArray(
+      data.data
+    )
+      ? data.data
+      : [];
   } catch {
     return [];
   }
 }
 
-function countMainDeckCards(deck: DeckRecord): number {
-  return deck.cards.reduce((total, card) => total + card.count, 0);
+function countMainDeckCards(
+  deck: DeckRecord
+): number {
+  return deck.cards.reduce(
+    (total, card) =>
+      total +
+      card.count,
+    0
+  );
 }
 
-function commanderCount(deck: DeckRecord): number {
-  return deck.format === "commander" ? deck.commanderIds.length : 0;
+function commanderCount(
+  deck: DeckRecord
+): number {
+  return deck.format ===
+    "commander"
+    ? deck.commanderIds.length
+    : 0;
 }
 
-function isLand(typeLine: string | undefined): boolean {
-  return /\bLand\b/i.test(typeLine ?? "");
+function isLand(
+  typeLine:
+    | string
+    | undefined
+): boolean {
+  return /\bLand\b/i.test(
+    typeLine ?? ""
+  );
 }
 
-function averageManaValue(deck: DeckRecord): number {
+function averageManaValue(
+  deck: DeckRecord
+): number {
   let totalManaValue = 0;
   let cardCount = 0;
 
-  for (const card of deck.cards) {
-    if (isLand(card.typeLine)) {
+  for (
+    const card
+    of deck.cards
+  ) {
+    if (
+      isLand(
+        card.typeLine
+      )
+    ) {
       continue;
     }
 
-    totalManaValue += (card.manaValue ?? 0) * card.count;
-    cardCount += card.count;
+    totalManaValue +=
+      (
+        card.manaValue ??
+        0
+      ) *
+      card.count;
+
+    cardCount +=
+      card.count;
   }
 
-  return cardCount === 0 ? 0 : totalManaValue / cardCount;
+  return cardCount === 0
+    ? 0
+    : totalManaValue /
+        cardCount;
 }
 
-function manaCurve(deck: DeckRecord): number[] {
-  const curve = Array<number>(8).fill(0);
+function manaCurve(
+  deck: DeckRecord
+): number[] {
+  const curve =
+    Array<number>(8).fill(
+      0
+    );
 
-  for (const card of deck.cards) {
-    if (isLand(card.typeLine)) {
+  for (
+    const card
+    of deck.cards
+  ) {
+    if (
+      isLand(
+        card.typeLine
+      )
+    ) {
       continue;
     }
 
-    const manaValue = Math.floor(card.manaValue ?? 0);
-    const index = Math.min(Math.max(manaValue, 0), 7);
-    curve[index] += card.count;
+    const manaValue =
+      Math.floor(
+        card.manaValue ??
+          0
+      );
+
+    const index =
+      Math.min(
+        Math.max(
+          manaValue,
+          0
+        ),
+        7
+      );
+
+    curve[index] +=
+      card.count;
   }
 
   return curve;
 }
 
-function manaCurveText(deck: DeckRecord): string {
+function manaCurveText(
+  deck: DeckRecord
+): string {
   return manaCurve(deck)
-    .map((count, index) =>
-      index === 7
-        ? `MV 7+: ${count}`
-        : `MV ${index}: ${count}`
+    .map(
+      (
+        count,
+        index
+      ) =>
+        index === 7
+          ? `MV 7+: ${count}`
+          : `MV ${index}: ${count}`
     )
     .join(" | ");
 }
 
-function roleCounts(deck: DeckRecord): Record<string, number> {
-  const result: Record<string, number> = {};
+function roleCounts(
+  deck: DeckRecord
+): Record<
+  string,
+  number
+> {
+  const result:
+    Record<
+      string,
+      number
+    > = {};
 
-  for (const card of deck.cards) {
-    const role = card.role || "Unbekannt";
-    result[role] = (result[role] ?? 0) + card.count;
+  for (
+    const card
+    of deck.cards
+  ) {
+    const role =
+      card.role ||
+      "Unbekannt";
+
+    result[role] =
+      (
+        result[role] ??
+        0
+      ) +
+      card.count;
   }
 
   return result;
 }
 
-function rolesText(deck: DeckRecord): string {
-  const entries = Object.entries(roleCounts(deck)).sort(
-    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
-  );
+function rolesText(
+  deck: DeckRecord
+): string {
+  const entries =
+    Object.entries(
+      roleCounts(deck)
+    ).sort(
+      (a, b) =>
+        b[1] -
+          a[1] ||
+        a[0].localeCompare(
+          b[0]
+        )
+    );
 
-  return entries.length > 0
+  return entries.length >
+    0
     ? entries
-        .map(([role, count]) => `${role}: ${count}`)
+        .map(
+          (
+            [
+              role,
+              count
+            ]
+          ) =>
+            `${role}: ${count}`
+        )
         .join(" | ")
     : "Keine Rollen vorhanden.";
 }
 
-function typeCounts(deck: DeckRecord) {
+function typeCounts(
+  deck: DeckRecord
+) {
   const result = {
     lands: 0,
     creatures: 0,
@@ -190,52 +353,183 @@ function typeCounts(deck: DeckRecord) {
     planeswalkers: 0
   };
 
-  for (const card of deck.cards) {
-    const line = card.typeLine ?? "";
+  for (
+    const card
+    of deck.cards
+  ) {
+    const line =
+      card.typeLine ??
+      "";
 
-    if (/\bLand\b/i.test(line)) {
-      result.lands += card.count;
+    if (
+      /\bLand\b/i.test(
+        line
+      )
+    ) {
+      result.lands +=
+        card.count;
     }
 
-    if (/\bCreature\b/i.test(line)) {
-      result.creatures += card.count;
+    if (
+      /\bCreature\b/i.test(
+        line
+      )
+    ) {
+      result.creatures +=
+        card.count;
     }
 
-    if (/\bArtifact\b/i.test(line)) {
-      result.artifacts += card.count;
+    if (
+      /\bArtifact\b/i.test(
+        line
+      )
+    ) {
+      result.artifacts +=
+        card.count;
     }
 
-    if (/\bEnchantment\b/i.test(line)) {
-      result.enchantments += card.count;
+    if (
+      /\bEnchantment\b/i.test(
+        line
+      )
+    ) {
+      result.enchantments +=
+        card.count;
     }
 
-    if (/\bInstant\b/i.test(line)) {
-      result.instants += card.count;
+    if (
+      /\bInstant\b/i.test(
+        line
+      )
+    ) {
+      result.instants +=
+        card.count;
     }
 
-    if (/\bSorcery\b/i.test(line)) {
-      result.sorceries += card.count;
+    if (
+      /\bSorcery\b/i.test(
+        line
+      )
+    ) {
+      result.sorceries +=
+        card.count;
     }
 
-    if (/\bPlaneswalker\b/i.test(line)) {
-      result.planeswalkers += card.count;
+    if (
+      /\bPlaneswalker\b/i.test(
+        line
+      )
+    ) {
+      result.planeswalkers +=
+        card.count;
     }
   }
 
   return result;
 }
 
-export function generateDeckExplanation(deck: DeckRecord): string {
-  const mainDeck = countMainDeckCards(deck);
-  const commanders = commanderCount(deck);
-  const total = mainDeck + commanders;
-  const types = typeCounts(deck);
-  const nonlands = mainDeck - types.lands;
-  const averageMv = averageManaValue(deck);
+function manaValueAssessment(
+  deck: DeckRecord
+): string {
+  const average =
+    averageManaValue(
+      deck
+    );
+
+  if (
+    typeof deck.targetManaValue !==
+      "number"
+  ) {
+    return (
+      "Kein Ziel-Mana-Value angegeben; " +
+      "keine quantitative Abweichungsbewertung möglich."
+    );
+  }
+
+  const target =
+    deck.targetManaValue;
+
+  const delta =
+    average -
+    target;
+
+  const absoluteDelta =
+    Math.abs(delta);
+
+  if (
+    absoluteDelta <=
+    0.15
+  ) {
+    return (
+      `Der durchschnittliche Mana Value liegt mit ${average.toFixed(2)} ` +
+      `praktisch am Zielwert ${target.toFixed(1)}. ` +
+      `Die Abweichung von ${absoluteDelta.toFixed(2)} ist gering und soll nicht als eigenständige Schwäche dargestellt werden.`
+    );
+  }
+
+  if (
+    absoluteDelta <=
+    0.5
+  ) {
+    return delta > 0
+      ? (
+          `Der durchschnittliche Mana Value liegt mit ${average.toFixed(2)} leicht über dem Zielwert ${target.toFixed(1)}. ` +
+          `Die Abweichung beträgt ${absoluteDelta.toFixed(2)}.`
+        )
+      : (
+          `Der durchschnittliche Mana Value liegt mit ${average.toFixed(2)} leicht unter dem Zielwert ${target.toFixed(1)}. ` +
+          `Die Abweichung beträgt ${absoluteDelta.toFixed(2)}.`
+        );
+  }
+
+  return delta > 0
+    ? (
+        `Der durchschnittliche Mana Value liegt mit ${average.toFixed(2)} deutlich über dem Zielwert ${target.toFixed(1)}. ` +
+        `Die Abweichung beträgt ${absoluteDelta.toFixed(2)}.`
+      )
+    : (
+        `Der durchschnittliche Mana Value liegt mit ${average.toFixed(2)} deutlich unter dem Zielwert ${target.toFixed(1)}. ` +
+        `Die Abweichung beträgt ${absoluteDelta.toFixed(2)}.`
+      );
+}
+
+export function generateDeckExplanation(
+  deck: DeckRecord
+): string {
+  const mainDeck =
+    countMainDeckCards(
+      deck
+    );
+
+  const commanders =
+    commanderCount(
+      deck
+    );
+
+  const total =
+    mainDeck +
+    commanders;
+
+  const types =
+    typeCounts(
+      deck
+    );
+
+  const nonlands =
+    mainDeck -
+    types.lands;
+
+  const averageMv =
+    averageManaValue(
+      deck
+    );
 
   const targetManaValue =
-    typeof deck.targetManaValue === "number"
-      ? deck.targetManaValue.toFixed(1)
+    typeof deck.targetManaValue ===
+      "number"
+      ? deck.targetManaValue.toFixed(
+          1
+        )
       : "Nicht angegeben";
 
   return [
@@ -257,39 +551,72 @@ export function generateDeckExplanation(deck: DeckRecord): string {
     `Deck-Score: ${deck.score ?? "Nicht angegeben"}`,
     "",
     "Mana-Kurve:",
-    manaCurveText(deck),
+    manaCurveText(
+      deck
+    ),
     "",
     "Kartenrollen:",
-    rolesText(deck)
+    rolesText(
+      deck
+    )
   ].join("\n");
 }
 
-function colorIdentityText(colors: string[]): string {
-  const names: Record<string, string> = {
-    W: "Weiß",
-    U: "Blau",
-    B: "Schwarz",
-    R: "Rot",
-    G: "Grün"
-  };
+function colorIdentityText(
+  colors: string[]
+): string {
+  const names:
+    Record<
+      string,
+      string
+    > = {
+      W: "Weiß",
+      U: "Blau",
+      B: "Schwarz",
+      R: "Rot",
+      G: "Grün"
+    };
 
-  if (colors.length === 0) {
+  if (
+    colors.length ===
+    0
+  ) {
     return "Farblos";
   }
 
   return colors
-    .map(color => names[color] ?? color)
+    .map(
+      color =>
+        names[color] ??
+        color
+    )
     .join(", ");
 }
 
-function technicalDeckData(deck: DeckRecord): string {
-  const mainDeck = countMainDeckCards(deck);
-  const commanders = commanderCount(deck);
-  const types = typeCounts(deck);
+function technicalDeckData(
+  deck: DeckRecord
+): string {
+  const mainDeck =
+    countMainDeckCards(
+      deck
+    );
+
+  const commanders =
+    commanderCount(
+      deck
+    );
+
+  const types =
+    typeCounts(
+      deck
+    );
 
   const targetManaValue =
-    typeof deck.targetManaValue === "number"
-      ? deck.targetManaValue.toFixed(1)
+    typeof deck.targetManaValue ===
+      "number"
+      ? deck.targetManaValue.toFixed(
+          1
+        )
       : "Nicht angegeben";
 
   return [
@@ -308,6 +635,7 @@ function technicalDeckData(deck: DeckRecord): string {
     `Planeswalker: ${types.planeswalkers}`,
     `Durchschnittlicher Mana Value: ${averageManaValue(deck).toFixed(2)}`,
     `Ziel-Mana-Value: ${targetManaValue}`,
+    `Deterministische Kurvenbewertung: ${manaValueAssessment(deck)}`,
     `Deck-Score: ${deck.score ?? "Nicht angegeben"}`,
     `Mana-Kurve: ${manaCurveText(deck)}`,
     `Kartenrollen: ${rolesText(deck)}`
@@ -318,11 +646,18 @@ function shorten(
   value: string,
   maxLength: number
 ): string {
-  const clean = value
-    .replace(/\s+/g, " ")
-    .trim();
+  const clean =
+    value
+      .replace(
+        /\s+/g,
+        " "
+      )
+      .trim();
 
-  if (clean.length <= maxLength) {
+  if (
+    clean.length <=
+    maxLength
+  ) {
     return clean;
   }
 
@@ -335,14 +670,19 @@ function shorten(
           maxLength - 1
         )
       )
-      .trimEnd() + "…"
+      .trimEnd() +
+    "…"
   );
 }
 
-function normalizeName(value: string): string {
+function normalizeName(
+  value: string
+): string {
   return value
     .trim()
-    .toLocaleLowerCase("en-US");
+    .toLocaleLowerCase(
+      "en-US"
+    );
 }
 
 function findCollectionCard(
@@ -352,18 +692,27 @@ function findCollectionCard(
 ): CardRecord | undefined {
   return (
     collection.find(
-      card => card.id === id
+      card =>
+        card.id ===
+        id
     ) ??
     collection.find(
       card =>
-        normalizeName(card.name) ===
-        normalizeName(name)
+        normalizeName(
+          card.name
+        ) ===
+        normalizeName(
+          name
+        )
     )
   );
 }
 
 function tokenFor(
-  prefix: "C" | "D" | "P",
+  prefix:
+    | "C"
+    | "D"
+    | "P",
   index: number
 ): string {
   return `[[${prefix}${String(index + 1).padStart(3, "0")}]]`;
@@ -373,25 +722,38 @@ function commanderTokenEntries(
   deck: DeckRecord,
   collection: CardRecord[]
 ): CardTokenEntry[] {
-  if (deck.format !== "commander") {
+  if (
+    deck.format !==
+    "commander"
+  ) {
     return [];
   }
 
   return deck.commanderIds.map(
-    (commanderId, index) => {
-      const card = collection.find(
-        item => item.id === commanderId
-      );
+    (
+      commanderId,
+      index
+    ) => {
+      const card =
+        collection.find(
+          item =>
+            item.id ===
+            commanderId
+        );
 
       return {
-        token: tokenFor(
-          "C",
-          index
-        ),
+        token:
+          tokenFor(
+            "C",
+            index
+          ),
+
         name:
           card?.name ??
           `Commander ${index + 1}`,
-        kind: "commander"
+
+        kind:
+          "commander"
       };
     }
   );
@@ -401,13 +763,21 @@ function deckTokenEntries(
   deck: DeckRecord
 ): CardTokenEntry[] {
   return deck.cards.map(
-    (card, index) => ({
-      token: tokenFor(
-        "D",
-        index
-      ),
-      name: card.name,
-      kind: "deck"
+    (
+      card,
+      index
+    ) => ({
+      token:
+        tokenFor(
+          "D",
+          index
+        ),
+
+      name:
+        card.name,
+
+      kind:
+        "deck"
     })
   );
 }
@@ -416,13 +786,21 @@ function purchaseTokenEntries(
   candidates: PurchaseCandidate[]
 ): CardTokenEntry[] {
   return candidates.map(
-    (candidate, index) => ({
-      token: tokenFor(
-        "P",
-        index
-      ),
-      name: candidate.name,
-      kind: "purchase"
+    (
+      candidate,
+      index
+    ) => ({
+      token:
+        tokenFor(
+          "P",
+          index
+        ),
+
+      name:
+        candidate.name,
+
+      kind:
+        "purchase"
     })
   );
 }
@@ -431,24 +809,33 @@ function tokenizeKnownNames(
   value: string,
   entries: CardTokenEntry[]
 ): string {
-  let result = value;
+  let result =
+    value;
 
-  const sorted = [...entries].sort(
-    (a, b) =>
-      b.name.length -
-      a.name.length
-  );
+  const sorted =
+    [...entries].sort(
+      (a, b) =>
+        b.name.length -
+        a.name.length
+    );
 
-  for (const entry of sorted) {
-    const name = entry.name.trim();
+  for (
+    const entry
+    of sorted
+  ) {
+    const name =
+      entry.name.trim();
 
     if (!name) {
       continue;
     }
 
-    result = result
-      .split(name)
-      .join(entry.token);
+    result =
+      result
+        .split(name)
+        .join(
+          entry.token
+        );
   }
 
   return result;
@@ -460,28 +847,45 @@ function commanderContext(
   commanderEntries: CardTokenEntry[],
   allEntries: CardTokenEntry[]
 ): string {
-  if (deck.format !== "commander") {
-    return "Kein Commander-Format.";
+  if (
+    deck.format !==
+    "commander"
+  ) {
+    return (
+      "Kein Commander-Format."
+    );
   }
 
-  if (deck.commanderIds.length === 0) {
-    return "Keine Commander-Daten vorhanden.";
+  if (
+    deck.commanderIds.length ===
+    0
+  ) {
+    return (
+      "Keine Commander-Daten vorhanden."
+    );
   }
 
   return deck.commanderIds
     .map(
-      (commanderId, index) => {
+      (
+        commanderId,
+        index
+      ) => {
         const token =
-          commanderEntries[index]?.token ??
+          commanderEntries[
+            index
+          ]?.token ??
           tokenFor(
             "C",
             index
           );
 
-        const card = collection.find(
-          item =>
-            item.id === commanderId
-        );
+        const card =
+          collection.find(
+            item =>
+              item.id ===
+              commanderId
+          );
 
         if (!card) {
           return (
@@ -495,12 +899,17 @@ function commanderContext(
           `Typ ${card.typeLine || "unbekannt"}`,
           `MV ${card.manaValue}`,
           `Farbidentität ${
-            (card.colorIdentity ?? []).join("") ||
+            (
+              card.colorIdentity ??
+              []
+            ).join("") ||
             "C"
           }`
         ];
 
-        if (card.oracleText?.trim()) {
+        if (
+          card.oracleText?.trim()
+        ) {
           parts.push(
             `Oracle ${shorten(
               tokenizeKnownNames(
@@ -512,33 +921,34 @@ function commanderContext(
           );
         }
 
-        return parts.join(" | ");
+        return parts.join(
+          " | "
+        );
       }
     )
     .join("\n");
 }
 
 function deckCardTokenLine(
-  deckCard: DeckRecord["cards"][number],
+  deckCard:
+    DeckRecord["cards"][number],
   token: string,
   collection: CardRecord[],
   allEntries: CardTokenEntry[],
   oracleLength: number
 ): string {
-  const card = findCollectionCard(
-    deckCard.id,
-    deckCard.name,
-    collection
-  );
+  const card =
+    findCollectionCard(
+      deckCard.id,
+      deckCard.name,
+      collection
+    );
 
   const parts = [
     token,
     `Anzahl ${deckCard.count}`,
     `MV ${deckCard.manaValue}`,
-    `Rolle ${
-      deckCard.role ||
-      "Unbekannt"
-    }`,
+    `Rolle ${deckCard.role || "Unbekannt"}`,
     `Typ ${
       deckCard.typeLine ||
       card?.typeLine ||
@@ -551,7 +961,8 @@ function deckCardTokenLine(
 
   if (
     oracle &&
-    oracleLength > 0
+    oracleLength >
+      0
   ) {
     parts.push(
       `Oracle ${shorten(
@@ -564,7 +975,9 @@ function deckCardTokenLine(
     );
   }
 
-  if (deckCard.reason?.trim()) {
+  if (
+    deckCard.reason?.trim()
+  ) {
     parts.push(
       `Builder-Grund ${shorten(
         tokenizeKnownNames(
@@ -576,25 +989,32 @@ function deckCardTokenLine(
     );
   }
 
-  return parts.join(" | ");
+  return parts.join(
+    " | "
+  );
 }
 
 function fullDeckOverview(
   deck: DeckRecord,
   deckEntries: CardTokenEntry[]
 ): string {
-  const lines = deck.cards.map(
-    (card, index) =>
-      [
-        deckEntries[index].token,
-        `x${card.count}`,
-        `MV${card.manaValue}`,
-        `Rolle:${
-          card.role ||
-          "Unbekannt"
-        }`
-      ].join(" | ")
-  );
+  const lines =
+    deck.cards.map(
+      (
+        card,
+        index
+      ) =>
+        [
+          deckEntries[
+            index
+          ].token,
+          `x${card.count}`,
+          `MV${card.manaValue}`,
+          `Rolle:${card.role || "Unbekannt"}`
+        ].join(
+          " | "
+        )
+    );
 
   return [
     "VOLLSTÄNDIGE DECKÜBERSICHT",
@@ -607,7 +1027,10 @@ function detailPriority(
   role: string
 ): number {
   const priorities:
-    Record<string, number> = {
+    Record<
+      string,
+      number
+    > = {
       Synergie: 100,
       "Card Advantage": 95,
       Interaction: 90,
@@ -622,7 +1045,10 @@ function detailPriority(
       Land: 0
     };
 
-  return priorities[role] ?? 30;
+  return (
+    priorities[role] ??
+    30
+  );
 }
 
 function prioritizedDeckDetails(
@@ -639,33 +1065,38 @@ function prioritizedDeckDetails(
     ""
   ].join("\n");
 
-  const ordered = deck.cards
-    .map(
-      (card, index) => ({
-        card,
-        index,
-        priority:
-          detailPriority(
-            card.role ||
-            "Unbekannt"
+  const ordered =
+    deck.cards
+      .map(
+        (
+          card,
+          index
+        ) => ({
+          card,
+          index,
+
+          priority:
+            detailPriority(
+              card.role ||
+              "Unbekannt"
+            )
+        })
+      )
+      .filter(
+        item =>
+          !isLand(
+            item.card.typeLine
           )
-      })
-    )
-    .filter(
-      item =>
-        !isLand(
-          item.card.typeLine
-        )
-    )
-    .sort(
-      (a, b) =>
-        b.priority -
-          a.priority ||
-        a.card.manaValue -
-          b.card.manaValue ||
-        a.index -
-          b.index
-    );
+      )
+      .sort(
+        (a, b) =>
+          b.priority -
+            a.priority ||
+          a.card.manaValue -
+            b.card.manaValue ||
+          a.index -
+            b.index
+      );
 
   const oracleLevels = [
     180,
@@ -677,17 +1108,26 @@ function prioritizedDeckDetails(
     const oracleLength
     of oracleLevels
   ) {
-    const lines: string[] = [];
-    let length = header.length;
+    const lines:
+      string[] = [];
 
-    for (const item of ordered) {
-      const line = deckCardTokenLine(
-        item.card,
-        deckEntries[item.index].token,
-        collection,
-        allEntries,
-        oracleLength
-      );
+    let length =
+      header.length;
+
+    for (
+      const item
+      of ordered
+    ) {
+      const line =
+        deckCardTokenLine(
+          item.card,
+          deckEntries[
+            item.index
+          ].token,
+          collection,
+          allEntries,
+          oracleLength
+        );
 
       if (
         length +
@@ -698,13 +1138,19 @@ function prioritizedDeckDetails(
         break;
       }
 
-      lines.push(line);
+      lines.push(
+        line
+      );
+
       length +=
         line.length +
         1;
     }
 
-    if (lines.length > 0) {
+    if (
+      lines.length >
+      0
+    ) {
       return [
         header,
         ...lines
@@ -718,85 +1164,113 @@ function prioritizedDeckDetails(
   );
 }
 
-function purchaseRoleTargets(
-  deck: DeckRecord
-): Array<{
+interface PurchaseRoleTarget {
   category: string;
   roleName: string;
   target: number;
   query: string;
-}> {
+}
+
+function purchaseRoleTargets(
+  deck: DeckRecord
+): PurchaseRoleTarget[] {
   const commander =
     deck.format ===
     "commander";
 
   return [
     {
-      category: "Ramp",
-      roleName: "Ramp",
+      category:
+        "Ramp",
+
+      roleName:
+        "Ramp",
+
       target:
         commander
           ? 10
           : 3,
+
       query:
         '(o:"add one mana" OR o:"search your library for a basic land")'
     },
+
     {
-      category: "Card Draw",
+      category:
+        "Card Draw",
+
       roleName:
         "Card Advantage",
+
       target:
         commander
           ? 10
           : 6,
+
       query:
         '(o:"draw a card" OR o:"draw two cards" OR o:"draw three cards")'
     },
+
     {
       category:
         "Interaktion",
+
       roleName:
         "Interaction",
+
       target:
         commander
           ? 8
           : 7,
+
       query:
         '(o:"destroy target" OR o:"exile target" OR o:"counter target")'
     },
+
     {
       category:
         "Boardwipe",
+
       roleName:
         "Boardwipe",
+
       target:
         commander
           ? 3
           : 2,
+
       query:
         '(o:"destroy all" OR o:"exile all")'
     },
+
     {
       category:
         "Schutz",
+
       roleName:
         "Protection",
+
       target:
         commander
           ? 3
           : 2,
+
       query:
         '(o:"indestructible" OR o:"hexproof" OR o:"phase out")'
     },
+
     {
       category:
         "Recursion",
+
       roleName:
         "Recursion",
+
       target:
         commander
           ? 3
           : 1,
+
       query:
         'o:"from your graveyard"'
     }
@@ -814,7 +1288,10 @@ function deckRoleCount(
         role
     )
     .reduce(
-      (sum, card) =>
+      (
+        sum,
+        card
+      ) =>
         sum +
         card.count,
       0
@@ -865,7 +1342,9 @@ function candidateLegal(
 async function verifiedPurchaseCandidates(
   deck: DeckRecord,
   collection: CardRecord[]
-): Promise<PurchaseCandidate[]> {
+): Promise<
+  PurchaseCandidate[]
+> {
   const ownedNames =
     new Set(
       collection.map(
@@ -907,8 +1386,11 @@ async function verifiedPurchaseCandidates(
   }
 
   const colors =
-    deck.colors.length > 0
-      ? deck.colors.join("")
+    deck.colors.length >
+    0
+      ? deck.colors.join(
+          ""
+        )
       : "C";
 
   const formatQuery =
@@ -918,7 +1400,8 @@ async function verifiedPurchaseCandidates(
       : "f:standard";
 
   const identityQuery =
-    deck.colors.length > 0
+    deck.colors.length >
+    0
       ? `id<=${colors}`
       : "id=c";
 
@@ -927,18 +1410,26 @@ async function verifiedPurchaseCandidates(
       deck
     )
       .map(
-        item => ({
-          ...item,
-          deficit:
-            Math.max(
-              0,
-              item.target -
-                deckRoleCount(
-                  deck,
-                  item.roleName
-                )
-            )
-        })
+        item => {
+          const current =
+            deckRoleCount(
+              deck,
+              item.roleName
+            );
+
+          return {
+            ...item,
+
+            current,
+
+            deficit:
+              Math.max(
+                0,
+                item.target -
+                  current
+              )
+          };
+        }
       )
       .sort(
         (a, b) =>
@@ -950,7 +1441,8 @@ async function verifiedPurchaseCandidates(
       );
 
   const result:
-    PurchaseCandidate[] = [];
+    PurchaseCandidate[] =
+      [];
 
   const seenNames =
     new Set<string>();
@@ -976,11 +1468,16 @@ async function verifiedPurchaseCandidates(
           : "cmc"
       );
 
-    let addedForRole = 0;
+    let addedForRole =
+      0;
 
-    for (const card of cards) {
+    for (
+      const card
+      of cards
+    ) {
       if (
-        addedForRole >= 1
+        addedForRole >=
+        1
       ) {
         break;
       }
@@ -1014,34 +1511,55 @@ async function verifiedPurchaseCandidates(
       }
 
       const oracleText =
-        card.oracle_text
-          ?.trim();
+        card.oracle_text?.trim();
 
-      if (!oracleText) {
+      if (
+        !oracleText
+      ) {
         continue;
       }
 
       result.push({
-        id: card.id,
-        name: card.name,
+        id:
+          card.id,
+
+        name:
+          card.name,
+
         category:
           role.category,
+
+        roleName:
+          role.roleName,
+
         manaValue:
           Number(
             card.cmc ??
             0
           ),
+
         typeLine:
           card.type_line ??
           "Typ unbekannt",
-        oracleText
+
+        oracleText,
+
+        currentRoleCount:
+          role.current,
+
+        targetRoleCount:
+          role.target,
+
+        deficit:
+          role.deficit
       });
 
       seenNames.add(
         nameKey
       );
 
-      addedForRole += 1;
+      addedForRole +=
+        1;
     }
   }
 
@@ -1058,12 +1576,14 @@ function purchaseCandidateContext(
     "SCRYFALL-VERIFIZIERTE OPTIONALE ANSCHAFFUNGSKANDIDATEN",
     "P-Kennungen sind keine Deckkarten.",
     "Sie wurden vorab über Scryfall auf Existenz, Formatlegalität, Farbidentität bei Commander und Nichtbesitz geprüft.",
-    "Nur P-Kennungen aus diesem Abschnitt dürfen unter 'Optionale Anschaffungen' empfohlen werden.",
+    "Die KI darf aus diesen Kandidaten höchstens drei P-Kennungen auswählen.",
+    "Sie darf die Effekte oder Kaufbegründungen nicht selbst formulieren; die sichtbare Darstellung wird nach der Auswahl deterministisch erzeugt.",
     ""
   ].join("\n");
 
   if (
-    candidates.length === 0
+    candidates.length ===
+    0
   ) {
     return (
       header +
@@ -1071,26 +1591,34 @@ function purchaseCandidateContext(
     );
   }
 
-  const lines: string[] = [];
+  const lines:
+    string[] = [];
+
   let length =
     header.length;
 
   for (
     let index = 0;
     index <
-      candidates.length;
+    candidates.length;
     index += 1
   ) {
     const candidate =
-      candidates[index];
+      candidates[
+        index
+      ];
 
     const token =
-      purchaseEntries[index]
-        .token;
+      purchaseEntries[
+        index
+      ].token;
 
     const line = [
       token,
       `Kategorie ${candidate.category}`,
+      `Aktueller Rollenwert ${candidate.currentRoleCount}`,
+      `Zielwert ${candidate.targetRoleCount}`,
+      `Defizit ${candidate.deficit}`,
       `MV ${candidate.manaValue}`,
       `Typ ${candidate.typeLine}`,
       `Oracle ${shorten(
@@ -1098,7 +1626,7 @@ function purchaseCandidateContext(
           candidate.oracleText,
           allEntries
         ),
-        230
+        220
       )}`
     ].join(" | ");
 
@@ -1111,7 +1639,9 @@ function purchaseCandidateContext(
       break;
     }
 
-    lines.push(line);
+    lines.push(
+      line
+    );
 
     length +=
       line.length +
@@ -1127,12 +1657,14 @@ function purchaseCandidateContext(
 function analysisRules(): string {
   return [
     "DATENREGELN FÜR DIE ANALYSE",
-    "C-Kennungen = Commander, D-Kennungen = tatsächliche Deckkarten, P-Kennungen = ausschließlich verifizierte optionale Anschaffungskandidaten.",
-    "Die vollständige D-Kennungsliste ist autoritativ für die Deckzugehörigkeit und wird nicht gekürzt.",
-    "Konkrete Karteneffekte dürfen nur aus ausdrücklich geliefertem Oracle-Text abgeleitet werden.",
-    "Kartennamen sind absichtlich nicht Teil der Modelldaten; konkrete Karten dürfen nur über Kennungen referenziert werden.",
-    "P-Kennungen gehören niemals zum fertigen Deck und dürfen nur unter 'Optionale Anschaffungen' verwendet werden.",
-    "Die eigentlichen Ausgabe- und Validierungsregeln werden zusätzlich serverseitig erzwungen."
+    "C-Kennungen = Commander.",
+    "D-Kennungen = tatsächliche Karten des fertigen Decks.",
+    "P-Kennungen = ausschließlich verifizierte optionale Anschaffungskandidaten.",
+    "Die vollständige D-Kennungsliste ist autoritativ für die Deckzugehörigkeit und wird niemals gekürzt.",
+    "Konkrete Karteneffekte dürfen ausschließlich aus ausdrücklich geliefertem Oracle-Text abgeleitet werden.",
+    "P-Kennungen gehören niemals zum fertigen Deck.",
+    "Die KI darf P-Kennungen lediglich auswählen. Die sichtbare Beschreibung der optionalen Anschaffungen wird deterministisch von Arcane Decksmith erzeugt.",
+    "Die deterministische Kurvenbewertung in den technischen Deckdaten ist autoritativ und darf nicht widersprochen werden."
   ].join("\n");
 }
 
@@ -1143,6 +1675,7 @@ function authoritativeTokenList(
 ): string {
   return [
     "AUTORITATIVE KENNUNGSLISTEN",
+
     `Commander: ${
       commanderEntries.length >
       0
@@ -1154,6 +1687,7 @@ function authoritativeTokenList(
             .join(", ")
         : "keine"
     }`,
+
     `Deckkarten: ${
       deckEntries.length >
       0
@@ -1165,6 +1699,7 @@ function authoritativeTokenList(
             .join(", ")
         : "keine"
     }`,
+
     `Anschaffungskandidaten: ${
       purchaseEntries.length >
       0
@@ -1176,13 +1711,17 @@ function authoritativeTokenList(
             .join(", ")
         : "keine"
     }`,
+
     "Diese Listen sind vollständig und dürfen nicht durch Modellwissen ergänzt werden."
   ].join("\n");
 }
 
 function cardMapFromEntries(
   entries: CardTokenEntry[]
-): Record<string, string> {
+): Record<
+  string,
+  string
+> {
   return Object.fromEntries(
     entries.map(
       entry => [
@@ -1193,24 +1732,41 @@ function cardMapFromEntries(
   );
 }
 
-function uniqueDeckNames(
+function purchaseMapFromEntries(
+  candidates: PurchaseCandidate[],
   entries: CardTokenEntry[]
-): string[] {
-  return Array.from(
-    new Set(
-      entries
-        .filter(
-          entry =>
-            entry.kind !==
-            "purchase"
-        )
-        .map(
-          entry =>
-            entry.name.trim()
-        )
-        .filter(Boolean)
-    )
-  );
+): Record<
+  string,
+  PurchaseCandidate
+> {
+  const result:
+    Record<
+      string,
+      PurchaseCandidate
+    > = {};
+
+  for (
+    let index = 0;
+    index <
+    candidates.length;
+    index += 1
+  ) {
+    const token =
+      entries[
+        index
+      ]?.token;
+
+    if (!token) {
+      continue;
+    }
+
+    result[token] =
+      candidates[
+        index
+      ];
+  }
+
+  return result;
 }
 
 async function createAiRequestContext(
@@ -1292,7 +1848,8 @@ async function createAiRequestContext(
     2;
 
   if (
-    detailBudget < 500
+    detailBudget <
+    500
   ) {
     throw new Error(
       "Die KI-Deckdaten sind zu groß, um sie zuverlässig und vollständig zu analysieren."
@@ -1326,14 +1883,16 @@ async function createAiRequestContext(
 
   return {
     analysis,
+
     cardMap:
       cardMapFromEntries(
         allEntries
       ),
-    purchaseCandidates,
-    deckNames:
-      uniqueDeckNames(
-        allEntries
+
+    purchaseByToken:
+      purchaseMapFromEntries(
+        purchaseCandidates,
+        purchaseEntries
       )
   };
 }
@@ -1357,7 +1916,8 @@ function workerError(
   data: WorkerResponse
 ): Error {
   if (
-    response.status === 429
+    response.status ===
+    429
   ) {
     return new Error(
       data.error ||
@@ -1366,8 +1926,10 @@ function workerError(
   }
 
   if (
-    response.status === 401 ||
-    response.status === 403
+    response.status ===
+      401 ||
+    response.status ===
+      403
   ) {
     return new Error(
       data.error ||
@@ -1376,7 +1938,8 @@ function workerError(
   }
 
   if (
-    response.status >= 500
+    response.status >=
+    500
   ) {
     return new Error(
       data.error ||
@@ -1393,29 +1956,35 @@ function workerError(
 async function requestAiExplanation(
   idToken: string,
   context: AiRequestContext
-): Promise<string | null> {
+): Promise<WorkerResponse> {
   let response: Response;
 
   try {
-    response = await fetch(
-      AI_WORKER_URL,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-          Authorization:
-            `Bearer ${idToken}`
-        },
-        body:
-          JSON.stringify({
-            analysis:
-              context.analysis,
-            cardMap:
-              context.cardMap
-          })
-      }
-    );
+    response =
+      await fetch(
+        AI_WORKER_URL,
+        {
+          method:
+            "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            Authorization:
+              `Bearer ${idToken}`
+          },
+
+          body:
+            JSON.stringify({
+              analysis:
+                context.analysis,
+
+              cardMap:
+                context.cardMap
+            })
+        }
+      );
   } catch {
     throw new Error(
       "Der KI-Dienst konnte nicht erreicht werden. " +
@@ -1428,30 +1997,21 @@ async function requestAiExplanation(
       response
     );
 
-  if (!response.ok) {
+  if (
+    !response.ok
+  ) {
     throw workerError(
       response,
       data
     );
   }
 
-  if (
-    typeof data.explanation !==
-      "string" ||
-    !data.explanation.trim()
-  ) {
-    return null;
-  }
-
-  return data.explanation.trim();
+  return data;
 }
 
-function optionalPurchaseSection(
+function stripOptionalPurchaseSection(
   explanation: string
-): {
-  before: string;
-  section: string;
-} {
+): string {
   const heading =
     "### Optionale Anschaffungen";
 
@@ -1460,274 +2020,256 @@ function optionalPurchaseSection(
       heading
     );
 
-  if (start < 0) {
-    return {
-      before:
-        explanation,
-      section: ""
-    };
+  if (
+    start < 0
+  ) {
+    return explanation;
   }
-
-  const afterStart =
-    start +
-    heading.length;
 
   const nextHeading =
     explanation.indexOf(
       "\n### ",
-      afterStart
+      start +
+        heading.length
     );
 
-  const end =
-    nextHeading < 0
-      ? explanation.length
-      : nextHeading;
-
-  return {
-    before:
-      explanation.slice(
+  if (
+    nextHeading <
+    0
+  ) {
+    return explanation
+      .slice(
         0,
         start
-      ),
-    section:
-      explanation.slice(
-        start,
-        end
       )
-  };
-}
-
-function containsName(
-  text: string,
-  name: string
-): boolean {
-  const normalizedText =
-    text.toLocaleLowerCase(
-      "en-US"
-    );
-
-  const normalizedName =
-    normalizeName(
-      name
-    );
+      .trimEnd();
+  }
 
   return (
-    normalizedName.length >
-      0 &&
-    normalizedText.includes(
-      normalizedName
-    )
+    explanation
+      .slice(
+        0,
+        start
+      )
+      .trimEnd() +
+    "\n\n" +
+    explanation
+      .slice(
+        nextHeading +
+          1
+      )
+      .trimStart()
   );
 }
 
-function stripMarkdownEmphasis(
-  value: string
-): string {
-  return value
-    .replace(
-      /^[*_`\s]+/,
-      ""
-    )
-    .replace(
-      /[*_`\s]+$/,
-      ""
-    )
-    .replace(
-      /\\([\\`*_{}\[\]<>])/g,
-      "$1"
-    )
-    .trim();
-}
-
-function validateRenderedExplanation(
-  explanation: string,
+function selectedPurchaseCandidates(
+  tokens:
+    | string[]
+    | undefined,
   context: AiRequestContext
-): string | null {
+): PurchaseCandidate[] {
   if (
-    /\[\[(?:C|D|P)\d{3}\]\]/.test(
-      explanation
+    !Array.isArray(
+      tokens
     )
   ) {
-    return (
-      "Die KI-Antwort enthält nicht aufgelöste Kartenkennungen."
-    );
+    return [];
   }
 
-  const {
-    before,
-    section
-  } =
-    optionalPurchaseSection(
-      explanation
-    );
+  const selected:
+    PurchaseCandidate[] =
+      [];
+
+  const seen =
+    new Set<string>();
 
   for (
-    const candidate
-    of context.purchaseCandidates
+    const token
+    of tokens
   ) {
     if (
-      containsName(
-        before,
-        candidate.name
-      )
+      selected.length >=
+      3
     ) {
-      return (
-        "Eine optionale Anschaffung wurde außerhalb des Anschaffungsabschnitts als Deckkarte verwendet: " +
-        candidate.name
-      );
+      break;
     }
-  }
-
-  const candidateNames =
-    new Map(
-      context
-        .purchaseCandidates
-        .map(
-          candidate => [
-            normalizeName(
-              candidate.name
-            ),
-            candidate.name
-          ]
-        )
-    );
-
-  const purchaseHeadingPattern =
-    /^\s*(?:[-+]\s*)?\*\*(.+?)\s+—\s+Nicht in deiner Sammlung\*\*\s*$/gm;
-
-  const recommendedNames:
-    string[] = [];
-
-  const markedPurchaseLines =
-    section
-      .split("\n")
-      .filter(
-        line =>
-          /Nicht in deiner Sammlung/i.test(
-            line
-          )
-      );
-
-  for (
-    const line
-    of markedPurchaseLines
-  ) {
-    const lineMatch =
-      line.match(
-        /^\s*(?:[-+]\s*)?\*\*(.+?)\s+—\s+Nicht in deiner Sammlung\*\*\s*$/
-      );
-
-    if (!lineMatch) {
-      return (
-        "Eine Anschaffungsempfehlung hat nicht das vorgeschriebene verifizierbare Format."
-      );
-    }
-  }
-
-  for (
-    const match
-    of section.matchAll(
-      purchaseHeadingPattern
-    )
-  ) {
-    const renderedName =
-      stripMarkdownEmphasis(
-        match[1]
-      );
 
     if (
-      !candidateNames.has(
-        normalizeName(
-          renderedName
-        )
-      )
-    ) {
-      return (
-        "Die KI hat eine nicht verifizierte Anschaffung genannt: " +
-        renderedName
-      );
-    }
-
-    recommendedNames.push(
-      renderedName
-    );
-  }
-
-  if (
-    recommendedNames.length >
-    3
-  ) {
-    return (
-      "Die KI hat mehr als drei optionale Anschaffungen empfohlen."
-    );
-  }
-
-  const uniqueRecommendations =
-    new Set(
-      recommendedNames.map(
-        normalizeName
-      )
-    );
-
-  if (
-    uniqueRecommendations.size !==
-    recommendedNames.length
-  ) {
-    return (
-      "Die KI hat dieselbe optionale Anschaffung mehrfach empfohlen."
-    );
-  }
-
-  const replacementPattern =
-    /Möglicher Ersatz für:\s*([^\n]+)/gi;
-
-  const allowedDeckNames =
-    new Set(
-      context.deckNames.map(
-        normalizeName
-      )
-    );
-
-  for (
-    const match
-    of section.matchAll(
-      replacementPattern
-    )
-  ) {
-    const value =
-      stripMarkdownEmphasis(
-        match[1]
-      )
-        .replace(
-          /[.!]+$/,
-          ""
-        )
-        .trim();
-
-    if (
-      !value ||
-      /^keine\b/i.test(
-        value
+      typeof token !==
+        "string" ||
+      seen.has(
+        token
       )
     ) {
       continue;
     }
 
-    if (
-      !allowedDeckNames.has(
-        normalizeName(
-          value
-        )
-      )
-    ) {
-      return (
-        "Die KI hat als möglichen Ersatz eine Karte genannt, die nicht im fertigen Deck steht: " +
-        value
-      );
+    const candidate =
+      context.purchaseByToken[
+        token
+      ];
+
+    if (!candidate) {
+      continue;
     }
+
+    seen.add(
+      token
+    );
+
+    selected.push(
+      candidate
+    );
   }
 
-  return null;
+  return selected;
+}
+
+function deterministicPurchaseReason(
+  candidate: PurchaseCandidate
+): string {
+  if (
+    candidate.deficit >
+    0
+  ) {
+    return (
+      `Das aktuelle Deck enthält ${candidate.currentRoleCount} Karte(n) in der Rolle ` +
+      `„${candidate.roleName}“, während der hinterlegte Zielwert bei ${candidate.targetRoleCount} liegt. ` +
+      `Die Karte wurde deshalb als verifizierte Option für die Kategorie „${candidate.category}“ vorausgewählt.`
+    );
+  }
+
+  return (
+    `Der Zielwert der Rolle „${candidate.roleName}“ ist bereits erreicht. ` +
+    `Die Karte bleibt dennoch als optionale, über Scryfall verifizierte Alternative für die Kategorie „${candidate.category}“ verfügbar.`
+  );
+}
+
+function deterministicPurchaseSection(
+  candidates: PurchaseCandidate[]
+): string {
+  const heading =
+    "### Optionale Anschaffungen";
+
+  if (
+    candidates.length ===
+    0
+  ) {
+    return [
+      heading,
+      "",
+      "Aus der Scryfall-verifizierten Kandidatenliste wurde aktuell keine Anschaffung ausgewählt, die für diese Analyse einen ausreichend klaren zusätzlichen Nutzen bietet."
+    ].join("\n");
+  }
+
+  const blocks =
+    candidates.map(
+      candidate =>
+        [
+          `**${candidate.name} — Nicht in deiner Sammlung**`,
+          "",
+          `- **Kategorie:** ${candidate.category}`,
+          `- **Mana Value:** ${candidate.manaValue}`,
+          `- **Kartentyp:** ${candidate.typeLine}`,
+          `- **Oracle-Text:** ${candidate.oracleText}`,
+          `- **Einordnung:** ${deterministicPurchaseReason(candidate)}`
+        ].join("\n")
+    );
+
+  return [
+    heading,
+    "",
+    ...blocks.flatMap(
+      (
+        block,
+        index
+      ) =>
+        index === 0
+          ? [block]
+          : ["", block]
+    )
+  ].join("\n");
+}
+
+function insertPurchaseSection(
+  explanation: string,
+  purchaseSection: string
+): string {
+  const cleaned =
+    stripOptionalPurchaseSection(
+      explanation
+    );
+
+  const finalHeading =
+    "### Fazit";
+
+  const finalStart =
+    cleaned.indexOf(
+      finalHeading
+    );
+
+  if (
+    finalStart <
+    0
+  ) {
+    return [
+      cleaned.trimEnd(),
+      "",
+      purchaseSection
+    ].join("\n");
+  }
+
+  const before =
+    cleaned
+      .slice(
+        0,
+        finalStart
+      )
+      .trimEnd();
+
+  const after =
+    cleaned
+      .slice(
+        finalStart
+      )
+      .trimStart();
+
+  return [
+    before,
+    "",
+    purchaseSection,
+    "",
+    after
+  ].join("\n");
+}
+
+function finalClientExplanation(
+  data: WorkerResponse,
+  context: AiRequestContext
+): string | null {
+  if (
+    typeof data.explanation !==
+      "string" ||
+    !data.explanation.trim()
+  ) {
+    return null;
+  }
+
+  const selected =
+    selectedPurchaseCandidates(
+      data.selectedPurchaseTokens,
+      context
+    );
+
+  const purchaseSection =
+    deterministicPurchaseSection(
+      selected
+    );
+
+  return insertPurchaseSection(
+    data.explanation.trim(),
+    purchaseSection
+  );
 }
 
 export async function generateAiDeckExplanation(
@@ -1748,6 +2290,7 @@ export async function generateAiDeckExplanation(
   ] =
     await Promise.all([
       user.getIdToken(),
+
       loadCollection(
         user.uid
       )
@@ -1759,35 +2302,28 @@ export async function generateAiDeckExplanation(
       collection
     );
 
-  let lastValidationError:
-    string | null =
-    null;
-
   for (
     let attempt = 0;
     attempt <=
       EMPTY_RESPONSE_RETRIES;
     attempt += 1
   ) {
-    const explanation =
+    const data =
       await requestAiExplanation(
         idToken,
         context
       );
 
-    if (explanation) {
-      const validationError =
-        validateRenderedExplanation(
-          explanation,
-          context
-        );
+    const explanation =
+      finalClientExplanation(
+        data,
+        context
+      );
 
-      if (!validationError) {
-        return explanation;
-      }
-
-      lastValidationError =
-        validationError;
+    if (
+      explanation
+    ) {
+      return explanation;
     }
 
     if (
@@ -1798,13 +2334,6 @@ export async function generateAiDeckExplanation(
         RETRY_DELAY_MS
       );
     }
-  }
-
-  if (lastValidationError) {
-    throw new Error(
-      "Die generative KI hat auch nach einem automatischen Korrekturversuch keine konsistente Deckanalyse geliefert. " +
-        lastValidationError
-    );
   }
 
   throw new Error(
