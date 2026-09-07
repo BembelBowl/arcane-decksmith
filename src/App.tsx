@@ -1839,7 +1839,10 @@ function Collection({
         </div>
       </div>
 
-      <div className="panel collection-stats">
+      <details className="panel collection-stats">
+  <summary className="collection-stats-toggle">
+    Sammlungs-Statistiken
+  </summary>
         <style>{`
           .collection-stats-summary{
             display:grid;
@@ -2212,7 +2215,7 @@ function Collection({
               )}
           </div>
         </div>
-      </div>
+     </details>
 
       {showImport && (
         <div className="panel">
@@ -3466,6 +3469,22 @@ function Builder({
         .optimizable-deck-list .deck-list-row.excluded {
           border-color: rgba(239, 99, 99, 0.28);
           background: rgba(239, 99, 99, 0.045);
+        }
+
+          .collection-stats-toggle{
+          cursor:pointer;
+          font-size:1.1rem;
+          font-weight:700;
+          margin-bottom:18px;
+          user-select:none;
+        }
+        
+        .collection-stats:not([open]) .collection-stats-toggle{
+          margin-bottom:0;
+        }
+        
+        .collection-stats-toggle::marker{
+          color:var(--gold-bright);
         }
 
         .deck-list-info {
@@ -7388,30 +7407,16 @@ function DeckEditor({
                             key={
                               card.id
                             }
-                            onPointerEnter={event => {
-                              if (
-                                event.pointerType ===
-                                "mouse"
-                              ) {
-                                setPreviewCardId(
-                                  card.id
-                                );
-                              }
-                            }}
-                            onPointerLeave={event => {
-                              if (
-                                event.pointerType ===
-                                "mouse"
-                              ) {
-                                setPreviewCardId(
-                                  current =>
-                                    current ===
-                                    card.id
-                                      ? null
-                                      : current
-                                );
-                              }
-                            }}
+                        onPointerEnter={event => {
+                            if (
+                              event.pointerType ===
+                              "mouse"
+                            ) {
+                              setPreviewCardId(
+                                card.id
+                              );
+                            }
+                          }}
                           >
                             <button
                               type="button"
