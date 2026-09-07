@@ -3381,6 +3381,81 @@ function DeckEditor({
     Boolean(pairInvalid) ||
     commanderTooLarge;
 
+const canAnalyze=
+  !demoMode &&
+  !hasBlockingError &&
+  d.cards.length>0 &&
+  (
+    d.format!=="commander" ||
+    selectedCommanders.length>0
+  );
+
+const analyzeManualDeck=async()=>{
+  if(!canAnalyze){
+    return;
+  }
+
+  setAiBusy(true);
+  setAnalysisText("");
+
+  try{
+    const deckForAnalysis:DeckRecord={
+      ...d,
+
+      cards:d.cards.map(deckCard=>{
+        const source=pool.find(
+          card=>card.id===deckCard.id
+        );
+
+        if(!source){
+          return deckCard;
+        }
+
+        const detectedRole=roleOf(source);
+
+        return {
+          ...deckCard,
+          role:detectedRole,
+          reason:
+            `Für die KI-Analyse automatisch als „${detectedRole}“ erkannt.`
+        };
+      }),
+
+      colors:
+        d.format==="commander"
+          ?commanderColors
+          :d.colors,
+
+      updatedAt:Date.now()
+    };
+
+    const text=await generateAiDeckExplanation(deckForAnalysis);
+    setAnalysisText(text);
+  }catch(error){
+    console.error(
+      "KI-Analyse fehlgeschlagen:",
+      error
+    );
+
+    const fallback=generateDeckExplanation(d);
+
+    const errorMessage=
+      error instanceof Error
+        ?error.message
+        :"Unbekannter Fehler bei der KI-Analyse.";
+
+    setAnalysisText(
+      fallback+
+      "\n\n---\n\n"+
+      "### ⚠️ Generative KI nicht verfügbar\n\n"+
+      errorMessage+
+      "\n\nDie lokale Deckanalyse wird deshalb als Fallback angezeigt."
+    );
+  }finally{
+    setAiBusy(false);
+  }
+};
+
   const add=(card:CardRecord)=>{
     if(!isSourceLegal(card)){
       return;
