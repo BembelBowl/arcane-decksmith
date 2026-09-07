@@ -6,7 +6,7 @@ import { subscribeAuth, login, logout, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
 import { loadCollection, loadDecks, removeCard, removeDeck, saveCard, saveDeck, uidFromEmail } from "./db";
 import { autocomplete, getCard, getPrintings, imageFor, searchCards, scryfallUrl, normalizeCard, type ScryfallCard } from "./scryfall";
-import { buildDeck, cardLegalForDeck, commanderCandidates, commanderColorIdentity, commanderPairCandidates, deckCopyLimit, deckProfileFor, deckStats, type DeckStrategy, type DeckTuning, type LockedDeckCard } from "./deckBuilder";
+import { buildDeck, cardLegalForDeck, commanderCandidates, commanderColorIdentity, commanderPairCandidates, deckCopyLimit, deckProfileFor, deckStats, roleOf, type DeckStrategy, type DeckTuning, type LockedDeckCard } from "./deckBuilder";
 import { deckText, download, parseCollectionCsv, parseDeckList, toCsv } from "./importExport";
 import { generateAiDeckExplanation, generateDeckExplanation } from "./ai";
 import type { CardRecord, DeckRecord, Format, GroupBy, ViewMode } from "./types";
