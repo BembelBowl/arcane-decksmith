@@ -1751,11 +1751,11 @@ function analysisRules(): string {
     "Wenn der Deckstatus UNVOLLSTÄNDIG ist, muss dies gleich zu Beginn der Analyse deutlich genannt werden.",
     "Bei einem unvollständigen Deck dürfen Länderzahl, Mana-Kurve, Rollenverteilung, Synergiedichte oder Gesamtaufbau niemals als abschließend ausreichend, optimal oder fertig bewertet werden.",
     "Bei einem unvollständigen Deck müssen Bewertungen ausdrücklich als vorläufige Zwischenanalyse formuliert werden.",
-    "Die KI darf niemals eine eigene Deckgröße wie etwa ein 36-Karten-Deck als gültige Bezugsgröße erfinden."
+    "Die KI darf niemals eine eigene Deckgröße wie etwa ein 36-Karten-Deck als gültige Bezugsgröße erfinden.",
     "Bei einem unvollständigen Deck dürfen aktuelle absolute Kartenmengen nicht so behandelt werden, als wären sie bereits die endgültige 60- beziehungsweise 100-Karten-Verteilung.",
     "Insbesondere darf aus einer aktuellen Länderzahl bei einem unvollständigen Deck nicht automatisch ein Länderdefizit oder Länderüberschuss des fertigen Decks abgeleitet werden.",
     "Bei unvollständigen Decks dürfen Begriffe wie stark, ausreichend, robust, optimal, konkurrenzfähig oder ausgewogen nur ausdrücklich als vorläufige Einschätzung des vorhandenen Teildecks verwendet werden.",
-    "Wenn bei einem Standard-Deck keine Farbinformation hinterlegt ist, darf daraus niemals geschlossen werden, dass das Deck farblos ist.",
+    "Wenn bei einem Standard-Deck keine Farbinformation hinterlegt ist, darf daraus niemals geschlossen werden, dass das Deck farblos ist."
   ].join("\n");
 }
 
