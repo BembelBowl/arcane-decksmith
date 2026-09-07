@@ -175,6 +175,73 @@ function commanderCount(
     : 0;
 }
 
+function deckCompletenessText(
+  deck: DeckRecord
+): string {
+  const mainDeck =
+    countMainDeckCards(deck);
+
+  const commanders =
+    commanderCount(deck);
+
+  const total =
+    mainDeck +
+    commanders;
+
+  if (
+    deck.format ===
+    "standard"
+  ) {
+    const minimum = 60;
+    const missing =
+      Math.max(
+        0,
+        minimum - mainDeck
+      );
+
+    return [
+      `Vorgeschriebene Mindestgröße Hauptdeck: ${minimum}`,
+      `Aktuelle Hauptdeckgröße: ${mainDeck}`,
+      `Fehlende Karten bis zur Mindestgröße: ${missing}`,
+      `Deckstatus: ${
+        missing > 0
+          ? "UNVOLLSTÄNDIG"
+          : "MINDESTGRÖSSE ERREICHT"
+      }`
+    ].join("\n");
+  }
+
+  const requiredTotal = 100;
+  const missing =
+    Math.max(
+      0,
+      requiredTotal - total
+    );
+
+  const excess =
+    Math.max(
+      0,
+      total - requiredTotal
+    );
+
+  return [
+    `Vorgeschriebene Gesamtgröße inklusive Commander: ${requiredTotal}`,
+    `Aktuelle Gesamtgröße inklusive Commander: ${total}`,
+    `Commander-Anzahl: ${commanders}`,
+    `Fehlende Karten bis 100: ${missing}`,
+    `Karten über 100: ${excess}`,
+    `Deckstatus: ${
+      commanders === 0
+        ? "UNVOLLSTÄNDIG – COMMANDER FEHLT"
+        : total < requiredTotal
+          ? "UNVOLLSTÄNDIG"
+          : total > requiredTotal
+            ? "UNGÜLTIGE DECKGRÖSSE"
+            : "VOLLSTÄNDIG"
+    }`
+  ].join("\n");
+}
+
 function isLand(
   typeLine:
     | string
@@ -532,10 +599,14 @@ export function generateDeckExplanation(
         )
       : "Nicht angegeben";
 
-  return [
-    `Deck: ${deck.name}`,
-    `Format: ${deck.format}`,
-    `Karten gesamt inklusive Commander: ${total}`,
+return [
+  `Deck: ${deck.name}`,
+  `Format: ${deck.format}`,
+  "",
+  "Deckgrößenstatus:",
+  deckCompletenessText(deck),
+  "",
+  `Karten gesamt inklusive Commander: ${total}`,
     `Hauptdeck: ${mainDeck}`,
     `Commander: ${commanders}`,
     `Länder: ${types.lands}`,
@@ -619,10 +690,14 @@ function technicalDeckData(
         )
       : "Nicht angegeben";
 
-  return [
-    `Format: ${deck.format}`,
-    `Farbidentität des Decks: ${colorIdentityText(deck.colors)}`,
-    `Karten gesamt inklusive Commander: ${mainDeck + commanders}`,
+return [
+  `Format: ${deck.format}`,
+  `Farbidentität des Decks: ${colorIdentityText(deck.colors)}`,
+  "",
+  "AUTORITATIVER DECKGRÖSSENSTATUS",
+  deckCompletenessText(deck),
+  "",
+  `Karten gesamt inklusive Commander: ${mainDeck + commanders}`,
     `Hauptdeck: ${mainDeck}`,
     `Commander-Anzahl: ${commanders}`,
     `Länder: ${types.lands}`,
@@ -1658,13 +1733,20 @@ function analysisRules(): string {
   return [
     "DATENREGELN FÜR DIE ANALYSE",
     "C-Kennungen = Commander.",
-    "D-Kennungen = tatsächliche Karten des fertigen Decks.",
+    "D-Kennungen = tatsächliche Karten des aktuell übergebenen Hauptdecks. Das Deck kann ausdrücklich noch unvollständig sein.",
     "P-Kennungen = ausschließlich verifizierte optionale Anschaffungskandidaten.",
-    "Die vollständige D-Kennungsliste ist autoritativ für die Deckzugehörigkeit und wird niemals gekürzt.",
+    "Die vollständige D-Kennungsliste ist autoritativ für die aktuelle Deckzugehörigkeit und wird niemals gekürzt.",
     "Konkrete Karteneffekte dürfen ausschließlich aus ausdrücklich geliefertem Oracle-Text abgeleitet werden.",
-    "P-Kennungen gehören niemals zum fertigen Deck.",
+    "P-Kennungen gehören niemals zum aktuellen Deck.",
     "Die KI darf P-Kennungen lediglich auswählen. Die sichtbare Beschreibung der optionalen Anschaffungen wird deterministisch von Arcane Decksmith erzeugt.",
-    "Die deterministische Kurvenbewertung in den technischen Deckdaten ist autoritativ und darf nicht widersprochen werden."
+    "Die deterministische Kurvenbewertung in den technischen Deckdaten ist autoritativ und darf nicht widersprochen werden.",
+    "Der AUTORITATIVE DECKGRÖSSENSTATUS ist bindend und darf niemals ignoriert oder umgedeutet werden.",
+    "Standard benötigt mindestens 60 Karten im Hauptdeck.",
+    "Commander benötigt insgesamt exakt 100 Karten inklusive Commander beziehungsweise Commander-Paar.",
+    "Wenn der Deckstatus UNVOLLSTÄNDIG ist, muss dies gleich zu Beginn der Analyse deutlich genannt werden.",
+    "Bei einem unvollständigen Deck dürfen Länderzahl, Mana-Kurve, Rollenverteilung, Synergiedichte oder Gesamtaufbau niemals als abschließend ausreichend, optimal oder fertig bewertet werden.",
+    "Bei einem unvollständigen Deck müssen Bewertungen ausdrücklich als vorläufige Zwischenanalyse formuliert werden.",
+    "Die KI darf niemals eine eigene Deckgröße wie etwa ein 36-Karten-Deck als gültige Bezugsgröße erfinden."
   ].join("\n");
 }
 
