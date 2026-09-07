@@ -1868,181 +1868,20 @@ function Collection({
           }
 
           .collection-stat-extra{
-  margin-top:22px;
-}
-
-.collection-stat-extra .deck-list{
-  max-height:320px;
-  overflow:auto;
-}
-
-.collection-stat-extra .deck-list > div{
-  display:flex;
-  justify-content:space-between;
-  gap:12px;
-}
-
-          <div className="collection-stat-grid collection-stat-extra">
-  <div className="collection-stat-section">
-    <h3>Foil / Non-Foil</h3>
-
-    <div className="collection-stat-row">
-      <div className="collection-stat-label">
-        <span>Foil</span>
-
-        <span>
-          {collectionStats.foilTotal} ·{" "}
-          {collectionStats.foilPercentage.toFixed(1)}%
-        </span>
-      </div>
-
-      <progress
-        max={100}
-        value={collectionStats.foilPercentage}
-      />
-    </div>
-
-    <div className="collection-stat-row">
-      <div className="collection-stat-label">
-        <span>Non-Foil</span>
-
-        <span>
-          {collectionStats.nonFoilTotal} ·{" "}
-          {collectionStats.nonFoilPercentage.toFixed(1)}%
-        </span>
-      </div>
-
-      <progress
-        max={100}
-        value={collectionStats.nonFoilPercentage}
-      />
-    </div>
-  </div>
-
-  <div className="collection-stat-section">
-    <h3>Legalität</h3>
-
-    <p className="muted">
-      Anteil deiner physischen Karten mit gespeicherter
-      Scryfall-Legalität.
-    </p>
-
-    <div className="collection-stat-row">
-      <div className="collection-stat-label">
-        <span>Standard legal</span>
-
-        <span>
-          {collectionStats.standardLegal} ·{" "}
-          {collectionStats.standardLegalPercentage.toFixed(1)}%
-        </span>
-      </div>
-
-      <progress
-        max={100}
-        value={collectionStats.standardLegalPercentage}
-      />
-    </div>
-
-    <div className="collection-stat-row">
-      <div className="collection-stat-label">
-        <span>Commander legal</span>
-
-        <span>
-          {collectionStats.commanderLegal} ·{" "}
-          {collectionStats.commanderLegalPercentage.toFixed(1)}%
-        </span>
-      </div>
-
-      <progress
-        max={100}
-        value={collectionStats.commanderLegalPercentage}
-      />
-    </div>
-  </div>
-
-  <div className="collection-stat-section">
-    <h3>Doppelte Karten</h3>
-
-    <div className="collection-stat-card">
-      <strong>
-        {collectionStats.duplicateTypes}
-      </strong>
-
-      <span className="muted">
-        unterschiedliche Karten mit mehr als einem Exemplar
-      </span>
-    </div>
-
-    <div className="collection-stat-card">
-      <strong>
-        {collectionStats.extraCopies}
-      </strong>
-
-      <span className="muted">
-        zusätzliche Exemplare über das erste Exemplar hinaus
-      </span>
-    </div>
-  </div>
-</div>
-
-<div className="collection-stat-grid collection-stat-extra">
-  <div className="collection-stat-section">
-    <h3>Häufigste Karten</h3>
-
-    {collectionStats.mostFrequent.length===0
-      ?<p className="muted">
-          Keine Karte ist mehrfach vorhanden.
-        </p>
-
-      :<div className="deck-list">
-          {collectionStats.mostFrequent.map(card=>
-            <div key={card.id}>
-              <span>
-                {card.name}
-              </span>
-
-              <strong>
-                {card.count}×
-              </strong>
-            </div>
-          )}
-        </div>
-    }
-  </div>
-
-  <div className="collection-stat-section">
-    <h3>Set-Verteilung</h3>
-
-    {collectionStats.sets.length===0
-      ?<p className="muted">
-          Keine Set-Daten vorhanden.
-        </p>
-
-      :<div className="deck-list">
-          {collectionStats.sets
-            .slice(0,12)
-            .map(set=>
-              <div key={set.name}>
-                <span>
-                  {set.name}
-                </span>
-
-                <strong>
-                  {set.count}
-                </strong>
-              </div>
-            )
+            margin-top:22px;
           }
 
-          {collectionStats.sets.length>12&&
-            <small className="muted">
-              + {collectionStats.sets.length-12} weitere Sets
-            </small>
+          .collection-stat-extra .deck-list{
+            max-height:320px;
+            overflow:auto;
           }
-        </div>
-    }
-  </div>
-</div>
+
+          .collection-stat-extra .deck-list > div{
+            display:flex;
+            justify-content:space-between;
+            gap:12px;
+          }
+
 
           .collection-stat-section h3{
             margin-top:0;
@@ -2218,6 +2057,159 @@ function Collection({
                 </div>
               )
             )}
+          </div>
+        </div>
+
+        <div className="collection-stat-grid collection-stat-extra">
+          <div className="collection-stat-section">
+            <h3>Foil / Non-Foil</h3>
+
+            <div className="collection-stat-row">
+              <div className="collection-stat-label">
+                <span>Foil</span>
+                <span>
+                  {collectionStats.foilTotal} ·{" "}
+                  {collectionStats.foilPercentage.toFixed(1)}%
+                </span>
+              </div>
+              <progress
+                max={100}
+                value={collectionStats.foilPercentage}
+              />
+            </div>
+
+            <div className="collection-stat-row">
+              <div className="collection-stat-label">
+                <span>Non-Foil</span>
+                <span>
+                  {collectionStats.nonFoilTotal} ·{" "}
+                  {collectionStats.nonFoilPercentage.toFixed(1)}%
+                </span>
+              </div>
+              <progress
+                max={100}
+                value={collectionStats.nonFoilPercentage}
+              />
+            </div>
+          </div>
+
+          <div className="collection-stat-section">
+            <h3>Legalität</h3>
+
+            <p className="muted">
+              Anteil deiner physischen Karten mit gespeicherter
+              Scryfall-Legalität.
+            </p>
+
+            <div className="collection-stat-row">
+              <div className="collection-stat-label">
+                <span>Standard legal</span>
+                <span>
+                  {collectionStats.standardLegal} ·{" "}
+                  {collectionStats.standardLegalPercentage.toFixed(1)}%
+                </span>
+              </div>
+              <progress
+                max={100}
+                value={collectionStats.standardLegalPercentage}
+              />
+            </div>
+
+            <div className="collection-stat-row">
+              <div className="collection-stat-label">
+                <span>Commander legal</span>
+                <span>
+                  {collectionStats.commanderLegal} ·{" "}
+                  {collectionStats.commanderLegalPercentage.toFixed(1)}%
+                </span>
+              </div>
+              <progress
+                max={100}
+                value={collectionStats.commanderLegalPercentage}
+              />
+            </div>
+          </div>
+
+          <div className="collection-stat-section">
+            <h3>Doppelte Karten</h3>
+
+            <div className="collection-stat-card">
+              <strong>
+                {collectionStats.duplicateTypes}
+              </strong>
+              <span className="muted">
+                unterschiedliche Karten mit mehr als einem Exemplar
+              </span>
+            </div>
+
+            <div className="collection-stat-card">
+              <strong>
+                {collectionStats.extraCopies}
+              </strong>
+              <span className="muted">
+                zusätzliche Exemplare über das erste Exemplar hinaus
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="collection-stat-grid collection-stat-extra">
+          <div className="collection-stat-section">
+            <h3>Häufigste Karten</h3>
+
+            {collectionStats.mostFrequent.length === 0
+              ? (
+                <p className="muted">
+                  Keine Karte ist mehrfach vorhanden.
+                </p>
+              )
+              : (
+                <div className="deck-list">
+                  {collectionStats.mostFrequent.map(card => (
+                    <div key={card.id}>
+                      <span>
+                        {card.name}
+                      </span>
+                      <strong>
+                        {card.count}×
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+          </div>
+
+          <div className="collection-stat-section">
+            <h3>Set-Verteilung</h3>
+
+            {collectionStats.sets.length === 0
+              ? (
+                <p className="muted">
+                  Keine Set-Daten vorhanden.
+                </p>
+              )
+              : (
+                <div className="deck-list">
+                  {collectionStats.sets
+                    .slice(0, 12)
+                    .map(set => (
+                      <div key={set.name}>
+                        <span>
+                          {set.name}
+                        </span>
+                        <strong>
+                          {set.count}
+                        </strong>
+                      </div>
+                    ))}
+
+                  {collectionStats.sets.length > 12 && (
+                    <small className="muted">
+                      + {collectionStats.sets.length - 12} weitere Sets
+                    </small>
+                  )}
+                </div>
+              )}
           </div>
         </div>
       </div>
@@ -5594,79 +5586,6 @@ function Decks({
       )}
 
       <div className="deck-grid">
-        {decks.map(d => (
-          <article
-            className="panel"
-            key={d.id}
-          >
-            <h3>
-              {d.name}
-            </h3>
-
-            <div className="meta">
-              {d.format} · Score{" "}
-              {d.score ?? "—"} ·{" "}
-              {
-                deckStats(d).total
-              }{" "}
-              Karten
-            </div>
-
-            <p>
-              MV{" "}
-              {
-                deckStats(
-                  d
-                ).averageManaValue
-              }
-              {" · Länder "}
-              {
-                deckStats(
-                  d
-                ).lands
-              }
-            </p>
-
-            <div className="row">
-              <button
-                className="primary"
-                onClick={() =>
-                  setEditing(d)
-                }
-              >
-                Bearbeiten
-              </button>
-
-              <button
-                className="secondary"
-                onClick={() =>
-                  download(
-                    `${d.name}.txt`,
-                    deckText(
-                      d,
-                      pool
-                    )
-                  )
-                }
-              >
-                Export
-              </button>
-
-              <button
-                className="danger ghost"
-                onClick={() =>
-                  onDelete(
-                    d.id
-                  )
-                }
-              >
-                Löschen
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
-      <div className="deck-grid">
   {decks.map(d=>{
     const stats=
       deckStats(d);
@@ -5698,9 +5617,36 @@ function Decks({
             Boolean(card)
         );
 
+    const roleCounts=
+      d.cards.reduce<
+        Record<string,number>
+      >(
+        (counts,deckCard)=>{
+          const source=
+            pool.find(
+              card=>card.id===deckCard.id
+            );
+
+          const role=
+            deckCard.role &&
+            deckCard.role!=="Manuell"
+              ?deckCard.role
+              :source
+                ?roleOf(source)
+                :"Sonstiges";
+
+          counts[role]=
+            (counts[role]??0)+
+            deckCard.count;
+
+          return counts;
+        },
+        {}
+      );
+
     const roles=
       Object.entries(
-        stats.roleCounts
+        roleCounts
       )
         .sort(
           (a,b)=>
@@ -6012,6 +5958,23 @@ function DeckEditor({
     setAiBusy
   ] =
     useState(false);
+
+  const [
+    previewCardId,
+    setPreviewCardId
+  ] =
+    useState<string | null>(
+      null
+    );
+
+  const previewCard =
+    previewCardId
+      ? pool.find(
+          card =>
+            card.id ===
+            previewCardId
+        ) ?? null
+      : null;
 
   const all = [
     ...d.cards
@@ -7222,6 +7185,124 @@ function DeckEditor({
             Karten hinzufügen
           </h3>
 
+          <style>{`
+            .manual-card-preview{
+              margin-bottom:14px;
+              padding:12px;
+              border:1px solid rgba(214,173,88,.24);
+              border-radius:12px;
+              background:rgba(6,13,24,.72);
+            }
+
+            .manual-card-preview-grid{
+              display:grid;
+              grid-template-columns:120px minmax(0,1fr);
+              gap:14px;
+              align-items:start;
+            }
+
+            .manual-card-preview img{
+              width:100%;
+              border-radius:9px;
+              display:block;
+            }
+
+            .manual-card-preview h4{
+              margin:0 0 5px;
+            }
+
+            .manual-card-preview-oracle{
+              white-space:pre-wrap;
+              font-size:12px;
+              line-height:1.45;
+            }
+
+            .manual-add-row{
+              display:grid;
+              grid-template-columns:minmax(0,1fr) auto;
+              gap:8px;
+              align-items:center;
+            }
+
+            .manual-card-preview-trigger{
+              display:block;
+              width:100%;
+              padding:7px 4px;
+              border:0;
+              background:none;
+              color:inherit;
+              text-align:left;
+              cursor:pointer;
+            }
+
+            .manual-card-preview-trigger:hover,
+            .manual-card-preview-trigger:focus{
+              color:var(--gold-bright);
+              outline:none;
+            }
+
+            @media (max-width:650px){
+              .manual-card-preview-grid{
+                grid-template-columns:90px minmax(0,1fr);
+              }
+            }
+          `}</style>
+
+          {previewCard && (
+            <div className="manual-card-preview">
+              <div className="manual-card-preview-grid">
+                <div>
+                  {(previewCard.imageUri ||
+                    previewCard.imageUris?.normal ||
+                    previewCard.imageUris?.large ||
+                    previewCard.imageUris?.small) && (
+                    <img
+                      src={
+                        previewCard.imageUri ??
+                        previewCard.imageUris?.normal ??
+                        previewCard.imageUris?.large ??
+                        previewCard.imageUris?.small
+                      }
+                      alt={previewCard.name}
+                    />
+                  )}
+                </div>
+
+                <div>
+                  <h4>
+                    {previewCard.name}
+                  </h4>
+
+                  <div className="meta">
+                    {previewCard.manaCost ?? "—"} · MV{" "}
+                    {previewCard.manaValue}
+                  </div>
+
+                  <p>
+                    {previewCard.typeLine}
+                  </p>
+
+                  {previewCard.oracleText && (
+                    <p className="manual-card-preview-oracle">
+                      {previewCard.oracleText}
+                    </p>
+                  )}
+
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      setPreviewCardId(
+                        null
+                      )
+                    }
+                  >
+                    Vorschau schließen
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {d.format ===
             "commander" &&
           selectedCommanders.length ===
@@ -7300,30 +7381,64 @@ function DeckEditor({
 
                         return (
                           <div
+                            className="manual-add-row"
                             data-card={
                               card.name.toLowerCase()
                             }
                             key={
                               card.id
                             }
-                          >
-                            <span>
-                              {
-                                card.name
+                            onPointerEnter={event => {
+                              if (
+                                event.pointerType ===
+                                "mouse"
+                              ) {
+                                setPreviewCardId(
+                                  card.id
+                                );
                               }
-
-                              <small className="muted">
-                                {" "}(
-                                {
-                                  currentByName
-                                }
-                                /
-                                {
-                                  ruleLimitLabel
-                                }
+                            }}
+                            onPointerLeave={event => {
+                              if (
+                                event.pointerType ===
+                                "mouse"
+                              ) {
+                                setPreviewCardId(
+                                  current =>
+                                    current ===
+                                    card.id
+                                      ? null
+                                      : current
+                                );
+                              }
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="manual-card-preview-trigger"
+                              onClick={() =>
+                                setPreviewCardId(
+                                  current =>
+                                    current ===
+                                    card.id
+                                      ? null
+                                      : card.id
                                 )
-                              </small>
-                            </span>
+                              }
+                              title="Karte anzeigen"
+                            >
+                              <span>
+                                {card.name}
+
+                                <small className="muted">
+                                  {" "}(
+                                  {currentByName}
+                                  /
+                                  {ruleLimitLabel}
+                                  )
+                                </small>
+                              </span>
+                            </button>
 
                             <button
                               disabled={
