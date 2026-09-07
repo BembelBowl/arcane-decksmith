@@ -745,6 +745,85 @@ function Collection({
 
   const total=cards.reduce((n,c)=>n+c.count,0);
 
+  const collectionStats=useMemo(()=>{
+    const physicalTotal=cards.reduce((sum,card)=>sum+card.count,0);
+    const uniqueTotal=cards.length;
+    const nonlandCards=cards.filter(card=>!/(?:^|\s)Land(?:\s|$|—)/i.test(card.typeLine??""));
+    const nonlandPhysicalTotal=nonlandCards.reduce((sum,card)=>sum+card.count,0);
+    const averageCopies=uniqueTotal>0?physicalTotal/uniqueTotal:0;
+    const weightedManaValue=nonlandCards.reduce(
+      (sum,card)=>sum+(Number.isFinite(card.manaValue)?card.manaValue:0)*card.count,
+      0
+    );
+    const averageManaValue=nonlandPhysicalTotal>0?weightedManaValue/nonlandPhysicalTotal:0;
+
+    const colorCounts:Record<string,number>={
+      "Weiß":0,
+      "Blau":0,
+      "Schwarz":0,
+      "Rot":0,
+      "Grün":0,
+      "Mehrfarbig":0,
+      "Farblos":0
+    };
+
+    for(const card of cards){
+      const colors=card.colors??[];
+      let key="Farblos";
+
+      if(colors.length>1){
+        key="Mehrfarbig";
+      }else if(colors.length===1){
+        key=COLOR_NAMES[colors[0]]??"Farblos";
+      }
+
+      colorCounts[key]=(colorCounts[key]??0)+card.count;
+    }
+
+    const manaCounts:Record<string,number>={
+      "MV 0":0,
+      "MV 1":0,
+      "MV 2":0,
+      "MV 3":0,
+      "MV 4":0,
+      "MV 5":0,
+      "MV 6":0,
+      "MV 7+":0
+    };
+
+    for(const card of nonlandCards){
+      const mv=Math.max(0,Math.floor(Number.isFinite(card.manaValue)?card.manaValue:0));
+      const key=mv>=7?"MV 7+":`MV ${mv}`;
+      manaCounts[key]=(manaCounts[key]??0)+card.count;
+    }
+
+    const typeCounts:Record<string,number>=Object.fromEntries(
+      TYPE_ORDER.map(type=>[type,0])
+    );
+
+    for(const card of cards){
+      const key=primaryTypeGroup(card.typeLine);
+      typeCounts[key]=(typeCounts[key]??0)+card.count;
+    }
+
+    const toRows=(counts:Record<string,number>,base:number)=>
+      Object.entries(counts).map(([label,count])=>({
+        label,
+        count,
+        percentage:base>0?(count/base)*100:0
+      }));
+
+    return {
+      physicalTotal,
+      uniqueTotal,
+      averageCopies,
+      averageManaValue,
+      colors:toRows(colorCounts,physicalTotal),
+      manaValues:toRows(manaCounts,nonlandPhysicalTotal),
+      types:toRows(typeCounts,physicalTotal)
+    };
+  },[cards]);
+
   const groups=useMemo(()=>{
     if(group==="none") {
       return [["Alle",filtered]] as Array<[string,CardRecord[]]>;
@@ -977,6 +1056,124 @@ function Collection({
           >
             Import
           </button>
+        </div>
+      </div>
+
+      <div className="panel collection-stats">
+        <style>{`
+          .collection-stats-summary{
+            display:grid;
+            grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+            gap:12px;
+            margin-bottom:18px;
+          }
+          .collection-stat-card{
+            padding:12px;
+            border:1px solid rgba(255,255,255,.12);
+            border-radius:12px;
+            background:rgba(255,255,255,.025);
+          }
+          .collection-stat-card strong{
+            display:block;
+            font-size:1.35rem;
+            margin-bottom:4px;
+          }
+          .collection-stat-grid{
+            display:grid;
+            grid-template-columns:repeat(3,minmax(0,1fr));
+            gap:18px;
+          }
+          .collection-stat-section h3{
+            margin-top:0;
+          }
+          .collection-stat-row{
+            margin-bottom:10px;
+          }
+          .collection-stat-label{
+            display:flex;
+            justify-content:space-between;
+            gap:12px;
+            margin-bottom:4px;
+            font-size:.92rem;
+          }
+          .collection-stat-row progress{
+            width:100%;
+            height:10px;
+          }
+          @media (max-width:900px){
+            .collection-stat-grid{
+              grid-template-columns:1fr;
+            }
+          }
+        `}</style>
+
+        <div className="collection-stats-summary">
+          <div className="collection-stat-card">
+            <strong>{collectionStats.physicalTotal}</strong>
+            <span className="muted">Physische Karten</span>
+          </div>
+
+          <div className="collection-stat-card">
+            <strong>{collectionStats.uniqueTotal}</strong>
+            <span className="muted">Unterschiedliche Karten</span>
+          </div>
+
+          <div className="collection-stat-card">
+            <strong>{collectionStats.averageCopies.toFixed(2)}</strong>
+            <span className="muted">Ø Exemplare pro Karte</span>
+          </div>
+
+          <div className="collection-stat-card">
+            <strong>{collectionStats.averageManaValue.toFixed(2)}</strong>
+            <span className="muted">Ø Mana Value ohne Länder</span>
+          </div>
+        </div>
+
+        <div className="collection-stat-grid">
+          <div className="collection-stat-section">
+            <h3>Farben</h3>
+            <p className="muted">Verteilung der physischen Karten nach ihren gedruckten Farben.</p>
+
+            {collectionStats.colors.map(row=>
+              <div className="collection-stat-row" key={row.label}>
+                <div className="collection-stat-label">
+                  <span>{row.label}</span>
+                  <span>{row.count} · {row.percentage.toFixed(1)}%</span>
+                </div>
+                <progress max={100} value={row.percentage} />
+              </div>
+            )}
+          </div>
+
+          <div className="collection-stat-section">
+            <h3>Mana Value</h3>
+            <p className="muted">Nur Nichtländer, damit Länder die MV-0-Verteilung nicht verzerren.</p>
+
+            {collectionStats.manaValues.map(row=>
+              <div className="collection-stat-row" key={row.label}>
+                <div className="collection-stat-label">
+                  <span>{row.label}</span>
+                  <span>{row.count} · {row.percentage.toFixed(1)}%</span>
+                </div>
+                <progress max={100} value={row.percentage} />
+              </div>
+            )}
+          </div>
+
+          <div className="collection-stat-section">
+            <h3>Kartenarten</h3>
+            <p className="muted">Jede Karte wird nach ihrem primären Kartentyp genau einmal gezählt.</p>
+
+            {collectionStats.types.map(row=>
+              <div className="collection-stat-row" key={row.label}>
+                <div className="collection-stat-label">
+                  <span>{row.label}</span>
+                  <span>{row.count} · {row.percentage.toFixed(1)}%</span>
+                </div>
+                <progress max={100} value={row.percentage} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
