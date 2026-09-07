@@ -2591,7 +2591,7 @@ function Decks({
   decks,
   pool,
   onDelete,
-  onSave
+  onSave,
   demoMode
 }:{
   decks:DeckRecord[];
