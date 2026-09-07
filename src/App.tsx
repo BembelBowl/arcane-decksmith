@@ -1,3 +1,31 @@
+function deckManaCurve(
+  deck: DeckRecord
+): Array<{label:string;count:number}> {
+  const counts=[0,0,0,0,0,0,0,0];
+
+  for(const card of deck.cards){
+    if(/\bLand\b/i.test(card.typeLine??"")){
+      continue;
+    }
+
+    const mv=Math.max(
+      0,
+      Math.floor(
+        Number.isFinite(card.manaValue)
+          ?card.manaValue
+          :0
+      )
+    );
+
+    counts[Math.min(mv,7)]+=card.count;
+  }
+
+  return counts.map((count,index)=>({
+    label:index===7?"7+":String(index),
+    count
+  }));
+}
+
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1108,213 +1136,317 @@ function Collection({
       0
     );
 
-  const collectionStats =
-    useMemo(() => {
-      const physicalTotal =
-        cards.reduce(
-          (sum, card) =>
-            sum + card.count,
-          0
-        );
+  const collectionStats=useMemo(()=>{
+  const physicalTotal=
+    cards.reduce(
+      (sum,card)=>sum+card.count,
+      0
+    );
 
-      const uniqueTotal =
-        cards.length;
+  const uniqueTotal=
+    cards.length;
 
-      const nonlandCards =
-        cards.filter(
-          card =>
-            !/(?:^|\s)Land(?:\s|$|—)/i.test(
-              card.typeLine ?? ""
-            )
-        );
+  const nonlandCards=
+    cards.filter(
+      card=>
+        !/(?:^|\s)Land(?:\s|$|—)/i.test(
+          card.typeLine??""
+        )
+    );
 
-      const nonlandPhysicalTotal =
-        nonlandCards.reduce(
-          (sum, card) =>
-            sum + card.count,
-          0
-        );
+  const nonlandPhysicalTotal=
+    nonlandCards.reduce(
+      (sum,card)=>sum+card.count,
+      0
+    );
 
-      const averageCopies =
-        uniqueTotal > 0
-          ? physicalTotal /
-            uniqueTotal
-          : 0;
+  const averageCopies=
+    uniqueTotal>0
+      ?physicalTotal/uniqueTotal
+      :0;
 
-      const weightedManaValue =
-        nonlandCards.reduce(
-          (sum, card) =>
-            sum +
-            (
-              Number.isFinite(
-                card.manaValue
-              )
-                ? card.manaValue
-                : 0
-            ) *
-              card.count,
-          0
-        );
+  const weightedManaValue=
+    nonlandCards.reduce(
+      (sum,card)=>
+        sum+
+        (
+          Number.isFinite(card.manaValue)
+            ?card.manaValue
+            :0
+        )*card.count,
+      0
+    );
 
-      const averageManaValue =
-        nonlandPhysicalTotal > 0
-          ? weightedManaValue /
-            nonlandPhysicalTotal
-          : 0;
+  const averageManaValue=
+    nonlandPhysicalTotal>0
+      ?weightedManaValue/nonlandPhysicalTotal
+      :0;
 
-      const colorCounts:
-        Record<string, number> = {
-          Weiß: 0,
-          Blau: 0,
-          Schwarz: 0,
-          Rot: 0,
-          Grün: 0,
-          Mehrfarbig: 0,
-          Farblos: 0
-        };
+  const colorCounts:Record<string,number>={
+    "Weiß":0,
+    "Blau":0,
+    "Schwarz":0,
+    "Rot":0,
+    "Grün":0,
+    "Mehrfarbig":0,
+    "Farblos":0
+  };
 
-      for (const card of cards) {
-        const colors =
-          card.colors ?? [];
+  for(const card of cards){
+    const colors=card.colors??[];
+    let key="Farblos";
 
-        let key = "Farblos";
+    if(colors.length>1){
+      key="Mehrfarbig";
+    }else if(colors.length===1){
+      key=
+        COLOR_NAMES[colors[0]]??
+        "Farblos";
+    }
 
-        if (colors.length > 1) {
-          key = "Mehrfarbig";
-        } else if (
-          colors.length === 1
-        ) {
-          key =
-            COLOR_NAMES[
-              colors[0]
-            ] ??
-            "Farblos";
+    colorCounts[key]=
+      (colorCounts[key]??0)+
+      card.count;
+  }
+
+  const manaCounts:Record<string,number>={
+    "MV 0":0,
+    "MV 1":0,
+    "MV 2":0,
+    "MV 3":0,
+    "MV 4":0,
+    "MV 5":0,
+    "MV 6":0,
+    "MV 7+":0
+  };
+
+  for(const card of nonlandCards){
+    const mv=Math.max(
+      0,
+      Math.floor(
+        Number.isFinite(card.manaValue)
+          ?card.manaValue
+          :0
+      )
+    );
+
+    const key=
+      mv>=7
+        ?"MV 7+"
+        :`MV ${mv}`;
+
+    manaCounts[key]=
+      (manaCounts[key]??0)+
+      card.count;
+  }
+
+  const typeCounts:Record<string,number>=
+    Object.fromEntries(
+      TYPE_ORDER.map(
+        type=>[type,0]
+      )
+    );
+
+  for(const card of cards){
+    const key=
+      primaryTypeGroup(
+        card.typeLine
+      );
+
+    typeCounts[key]=
+      (typeCounts[key]??0)+
+      card.count;
+  }
+
+  const foilTotal=
+    cards.reduce(
+      (sum,card)=>
+        sum+
+        (
+          card.foil
+            ?card.count
+            :0
+        ),
+      0
+    );
+
+  const nonFoilTotal=
+    Math.max(
+      0,
+      physicalTotal-foilTotal
+    );
+
+  const setMap=
+    new Map<
+      string,
+      {
+        name:string;
+        count:number;
+      }
+    >();
+
+  for(const card of cards){
+    const key=
+      card.set.toLowerCase();
+
+    const existing=
+      setMap.get(key);
+
+    if(existing){
+      existing.count+=card.count;
+    }else{
+      setMap.set(
+        key,
+        {
+          name:
+            card.setName??
+            card.set.toUpperCase(),
+          count:card.count
         }
+      );
+    }
+  }
 
-        colorCounts[key] =
-          (
-            colorCounts[key] ??
-            0
-          ) +
-          card.count;
-      }
-
-      const manaCounts:
-        Record<string, number> = {
-          "MV 0": 0,
-          "MV 1": 0,
-          "MV 2": 0,
-          "MV 3": 0,
-          "MV 4": 0,
-          "MV 5": 0,
-          "MV 6": 0,
-          "MV 7+": 0
-        };
-
-      for (
-        const card
-        of nonlandCards
-      ) {
-        const mv =
-          Math.max(
-            0,
-            Math.floor(
-              Number.isFinite(
-                card.manaValue
-              )
-                ? card.manaValue
-                : 0
-            )
-          );
-
-        const key =
-          mv >= 7
-            ? "MV 7+"
-            : `MV ${mv}`;
-
-        manaCounts[key] =
-          (
-            manaCounts[key] ??
-            0
-          ) +
-          card.count;
-      }
-
-      const typeCounts:
-        Record<string, number> =
-          Object.fromEntries(
-            TYPE_ORDER.map(
-              type => [
-                type,
-                0
-              ]
-            )
-          );
-
-      for (const card of cards) {
-        const key =
-          primaryTypeGroup(
-            card.typeLine
-          );
-
-        typeCounts[key] =
-          (
-            typeCounts[key] ??
-            0
-          ) +
-          card.count;
-      }
-
-      const toRows = (
-        counts:
-          Record<
-            string,
-            number
-          >,
-        base: number
-      ) =>
-        Object.entries(
-          counts
-        ).map(
-          ([
-            label,
-            count
-          ]) => ({
-            label,
-            count,
-            percentage:
-              base > 0
-                ? (
-                    count /
-                    base
-                  ) *
-                  100
-                : 0
-          })
-        );
-
-      return {
-        physicalTotal,
-        uniqueTotal,
-        averageCopies,
-        averageManaValue,
-        colors:
-          toRows(
-            colorCounts,
-            physicalTotal
-          ),
-        manaValues:
-          toRows(
-            manaCounts,
-            nonlandPhysicalTotal
-          ),
-        types:
-          toRows(
-            typeCounts,
-            physicalTotal
+  const sets=
+    Array.from(
+      setMap.values()
+    )
+      .sort(
+        (a,b)=>
+          b.count-a.count ||
+          a.name.localeCompare(
+            b.name,
+            "de"
           )
-      };
-    }, [cards]);
+      );
+
+  const standardLegal=
+    cards.reduce(
+      (sum,card)=>
+        sum+
+        (
+          card.legalities?.standard==="legal"
+            ?card.count
+            :0
+        ),
+      0
+    );
+
+  const commanderLegal=
+    cards.reduce(
+      (sum,card)=>
+        sum+
+        (
+          card.legalities?.commander==="legal"
+            ?card.count
+            :0
+        ),
+      0
+    );
+
+  const duplicateTypes=
+    cards.filter(
+      card=>card.count>1
+    ).length;
+
+  const extraCopies=
+    cards.reduce(
+      (sum,card)=>
+        sum+
+        Math.max(
+          0,
+          card.count-1
+        ),
+      0
+    );
+
+  const mostFrequent=
+    [...cards]
+      .filter(
+        card=>card.count>1
+      )
+      .sort(
+        (a,b)=>
+          b.count-a.count ||
+          a.name.localeCompare(
+            b.name,
+            "de"
+          )
+      )
+      .slice(0,10);
+
+  const toRows=(
+    counts:Record<string,number>,
+    base:number
+  )=>
+    Object.entries(counts).map(
+      ([label,count])=>({
+        label,
+        count,
+        percentage:
+          base>0
+            ?(count/base)*100
+            :0
+      })
+    );
+
+  return {
+    physicalTotal,
+    uniqueTotal,
+    averageCopies,
+    averageManaValue,
+
+    colors:
+      toRows(
+        colorCounts,
+        physicalTotal
+      ),
+
+    manaValues:
+      toRows(
+        manaCounts,
+        nonlandPhysicalTotal
+      ),
+
+    types:
+      toRows(
+        typeCounts,
+        physicalTotal
+      ),
+
+    foilTotal,
+    nonFoilTotal,
+
+    foilPercentage:
+      physicalTotal>0
+        ?foilTotal/physicalTotal*100
+        :0,
+
+    nonFoilPercentage:
+      physicalTotal>0
+        ?nonFoilTotal/physicalTotal*100
+        :0,
+
+    sets,
+
+    standardLegal,
+    commanderLegal,
+
+    standardLegalPercentage:
+      physicalTotal>0
+        ?standardLegal/physicalTotal*100
+        :0,
+
+    commanderLegalPercentage:
+      physicalTotal>0
+        ?commanderLegal/physicalTotal*100
+        :0,
+
+    duplicateTypes,
+    extraCopies,
+    mostFrequent
+  };
+},[cards]);
 
   const groups =
     useMemo(() => {
@@ -1734,6 +1866,183 @@ function Collection({
             grid-template-columns:repeat(3,minmax(0,1fr));
             gap:18px;
           }
+
+          .collection-stat-extra{
+  margin-top:22px;
+}
+
+.collection-stat-extra .deck-list{
+  max-height:320px;
+  overflow:auto;
+}
+
+.collection-stat-extra .deck-list > div{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+}
+
+          <div className="collection-stat-grid collection-stat-extra">
+  <div className="collection-stat-section">
+    <h3>Foil / Non-Foil</h3>
+
+    <div className="collection-stat-row">
+      <div className="collection-stat-label">
+        <span>Foil</span>
+
+        <span>
+          {collectionStats.foilTotal} ·{" "}
+          {collectionStats.foilPercentage.toFixed(1)}%
+        </span>
+      </div>
+
+      <progress
+        max={100}
+        value={collectionStats.foilPercentage}
+      />
+    </div>
+
+    <div className="collection-stat-row">
+      <div className="collection-stat-label">
+        <span>Non-Foil</span>
+
+        <span>
+          {collectionStats.nonFoilTotal} ·{" "}
+          {collectionStats.nonFoilPercentage.toFixed(1)}%
+        </span>
+      </div>
+
+      <progress
+        max={100}
+        value={collectionStats.nonFoilPercentage}
+      />
+    </div>
+  </div>
+
+  <div className="collection-stat-section">
+    <h3>Legalität</h3>
+
+    <p className="muted">
+      Anteil deiner physischen Karten mit gespeicherter
+      Scryfall-Legalität.
+    </p>
+
+    <div className="collection-stat-row">
+      <div className="collection-stat-label">
+        <span>Standard legal</span>
+
+        <span>
+          {collectionStats.standardLegal} ·{" "}
+          {collectionStats.standardLegalPercentage.toFixed(1)}%
+        </span>
+      </div>
+
+      <progress
+        max={100}
+        value={collectionStats.standardLegalPercentage}
+      />
+    </div>
+
+    <div className="collection-stat-row">
+      <div className="collection-stat-label">
+        <span>Commander legal</span>
+
+        <span>
+          {collectionStats.commanderLegal} ·{" "}
+          {collectionStats.commanderLegalPercentage.toFixed(1)}%
+        </span>
+      </div>
+
+      <progress
+        max={100}
+        value={collectionStats.commanderLegalPercentage}
+      />
+    </div>
+  </div>
+
+  <div className="collection-stat-section">
+    <h3>Doppelte Karten</h3>
+
+    <div className="collection-stat-card">
+      <strong>
+        {collectionStats.duplicateTypes}
+      </strong>
+
+      <span className="muted">
+        unterschiedliche Karten mit mehr als einem Exemplar
+      </span>
+    </div>
+
+    <div className="collection-stat-card">
+      <strong>
+        {collectionStats.extraCopies}
+      </strong>
+
+      <span className="muted">
+        zusätzliche Exemplare über das erste Exemplar hinaus
+      </span>
+    </div>
+  </div>
+</div>
+
+<div className="collection-stat-grid collection-stat-extra">
+  <div className="collection-stat-section">
+    <h3>Häufigste Karten</h3>
+
+    {collectionStats.mostFrequent.length===0
+      ?<p className="muted">
+          Keine Karte ist mehrfach vorhanden.
+        </p>
+
+      :<div className="deck-list">
+          {collectionStats.mostFrequent.map(card=>
+            <div key={card.id}>
+              <span>
+                {card.name}
+              </span>
+
+              <strong>
+                {card.count}×
+              </strong>
+            </div>
+          )}
+        </div>
+    }
+  </div>
+
+  <div className="collection-stat-section">
+    <h3>Set-Verteilung</h3>
+
+    {collectionStats.sets.length===0
+      ?<p className="muted">
+          Keine Set-Daten vorhanden.
+        </p>
+
+      :<div className="deck-list">
+          {collectionStats.sets
+            .slice(0,12)
+            .map(set=>
+              <div key={set.name}>
+                <span>
+                  {set.name}
+                </span>
+
+                <strong>
+                  {set.count}
+                </strong>
+              </div>
+            )
+          }
+
+          {collectionStats.sets.length>12&&
+            <small className="muted">
+              + {collectionStats.sets.length-12} weitere Sets
+            </small>
+          }
+        </div>
+    }
+  </div>
+</div>
 
           .collection-stat-section h3{
             margin-top:0;
@@ -5357,6 +5666,316 @@ function Decks({
           </article>
         ))}
       </div>
+      <div className="deck-grid">
+  {decks.map(d=>{
+    const stats=
+      deckStats(d);
+
+    const totalMain=
+      d.cards.reduce(
+        (sum,card)=>sum+card.count,
+        0
+      );
+
+    const totalWithCommanders=
+      totalMain+
+      (
+        d.format==="commander"
+          ?d.commanderIds.length
+          :0
+      );
+
+    const commanders=
+      d.commanderIds
+        .map(
+          id=>
+            pool.find(
+              card=>card.id===id
+            )
+        )
+        .filter(
+          (card):card is CardRecord=>
+            Boolean(card)
+        );
+
+    const roles=
+      Object.entries(
+        stats.roleCounts
+      )
+        .sort(
+          (a,b)=>
+            b[1]-a[1]
+        );
+
+    const curve=
+      deckManaCurve(d);
+
+    const maxCurve=
+      Math.max(
+        1,
+        ...curve.map(
+          item=>item.count
+        )
+      );
+
+    return (
+      <article
+        className="panel saved-deck-card"
+        key={d.id}
+      >
+        <style>{`
+          .saved-deck-card{
+            display:flex;
+            flex-direction:column;
+            gap:14px;
+          }
+
+          .saved-deck-head{
+            display:flex;
+            justify-content:space-between;
+            align-items:flex-start;
+            gap:12px;
+          }
+
+          .saved-deck-head h3{
+            margin:0 0 4px;
+          }
+
+          .saved-commander{
+            padding:10px 12px;
+            border:1px solid rgba(214,173,88,.3);
+            border-radius:10px;
+            background:rgba(214,173,88,.055);
+          }
+
+          .saved-commander strong{
+            display:block;
+            margin-bottom:5px;
+          }
+
+          .saved-role-list{
+            display:flex;
+            flex-wrap:wrap;
+            gap:6px;
+          }
+
+          .saved-role-list span{
+            padding:5px 8px;
+            border:1px solid rgba(85,215,229,.16);
+            border-radius:999px;
+            background:rgba(85,215,229,.05);
+            font-size:11px;
+          }
+
+          .mini-curve{
+            display:grid;
+            grid-template-columns:repeat(8,1fr);
+            gap:5px;
+            align-items:end;
+            min-height:95px;
+          }
+
+          .mini-curve-column{
+            display:grid;
+            grid-template-rows:1fr auto auto;
+            align-items:end;
+            text-align:center;
+            min-width:0;
+          }
+
+          .mini-curve-bar-wrap{
+            height:58px;
+            display:flex;
+            align-items:flex-end;
+            justify-content:center;
+          }
+
+          .mini-curve-bar{
+            width:70%;
+            min-height:2px;
+            border-radius:4px 4px 0 0;
+            background:currentColor;
+            opacity:.72;
+          }
+
+          .mini-curve-count{
+            font-size:10px;
+            font-weight:700;
+          }
+
+          .mini-curve-label{
+            font-size:10px;
+            color:var(--muted);
+          }
+        `}</style>
+
+        <div className="saved-deck-head">
+          <div>
+            <h3>{d.name}</h3>
+
+            <div className="meta">
+              {d.format==="commander"
+                ?"Commander"
+                :"Standard"
+              }
+              {" · "}
+              {totalWithCommanders} Karten
+            </div>
+          </div>
+
+          {typeof d.score==="number"&&
+            <strong>
+              Score {d.score}
+            </strong>
+          }
+        </div>
+
+        {commanders.length>0&&
+          <div className="saved-commander">
+            <strong>
+              {commanders.length===1
+                ?"Commander"
+                :"Commander"
+              }
+            </strong>
+
+            {commanders
+              .map(card=>card.name)
+              .join(" + ")
+            }
+          </div>
+        }
+
+        <div className="stats">
+          <div>
+            <strong>
+              {totalWithCommanders}
+            </strong>
+
+            <span>
+              Karten gesamt
+            </span>
+          </div>
+
+          <div>
+            <strong>
+              {stats.lands}
+            </strong>
+
+            <span>
+              Länder
+            </span>
+          </div>
+
+          <div>
+            <strong>
+              {stats.nonland}
+            </strong>
+
+            <span>
+              Nichtländer
+            </span>
+          </div>
+
+          <div>
+            <strong>
+              {stats.averageManaValue}
+            </strong>
+
+            <span>
+              Ø Mana Value
+            </span>
+          </div>
+        </div>
+
+        {roles.length>0&&
+          <div>
+            <strong>
+              Kartenrollen
+            </strong>
+
+            <div className="saved-role-list">
+              {roles.map(
+                ([role,count])=>
+                  <span key={role}>
+                    {role}: {count}
+                  </span>
+              )}
+            </div>
+          </div>
+        }
+
+        <div>
+          <strong>
+            Mana-Kurve
+          </strong>
+
+          <div className="mini-curve">
+            {curve.map(item=>{
+              const height=
+                item.count===0
+                  ?2
+                  :Math.max(
+                      6,
+                      item.count/maxCurve*100
+                    );
+
+              return (
+                <div
+                  className="mini-curve-column"
+                  key={item.label}
+                >
+                  <div className="mini-curve-bar-wrap">
+                    <div
+                      className="mini-curve-bar"
+                      style={{
+                        height:`${height}%`
+                      }}
+                    />
+                  </div>
+
+                  <span className="mini-curve-count">
+                    {item.count}
+                  </span>
+
+                  <span className="mini-curve-label">
+                    {item.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="row">
+          <button
+            className="primary"
+            onClick={()=>setEditing(d)}
+          >
+            Bearbeiten
+          </button>
+
+          <button
+            className="secondary"
+            onClick={()=>download(
+              `${d.name}.txt`,
+              deckText(d,pool)
+            )}
+          >
+            Export
+          </button>
+
+          <button
+            className="danger ghost"
+            onClick={()=>onDelete(d.id)}
+          >
+            Löschen
+          </button>
+        </div>
+      </article>
+    );
+  })}
+</div>
     </section>
   );
 }
