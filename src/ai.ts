@@ -1757,7 +1757,11 @@ function analysisRules(): string {
     "Bei einem unvollständigen Deck dürfen aktuelle absolute Kartenmengen nicht so behandelt werden, als wären sie bereits die endgültige 60- beziehungsweise 100-Karten-Verteilung.",
     "Insbesondere darf aus einer aktuellen Länderzahl bei einem unvollständigen Deck nicht automatisch ein Länderdefizit oder Länderüberschuss des fertigen Decks abgeleitet werden.",
     "Bei unvollständigen Decks dürfen Begriffe wie stark, ausreichend, robust, optimal, konkurrenzfähig oder ausgewogen nur ausdrücklich als vorläufige Einschätzung des vorhandenen Teildecks verwendet werden.",
-    "Wenn bei einem Standard-Deck keine Farbinformation hinterlegt ist, darf daraus niemals geschlossen werden, dass das Deck farblos ist."
+    "Wenn bei einem Standard-Deck keine Farbinformation hinterlegt ist, darf daraus niemals geschlossen werden, dass das Deck farblos ist.",
+    "Bei einem unvollständigen Commander-Deck darf die aktuelle Länderquote weder als angemessen noch als unangemessen bewertet werden.",
+  "Bei einem unvollständigen Deck dürfen konkrete Rollen- oder Funktionsdefizite wie Boardwipe, Counter, Lebensgewinn, Ramp, Finisher oder Interaktion nicht als feststehende Schwächen formuliert werden, solange die fehlenden Karten noch unbekannt sind.",
+  "Solche Bereiche dürfen nur als mögliche Prüfpunkte für die Vervollständigung genannt werden.",
+  "Das Fazit eines unvollständigen Decks muss klar zwischen bereits erkennbaren Themen des vorhandenen Teildecks und noch offenen Entscheidungen für die fehlenden Karten unterscheiden."
   ].join("\n");
 }
 
