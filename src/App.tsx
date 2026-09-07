@@ -5703,11 +5703,18 @@ function DeckEditor({
                 }
               ),
 
-            colors:
-              d.format ===
-              "commander"
-                ? commanderColors
-                : d.colors,
+           colors:
+  d.format === "commander"
+    ? commanderColors
+    : Array.from(
+        new Set(
+          d.cards.flatMap(deckCard =>
+            pool.find(
+              card => card.id === deckCard.id
+            )?.colorIdentity ?? []
+          )
+        )
+      ),
 
             updatedAt:
               Date.now()
