@@ -141,7 +141,7 @@ function cardText(card: CardRecord) {
     .toLowerCase();
 }
 
-function roleOf(card: CardRecord): Role {
+export function roleOf(card: CardRecord): Role {
   const text = cardText(card);
 
   if (isLand(card)) {
