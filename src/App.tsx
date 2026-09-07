@@ -2592,11 +2592,13 @@ function Decks({
   pool,
   onDelete,
   onSave
+  demoMode
 }:{
   decks:DeckRecord[];
   pool:CardRecord[];
   onDelete:(id:string)=>Promise<void>;
   onSave:(d:DeckRecord)=>Promise<void>;
+  demoMode:boolean;
 }) {
   const [editing,setEditing]=useState<DeckRecord|null>(null);
   const [importText,setImportText]=useState("");
