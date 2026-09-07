@@ -203,6 +203,8 @@ function deckCompletenessText(
       `Vorgeschriebene Mindestgröße Hauptdeck: ${minimum}`,
       `Aktuelle Hauptdeckgröße: ${mainDeck}`,
       `Fehlende Karten bis zur Mindestgröße: ${missing}`,
+      "Wenn die Bewertung der endgültigen Länderzahl als NICHT MÖGLICH angegeben ist, darf die KI weder einen Ländermangel noch einen Länderüberschuss behaupten.",
+      "Bei einem unvollständigen Deck darf die KI keine Empfehlung geben, eine bestimmte Zahl oder Menge Länder hinzuzufügen; sie darf lediglich die aktuell vorhandene Länderzahl nennen.",
       `Deckstatus: ${
         missing > 0
           ? "UNVOLLSTÄNDIG"
