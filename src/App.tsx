@@ -389,6 +389,7 @@ function Main({
                 pool={collection}
                 onDelete={delDeck}
                 onSave={persistDeck}
+                demoMode={demoMode}
               />
         }
       </main>
