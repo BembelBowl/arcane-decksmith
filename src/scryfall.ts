@@ -309,7 +309,7 @@ return false;
 
   return exact;
 }
-}
+
 export async function getPrintings(
   card: ScryfallCard
 ): Promise<ScryfallCard[]> {
