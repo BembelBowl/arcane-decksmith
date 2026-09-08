@@ -210,15 +210,18 @@ export function normalizeCard(
 export async function searchCards(
   query: string
 ): Promise<ScryfallCard[]> {
+  const original =
+    query.trim();
+
   const key =
-    query.trim().toLowerCase();
+    original.toLowerCase();
 
   if (!key) {
     return [];
   }
 
   const cacheKey =
-    `multilingual:${key}`;
+    `de-en-exact:${key}`;
 
   const cached =
     searchCache.get(cacheKey);
@@ -229,7 +232,7 @@ export async function searchCards(
 
   const params =
     new URLSearchParams({
-      q: query.trim(),
+      q: `"${original}"`,
       unique: "prints",
       order: "name",
       include_multilingual: "true"
@@ -240,42 +243,72 @@ export async function searchCards(
       `${API}/cards/search?${params.toString()}`
     );
 
-  const sorted =
-    [...result.data].sort(
-      (a, b) => {
-        const aGerman =
-          a.lang === "de"
-            ? 0
-            : 1;
+  const filtered =
+    result.data.filter(card => {
+      const languageAllowed =
+        card.lang === "en" ||
+        card.lang === "de";
 
-        const bGerman =
-          b.lang === "de"
-            ? 0
-            : 1;
-
-        if (
-          aGerman !== bGerman
-        ) {
-          return (
-            aGerman -
-            bGerman
-          );
-        }
-
-        return displayName(a)
-          .localeCompare(
-            displayName(b),
-            "de"
-          );
+      if (!languageAllowed) {
+        return false;
       }
-    );
+
+      const englishName =
+        card.name
+          .trim()
+          .toLowerCase();
+
+      const printedName =
+        card.printed_name
+          ?.trim()
+          .toLowerCase();
+
+      if (
+  card.lang === "de" &&
+  printedName === key
+) {
+  return true;
+}
+
+if (
+  card.lang === "en" &&
+  englishName === key
+) {
+  return true;
+}
+
+return false;
+    });
+
+  /*
+   * Falls nach dem exakten Filtern mehrere Drucke derselben
+   * Karte zurückkommen, behalten wir für die Suche nur einen
+   * passenden Treffer pro Sprache.
+   */
+  const seen =
+    new Set<string>();
+
+  const exact =
+    filtered.filter(card => {
+      const identity =
+        `${card.oracle_id ?? card.name}:${card.lang}`;
+
+      if (seen.has(identity)) {
+        return false;
+      }
+
+      seen.add(identity);
+
+      return true;
+    });
 
   searchCache.set(
     cacheKey,
-    sorted
+    exact
   );
 
-  return sorted;
+  return exact;
+}
 }
 export async function getPrintings(
   card: ScryfallCard
