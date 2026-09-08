@@ -41,15 +41,16 @@ for (
     const card =
       JSON.parse(trimmed);
 
-    if (
-      card.lang !== "de" ||
-      card.game !== "paper" ||
-      !card.printed_name ||
-      !card.name ||
-      !card.cardmarket_id
-    ) {
-      continue;
-    }
+   if (
+  card.lang !== "de" ||
+  !Array.isArray(card.games) ||
+  !card.games.includes("paper") ||
+  !card.printed_name ||
+  !card.name ||
+  !card.cardmarket_id
+) {
+  continue;
+}
 
     const printedName =
       String(
