@@ -43,6 +43,10 @@ import {
 } from "./db";
 import {
   autocomplete,
+  canonicalEnglishCard,
+  displayName,
+  displayOracleText,
+  displayTypeLine,
   getCard,
   getPrintings,
   imageFor,
@@ -561,28 +565,40 @@ function Main({
             )
             : page === "search"
               ? (
-                <Search
-                  onAdd={async c => {
-                    const existing =
-                      collection.find(
-                        x => x.id === c.id
-                      );
+<Search
+  onAdd={async c => {
+    const canonical =
+      await canonicalEnglishCard(c);
 
-                    await persistCard(
-                      existing
-                        ? {
-                            ...existing,
-                            count:
-                              existing.count +
-                              1,
-                            updatedAt:
-                              Date.now()
-                          }
-                        : {
-                            ...normalizeCard(c),
-                            count: 1
-                          }
-                    );
+    const existing =
+      collection.find(
+        x =>
+          x.id === canonical.id ||
+          (
+            x.oracleId === canonical.oracle_id &&
+            x.set.toLowerCase() ===
+              canonical.set.toLowerCase() &&
+            x.collectorNumber.toLowerCase() ===
+              canonical.collector_number.toLowerCase()
+          )
+      );
+
+    await persistCard(
+      existing
+        ? {
+            ...existing,
+            count:
+              existing.count + 1,
+            updatedAt:
+              Date.now()
+          }
+        : {
+            ...normalizeCard(
+              canonical
+            ),
+            count: 1
+          }
+    );
 
                     setToast(
                       existing
@@ -823,13 +839,13 @@ function SearchCard({
     <article className="card-tile">
       <img
         src={imageFor(selectedCard)}
-        alt={selectedCard.name}
+        alt={{displayName(selectedCard)}
         loading="lazy"
       />
 
       <div className="card-body">
         <h3>
-          {selectedCard.name}
+          {displayName(selectedCard)}
         </h3>
 
         <div className="meta">
@@ -847,17 +863,13 @@ function SearchCard({
         )}
 
         <p>
-          {selectedCard.type_line}
+{displayTypeLine(selectedCard)}
         </p>
 
         <p className="oracle">
-          {selectedCard.oracle_text ??
-            selectedCard.card_faces
-              ?.map(
-                f => f.oracle_text
-              )
-              .filter(Boolean)
-              .join(" / ")}
+{displayOracleText(
+  selectedCard
+)}
         </p>
 
         <div className="variant-actions">
