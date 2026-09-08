@@ -20,6 +20,7 @@ export interface ScryfallCard {
   color_identity?: string[];
   type_line?: string;
   oracle_text?: string;
+  printed_name?: string;
   printed_type_line?: string;
   printed_text?: string;
   image_uris?: { small?: string; normal?: string; large?: string };
@@ -96,7 +97,19 @@ export function imageFor(
     );
   }
 
-  export function displayName(
+  if ("imageUris" in card) {
+    return (
+      card.imageUris?.normal ??
+      card.imageUris?.large ??
+      card.imageUris?.small ??
+      card.imageUri
+    );
+  }
+
+  return undefined;
+}
+
+export function displayName(
   card: ScryfallCard
 ): string {
   return (
@@ -140,19 +153,6 @@ export function displayOracleText(
     ""
   );
 }
-  
-  if ("imageUris" in card) {
-    return (
-      card.imageUris?.normal ??
-      card.imageUris?.large ??
-      card.imageUris?.small ??
-      card.imageUri
-    );
-  }
-
-  return undefined;
-}
-
 export function normalizeCard(
   card: ScryfallCard,
   count = 1,
