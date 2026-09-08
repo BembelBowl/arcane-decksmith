@@ -398,9 +398,7 @@ async function loadGermanIndex():
           );
         }
 
-        const data =
-          await response.json()
-            as GermanIndexEntry[];
+        const data = (await response.json()) as GermanIndexEntry[];
 
         germanIndex =
           Array.isArray(data)
