@@ -593,25 +593,23 @@ function Main({
               Date.now()
           }
         : {
-            ...normalizeCard(
-              canonical
-            ),
+            ...normalizeCard(canonical),
             count: 1
           }
     );
 
-                    setToast(
-                      existing
-                        ? `${c.name}: Anzahl auf ${existing.count + 1} erhöht.`
-                        : `${c.name} wurde zur Sammlung hinzugefügt.`
-                    );
+    setToast(
+      existing
+        ? `${canonical.name}: Anzahl auf ${existing.count + 1} erhöht.`
+        : `${canonical.name} wurde zur Sammlung hinzugefügt.`
+    );
 
-                    setTimeout(
-                      () => setToast(""),
-                      2200
-                    );
-                  }}
-                />
+    setTimeout(
+      () => setToast(""),
+      2200
+    );
+  }}
+/>
               )
               : page === "builder"
                 ? (
