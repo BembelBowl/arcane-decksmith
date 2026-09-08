@@ -158,8 +158,7 @@ async function getJson<T>(
     );
   }
 
-  return res.json()
-    as Promise<T>;
+ return res.json() as Promise<T>;
 }
 
 export function imageFor(
@@ -756,8 +755,7 @@ export async function getPrintings(
     return [card];
   }
 
-  const cards:
-    ScryfallCard[] = [];
+  const cards: ScryfallCard[] = [];
 
   let nextUrl:
     string |
