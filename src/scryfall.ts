@@ -732,35 +732,25 @@ export async function autocomplete(
 
 export async function getPrintings(
   card: ScryfallCard
-): Promise<
-  ScryfallCard[]
-> {
+): Promise<ScryfallCard[]> {
   const cacheKey =
-    card.oracle_id ??
-    card.name
-      .toLowerCase();
+    card.oracle_id ?? card.name.toLowerCase();
 
   const cached =
-    printingsCache.get(
-      cacheKey
-    );
+    printingsCache.get(cacheKey);
 
   if (cached) {
     return cached;
   }
 
-  if (
-    !card.prints_search_uri
-  ) {
+  if (!card.prints_search_uri) {
     return [card];
   }
 
   const cards: ScryfallCard[] = [];
 
-  let nextUrl:
-    string |
-    undefined =
-      card.prints_search_uri;
+  let nextUrl: string | undefined =
+    card.prints_search_uri;
 
   while (nextUrl) {
     const result:
