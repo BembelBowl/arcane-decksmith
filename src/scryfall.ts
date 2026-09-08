@@ -10,6 +10,7 @@ export interface ScryfallCard {
   id: string;
   oracle_id?: string;
   name: string;
+  printed_name?: string;
   lang?: string;
   set: string;
   collector_number: string;
@@ -19,11 +20,16 @@ export interface ScryfallCard {
   color_identity?: string[];
   type_line?: string;
   oracle_text?: string;
+  printed_type_line?: string;
+  printed_text?: string;
   image_uris?: { small?: string; normal?: string; large?: string };
   card_faces?: Array<{
     name?: string;
     mana_cost?: string;
     oracle_text?: string;
+    printed_name?: string;
+    printed_type_line?: string;
+    printed_text?: string;
     type_line?: string;
     colors?: string[];
     color_identity?: string[];
@@ -90,6 +96,51 @@ export function imageFor(
     );
   }
 
+  export function displayName(
+  card: ScryfallCard
+): string {
+  return (
+    card.printed_name?.trim() ||
+    card.name
+  );
+}
+
+export function displayTypeLine(
+  card: ScryfallCard
+): string {
+  return (
+    card.printed_type_line?.trim() ||
+    card.type_line ||
+    card.card_faces
+      ?.map(
+        face =>
+          face.printed_type_line?.trim() ||
+          face.type_line
+      )
+      .filter(Boolean)
+      .join(" // ") ||
+    ""
+  );
+}
+
+export function displayOracleText(
+  card: ScryfallCard
+): string {
+  return (
+    card.printed_text?.trim() ||
+    card.oracle_text ||
+    card.card_faces
+      ?.map(
+        face =>
+          face.printed_text?.trim() ||
+          face.oracle_text
+      )
+      .filter(Boolean)
+      .join("\n//\n") ||
+    ""
+  );
+}
+  
   if ("imageUris" in card) {
     return (
       card.imageUris?.normal ??
@@ -167,8 +218,11 @@ export async function searchCards(
     return [];
   }
 
+  const cacheKey =
+    `multilingual:${key}`;
+
   const cached =
-    searchCache.get(key);
+    searchCache.get(cacheKey);
 
   if (cached) {
     return cached;
@@ -176,9 +230,10 @@ export async function searchCards(
 
   const params =
     new URLSearchParams({
-      q: key,
-      unique: "cards",
-      order: "name"
+      q: query.trim(),
+      unique: "prints",
+      order: "name",
+      include_multilingual: "true"
     });
 
   const result =
@@ -186,22 +241,43 @@ export async function searchCards(
       `${API}/cards/search?${params.toString()}`
     );
 
+  const sorted =
+    [...result.data].sort(
+      (a, b) => {
+        const aGerman =
+          a.lang === "de"
+            ? 0
+            : 1;
+
+        const bGerman =
+          b.lang === "de"
+            ? 0
+            : 1;
+
+        if (
+          aGerman !== bGerman
+        ) {
+          return (
+            aGerman -
+            bGerman
+          );
+        }
+
+        return displayName(a)
+          .localeCompare(
+            displayName(b),
+            "de"
+          );
+      }
+    );
+
   searchCache.set(
-    key,
-    result.data
+    cacheKey,
+    sorted
   );
 
-  result.data.forEach(
-    (c) =>
-      cache.set(
-        c.id,
-        normalizeCard(c)
-      )
-  );
-
-  return result.data;
+  return sorted;
 }
-
 export async function getPrintings(
   card: ScryfallCard
 ): Promise<ScryfallCard[]> {
@@ -303,6 +379,29 @@ export async function autocomplete(
     0,
     8
   );
+}
+
+export async function canonicalEnglishCard(
+  card: ScryfallCard
+): Promise<ScryfallCard> {
+  if (
+    !card.lang ||
+    card.lang === "en"
+  ) {
+    return card;
+  }
+
+  try {
+    return await getJson<ScryfallCard>(
+      `${API}/cards/${encodeURIComponent(
+        card.set
+      )}/${encodeURIComponent(
+        card.collector_number
+      )}/en`
+    );
+  } catch {
+    return card;
+  }
 }
 
 export async function getCard(
