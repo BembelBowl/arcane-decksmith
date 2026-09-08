@@ -836,8 +836,8 @@ function SearchCard({
   return (
     <article className="card-tile">
       <img
+        alt={displayName(selectedCard)}
         src={imageFor(selectedCard)}
-        alt={{displayName(selectedCard)}
         loading="lazy"
       />
 
