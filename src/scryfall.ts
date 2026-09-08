@@ -20,7 +20,6 @@ export interface ScryfallCard {
   color_identity?: string[];
   type_line?: string;
   oracle_text?: string;
-  printed_name?: string;
   printed_type_line?: string;
   printed_text?: string;
   image_uris?: { small?: string; normal?: string; large?: string };
