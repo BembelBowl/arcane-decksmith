@@ -567,59 +567,79 @@ function Main({
                   )
                 );
 
-              setCollection(
-                current =>
-                  current.map(
-                    card => {
-                      const fresh =
-                        freshById.get(
-                          card.id
-                        );
+              const refreshedCollection =
+  loadedCollection.map(
+    card => {
+      const fresh =
+        freshById.get(
+          card.id
+        );
 
-                      if (!fresh) {
-                        return card;
-                      }
+      if (!fresh) {
+        return card;
+      }
 
-                      const counts =
-                        finishCountsFor(
-                          card
-                        );
+      const counts =
+        finishCountsFor(
+          card
+        );
 
-                      return {
-                        ...card,
-                        setName:
-                          fresh.setName ??
-                          card.setName,
-                        finishCounts:
-                          counts,
-                        availableFinishes:
-                          fresh.availableFinishes ??
-                          card.availableFinishes,
-                        ...(fresh.priceEur !==
-                        undefined
-                          ? {
-                              priceEur:
-                                fresh.priceEur
-                            }
-                          : {}),
-                        ...(fresh.priceEurFoil !==
-                        undefined
-                          ? {
-                              priceEurFoil:
-                                fresh.priceEurFoil
-                            }
-                          : {}),
-                        priceUpdatedAt:
-                          fresh.priceUpdatedAt ??
-                          Date.now(),
-                        foil:
-                          legacyFoilFlag(
-                            counts
-                          )
-                      };
-                    }
-                  )
-              );
+      return {
+        ...card,
+        setName:
+          fresh.setName ??
+          card.setName,
+
+        finishCounts:
+          counts,
+
+        availableFinishes:
+          fresh.availableFinishes &&
+          fresh.availableFinishes.length > 0
+            ? fresh.availableFinishes
+            : card.availableFinishes,
+
+        ...(fresh.priceEur !==
+        undefined
+          ? {
+              priceEur:
+                fresh.priceEur
+            }
+          : {}),
+
+        ...(fresh.priceEurFoil !==
+        undefined
+          ? {
+              priceEurFoil:
+                fresh.priceEurFoil
+            }
+          : {}),
+
+        priceUpdatedAt:
+          fresh.priceUpdatedAt ??
+          Date.now(),
+
+        foil:
+          legacyFoilFlag(
+            counts
+          )
+      };
+    }
+  );
+
+setCollection(
+  refreshedCollection
+);
+
+for (
+  const card
+  of refreshedCollection
+) {
+  await saveCard(
+    uid,
+    card
+  );
+}
             } catch {
               // Die gespeicherten Daten bleiben nutzbar, falls Scryfall gerade nicht erreichbar ist.
             }
