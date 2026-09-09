@@ -726,10 +726,21 @@ function Search({
           {suggestions.map(s => (
             <button
               key={s}
-              onClick={() => {
-                setQ(s);
-                setSuggestions([]);
-              }}
+              oonClick={async () => {
+  setQ(s);
+  setSuggestions([]);
+  setBusy(true);
+
+  try {
+    setResults(
+      await searchCards(s)
+    );
+  } catch (e: any) {
+    alert(e.message);
+  } finally {
+    setBusy(false);
+  }
+}}
             >
               {s}
             </button>
