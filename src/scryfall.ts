@@ -235,7 +235,10 @@ export async function getPrintings(
   let nextUrl: string | undefined = card.prints_search_uri;
 
   while (nextUrl) {
-    const result = await getJson<SearchResponse>(nextUrl);
+   const result: SearchResponse =
+  await getJson<SearchResponse>(
+    nextUrl
+  );
     cards.push(...result.data);
 
     nextUrl =
