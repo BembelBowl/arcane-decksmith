@@ -726,7 +726,7 @@ function Search({
           {suggestions.map(s => (
             <button
               key={s}
-              oonClick={async () => {
+              onClick={async () => {
   setQ(s);
   setSuggestions([]);
   setBusy(true);
