@@ -212,9 +212,6 @@ export function availableFinishes(
   return result;
 }
 
-  return result;
-}
-
 export function euroPriceFor(
   card: ScryfallCard,
   finish: CardFinish
