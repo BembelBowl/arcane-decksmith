@@ -167,11 +167,13 @@ function parseEuroPrice(
 export function availableFinishes(
   card: ScryfallCard
 ): CardFinish[] {
-  const finishes = new Set(
-    card.finishes ?? []
-  );
+  const finishes =
+    new Set(
+      card.finishes ?? []
+    );
 
-  const result: CardFinish[] = [];
+  const result:
+    CardFinish[] = [];
 
   if (
     finishes.has("nonfoil") ||
@@ -187,15 +189,28 @@ export function availableFinishes(
     result.push("foil");
   }
 
+  // Fallback nur dann, wenn Scryfall keine
+  // Finish-Information geliefert hat.
   if (result.length === 0) {
-    if (card.prices?.eur) {
-      result.push("nonfoil");
+    if (
+      card.prices?.eur
+    ) {
+      result.push(
+        "nonfoil"
+      );
     }
 
-    if (card.prices?.eur_foil) {
-      result.push("foil");
+    if (
+      card.prices?.eur_foil
+    ) {
+      result.push(
+        "foil"
+      );
     }
   }
+
+  return result;
+}
 
   return result;
 }
