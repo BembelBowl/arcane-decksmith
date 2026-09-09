@@ -2354,6 +2354,16 @@ function Collection({
             margin-bottom:4px;
           }
 
+.collection-stat-card > span,
+.collection-stat-card > small{
+  display:block;
+}
+
+.collection-stat-card > small{
+  margin-top:6px;
+  line-height:1.4;
+}
+
           .collection-stat-grid{
             display:grid;
             grid-template-columns:repeat(3,minmax(0,1fr));
