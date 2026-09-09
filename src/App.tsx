@@ -1279,24 +1279,6 @@ function Collection({
       card.count;
   }
 
-  const foilTotal=
-    cards.reduce(
-      (sum,card)=>
-        sum+
-        (
-          card.foil
-            ?card.count
-            :0
-        ),
-      0
-    );
-
-  const nonFoilTotal=
-    Math.max(
-      0,
-      physicalTotal-foilTotal
-    );
-
   const setMap=
     new Map<
       string,
@@ -1340,46 +1322,6 @@ function Collection({
             "de"
           )
       );
-
-  const standardLegal=
-    cards.reduce(
-      (sum,card)=>
-        sum+
-        (
-          card.legalities?.standard==="legal"
-            ?card.count
-            :0
-        ),
-      0
-    );
-
-  const commanderLegal=
-    cards.reduce(
-      (sum,card)=>
-        sum+
-        (
-          card.legalities?.commander==="legal"
-            ?card.count
-            :0
-        ),
-      0
-    );
-
-  const duplicateTypes=
-    cards.filter(
-      card=>card.count>1
-    ).length;
-
-  const extraCopies=
-    cards.reduce(
-      (sum,card)=>
-        sum+
-        Math.max(
-          0,
-          card.count-1
-        ),
-      0
-    );
 
   const mostFrequent=
     [...cards]
@@ -1435,36 +1377,7 @@ function Collection({
         physicalTotal
       ),
 
-    foilTotal,
-    nonFoilTotal,
-
-    foilPercentage:
-      physicalTotal>0
-        ?foilTotal/physicalTotal*100
-        :0,
-
-    nonFoilPercentage:
-      physicalTotal>0
-        ?nonFoilTotal/physicalTotal*100
-        :0,
-
     sets,
-
-    standardLegal,
-    commanderLegal,
-
-    standardLegalPercentage:
-      physicalTotal>0
-        ?standardLegal/physicalTotal*100
-        :0,
-
-    commanderLegalPercentage:
-      physicalTotal>0
-        ?commanderLegal/physicalTotal*100
-        :0,
-
-    duplicateTypes,
-    extraCopies,
     mostFrequent
   };
 },[cards]);
@@ -2081,99 +1994,6 @@ function Collection({
                 </div>
               )
             )}
-          </div>
-        </div>
-
-        <div className="collection-stat-grid collection-stat-extra">
-          <div className="collection-stat-section">
-            <h3>Foil / Non-Foil</h3>
-
-            <div className="collection-stat-row">
-              <div className="collection-stat-label">
-                <span>Foil</span>
-                <span>
-                  {collectionStats.foilTotal} ·{" "}
-                  {collectionStats.foilPercentage.toFixed(1)}%
-                </span>
-              </div>
-              <progress
-                max={100}
-                value={collectionStats.foilPercentage}
-              />
-            </div>
-
-            <div className="collection-stat-row">
-              <div className="collection-stat-label">
-                <span>Non-Foil</span>
-                <span>
-                  {collectionStats.nonFoilTotal} ·{" "}
-                  {collectionStats.nonFoilPercentage.toFixed(1)}%
-                </span>
-              </div>
-              <progress
-                max={100}
-                value={collectionStats.nonFoilPercentage}
-              />
-            </div>
-          </div>
-
-          <div className="collection-stat-section">
-            <h3>Legalität</h3>
-
-            <p className="muted">
-              Anteil deiner physischen Karten mit gespeicherter
-              Scryfall-Legalität.
-            </p>
-
-            <div className="collection-stat-row">
-              <div className="collection-stat-label">
-                <span>Standard legal</span>
-                <span>
-                  {collectionStats.standardLegal} ·{" "}
-                  {collectionStats.standardLegalPercentage.toFixed(1)}%
-                </span>
-              </div>
-              <progress
-                max={100}
-                value={collectionStats.standardLegalPercentage}
-              />
-            </div>
-
-            <div className="collection-stat-row">
-              <div className="collection-stat-label">
-                <span>Commander legal</span>
-                <span>
-                  {collectionStats.commanderLegal} ·{" "}
-                  {collectionStats.commanderLegalPercentage.toFixed(1)}%
-                </span>
-              </div>
-              <progress
-                max={100}
-                value={collectionStats.commanderLegalPercentage}
-              />
-            </div>
-          </div>
-
-          <div className="collection-stat-section">
-            <h3>Doppelte Karten</h3>
-
-            <div className="collection-stat-card">
-              <strong>
-                {collectionStats.duplicateTypes}
-              </strong>
-              <span className="muted">
-                unterschiedliche Karten mit mehr als einem Exemplar
-              </span>
-            </div>
-
-            <div className="collection-stat-card">
-              <strong>
-                {collectionStats.extraCopies}
-              </strong>
-              <span className="muted">
-                zusätzliche Exemplare über das erste Exemplar hinaus
-              </span>
-            </div>
           </div>
         </div>
 
