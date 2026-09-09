@@ -43,11 +43,14 @@ import {
 } from "./db";
 import {
   autocomplete,
+  availableFinishes,
   canonicalEnglishCard,
   displayName,
   displayOracleText,
   displayTypeLine,
+  euroPriceFor,
   getCard,
+  getCards,
   getPrintings,
   imageFor,
   searchCards,
@@ -81,6 +84,7 @@ import {
   generateDeckExplanation
 } from "./ai";
 import type {
+  CardFinish,
   CardRecord,
   DeckRecord,
   Format,
@@ -112,6 +116,179 @@ const TYPE_ORDER = [
   "Schlacht",
   "Sonstiges"
 ];
+
+const EUR_FORMATTER =
+  new Intl.NumberFormat(
+    "de-DE",
+    {
+      style: "currency",
+      currency: "EUR"
+    }
+  );
+
+function formatEuro(
+  value:
+    | number
+    | undefined
+    | null
+): string {
+  return value === undefined ||
+    value === null ||
+    !Number.isFinite(value)
+    ? "kein EUR-Preis"
+    : EUR_FORMATTER.format(value);
+}
+
+function finishLabel(
+  finish: CardFinish
+): string {
+  return finish === "foil"
+    ? "Foil"
+    : "Non-Foil";
+}
+
+function finishCountsFor(
+  card: CardRecord
+): Record<CardFinish, number> {
+  const stored =
+    card.finishCounts;
+
+  if (stored) {
+    const nonfoil =
+      Math.max(
+        0,
+        Math.floor(
+          Number(
+            stored.nonfoil ?? 0
+          )
+        )
+      );
+
+    const foil =
+      Math.max(
+        0,
+        Math.floor(
+          Number(
+            stored.foil ?? 0
+          )
+        )
+      );
+
+    if (
+      nonfoil + foil > 0
+    ) {
+      return {
+        nonfoil,
+        foil
+      };
+    }
+  }
+
+  return card.foil
+    ? {
+        nonfoil: 0,
+        foil: card.count
+      }
+    : {
+        nonfoil: card.count,
+        foil: 0
+      };
+}
+
+function priceForRecord(
+  card: CardRecord,
+  finish: CardFinish
+): number | undefined {
+  return finish === "foil"
+    ? card.priceEurFoil
+    : card.priceEur;
+}
+
+function highestOwnedUnitValue(
+  card: CardRecord
+): number | undefined {
+  const counts =
+    finishCountsFor(card);
+
+  const prices: number[] = [];
+
+  if (
+    counts.nonfoil > 0 &&
+    card.priceEur !== undefined
+  ) {
+    prices.push(
+      card.priceEur
+    );
+  }
+
+  if (
+    counts.foil > 0 &&
+    card.priceEurFoil !== undefined
+  ) {
+    prices.push(
+      card.priceEurFoil
+    );
+  }
+
+  return prices.length > 0
+    ? Math.max(...prices)
+    : undefined;
+}
+
+function collectionValueForCard(
+  card: CardRecord
+): {
+  value: number;
+  unpricedCopies: number;
+} {
+  const counts =
+    finishCountsFor(card);
+
+  let value = 0;
+  let unpricedCopies = 0;
+
+  if (counts.nonfoil > 0) {
+    if (
+      card.priceEur !== undefined
+    ) {
+      value +=
+        counts.nonfoil *
+        card.priceEur;
+    } else {
+      unpricedCopies +=
+        counts.nonfoil;
+    }
+  }
+
+  if (counts.foil > 0) {
+    if (
+      card.priceEurFoil !==
+      undefined
+    ) {
+      value +=
+        counts.foil *
+        card.priceEurFoil;
+    } else {
+      unpricedCopies +=
+        counts.foil;
+    }
+  }
+
+  return {
+    value,
+    unpricedCopies
+  };
+}
+
+function legacyFoilFlag(
+  counts:
+    Record<CardFinish, number>
+): boolean {
+  return (
+    counts.foil > 0 &&
+    counts.nonfoil === 0
+  );
+}
 
 function colorGroupName(colors: string[]): string {
   if (!colors.length) {
@@ -366,56 +543,85 @@ function Main({
         setCollection(loadedCollection);
         setDecks(loadedDecks);
 
-        const cardsWithoutSetName =
-          loadedCollection.filter(
-            card => !card.setName
-          );
-
-        if (cardsWithoutSetName.length > 0) {
+        if (
+          loadedCollection.length >
+          0
+        ) {
           void (async () => {
-            const refreshed = [
-              ...loadedCollection
-            ];
+            try {
+              const freshCards =
+                await getCards(
+                  loadedCollection.map(
+                    card =>
+                      card.id
+                  )
+                );
 
-            let changed = false;
+              const freshById =
+                new Map(
+                  freshCards.map(
+                    card => [
+                      card.id,
+                      card
+                    ] as const
+                  )
+                );
 
-            for (
-              const card
-              of cardsWithoutSetName
-            ) {
-              try {
-                const fresh =
-                  await getCard(card.id);
+              setCollection(
+                current =>
+                  current.map(
+                    card => {
+                      const fresh =
+                        freshById.get(
+                          card.id
+                        );
 
-                const index =
-                  refreshed.findIndex(
-                    item =>
-                      item.id === card.id
-                  );
+                      if (!fresh) {
+                        return card;
+                      }
 
-                if (
-                  index !== -1 &&
-                  fresh.setName
-                ) {
-                  refreshed[index] = {
-                    ...refreshed[index],
-                    setName: fresh.setName
-                  };
+                      const counts =
+                        finishCountsFor(
+                          card
+                        );
 
-                  await saveCard(
-                    uid,
-                    refreshed[index]
-                  );
-
-                  changed = true;
-                }
-              } catch {
-                // Fehlende Setnamen werden beim nächsten Laden erneut versucht.
-              }
-            }
-
-            if (changed) {
-              setCollection(refreshed);
+                      return {
+                        ...card,
+                        setName:
+                          fresh.setName ??
+                          card.setName,
+                        finishCounts:
+                          counts,
+                        availableFinishes:
+                          fresh.availableFinishes ??
+                          card.availableFinishes,
+                        ...(fresh.priceEur !==
+                        undefined
+                          ? {
+                              priceEur:
+                                fresh.priceEur
+                            }
+                          : {}),
+                        ...(fresh.priceEurFoil !==
+                        undefined
+                          ? {
+                              priceEurFoil:
+                                fresh.priceEurFoil
+                            }
+                          : {}),
+                        priceUpdatedAt:
+                          fresh.priceUpdatedAt ??
+                          Date.now(),
+                        foil:
+                          legacyFoilFlag(
+                            counts
+                          )
+                      };
+                    }
+                  )
+              );
+            } catch {
+              // Die gespeicherten Daten bleiben nutzbar, falls Scryfall gerade nicht erreichbar ist.
             }
           })();
         }
@@ -566,7 +772,10 @@ function Main({
             : page === "search"
               ? (
 <Search
-  onAdd={async c => {
+  onAdd={async (
+    c,
+    finish
+  ) => {
     const canonical =
       await canonicalEnglishCard(c);
 
@@ -575,7 +784,8 @@ function Main({
         x =>
           x.id === canonical.id ||
           (
-            x.oracleId === canonical.oracle_id &&
+            x.oracleId ===
+              canonical.oracle_id &&
             x.set.toLowerCase() ===
               canonical.set.toLowerCase() &&
             x.collectorNumber.toLowerCase() ===
@@ -583,26 +793,74 @@ function Main({
           )
       );
 
-    await persistCard(
-      existing
-        ? {
-            ...existing,
-            count:
-              existing.count + 1,
-            updatedAt:
-              Date.now()
-          }
-        : {
-            ...normalizeCard(canonical),
-            count: 1
-          }
-    );
+    if (existing) {
+      const counts =
+        finishCountsFor(
+          existing
+        );
 
-    setToast(
-      existing
-        ? `${canonical.name}: Anzahl auf ${existing.count + 1} erhöht.`
-        : `${canonical.name} wurde zur Sammlung hinzugefügt.`
-    );
+      const nextCounts = {
+        ...counts,
+        [finish]:
+          counts[finish] + 1
+      };
+
+      const fresh =
+        normalizeCard(
+          canonical,
+          1,
+          finish === "foil"
+        );
+
+      await persistCard({
+        ...existing,
+        count:
+          existing.count + 1,
+        finishCounts:
+          nextCounts,
+        availableFinishes:
+          fresh.availableFinishes,
+        ...(fresh.priceEur !== undefined
+          ? {
+              priceEur:
+                fresh.priceEur
+            }
+          : {}),
+        ...(fresh.priceEurFoil !== undefined
+          ? {
+              priceEurFoil:
+                fresh.priceEurFoil
+            }
+          : {}),
+        priceUpdatedAt:
+          fresh.priceUpdatedAt,
+        foil:
+          legacyFoilFlag(
+            nextCounts
+          ),
+        updatedAt:
+          Date.now()
+      });
+
+      setToast(
+        `${canonical.name}: ${finishLabel(finish)} hinzugefügt · Anzahl ${existing.count + 1}.`
+      );
+    } else {
+      const fresh =
+        normalizeCard(
+          canonical,
+          1,
+          finish === "foil"
+        );
+
+      await persistCard(
+        fresh
+      );
+
+      setToast(
+        `${canonical.name} (${finishLabel(finish)}) wurde zur Sammlung hinzugefügt.`
+      );
+    }
 
     setTimeout(
       () => setToast(""),
@@ -643,7 +901,8 @@ function Search({
   onAdd
 }: {
   onAdd: (
-    c: ScryfallCard
+    c: ScryfallCard,
+    finish: CardFinish
   ) => Promise<void>;
 }) {
   const [q, setQ] = useState("");
@@ -727,20 +986,20 @@ function Search({
             <button
               key={s}
               onClick={async () => {
-  setQ(s);
-  setSuggestions([]);
-  setBusy(true);
+                setQ(s);
+                setSuggestions([]);
+                setBusy(true);
 
-  try {
-    setResults(
-      await searchCards(s)
-    );
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    setBusy(false);
-  }
-}}
+                try {
+                  setResults(
+                    await searchCards(s)
+                  );
+                } catch (e: any) {
+                  alert(e.message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
             >
               {s}
             </button>
@@ -775,7 +1034,8 @@ function SearchCard({
 }: {
   card: ScryfallCard;
   onAdd: (
-    card: ScryfallCard
+    card: ScryfallCard,
+    finish: CardFinish
   ) => void | Promise<void>;
 }) {
   const [
@@ -783,6 +1043,15 @@ function SearchCard({
     setSelectedCard
   ] =
     useState<ScryfallCard>(card);
+
+  const [
+    selectedFinish,
+    setSelectedFinish
+  ] =
+    useState<CardFinish>(
+      availableFinishes(card)[0] ??
+      "nonfoil"
+    );
 
   const [
     printings,
@@ -810,10 +1079,34 @@ function SearchCard({
 
   useEffect(() => {
     setSelectedCard(card);
+    setSelectedFinish(
+      availableFinishes(card)[0] ??
+      "nonfoil"
+    );
     setPrintings([]);
     setShowPrintings(false);
     setPrintingError("");
   }, [card.id]);
+
+  useEffect(() => {
+    const finishes =
+      availableFinishes(
+        selectedCard
+      );
+
+    setSelectedFinish(
+      current =>
+        finishes.includes(current)
+          ? current
+          : finishes[0] ??
+            "nonfoil"
+    );
+  }, [selectedCard.id]);
+
+  const selectedFinishes =
+    availableFinishes(
+      selectedCard
+    );
 
   const loadPrintings = async () => {
     if (showPrintings) {
@@ -872,14 +1165,63 @@ function SearchCard({
         )}
 
         <p>
-{displayTypeLine(selectedCard)}
+          {displayTypeLine(
+            selectedCard
+          )}
         </p>
 
         <p className="oracle">
-{displayOracleText(
-  selectedCard
-)}
+          {displayOracleText(
+            selectedCard
+          )}
         </p>
+
+        <div className="variant-box">
+          <div className="variant-info-title">
+            Finish & Scryfall-Preis
+          </div>
+
+          {selectedFinishes.length > 0
+            ? (
+              <div className="row">
+                {selectedFinishes.map(
+                  finish => (
+                    <button
+                      key={finish}
+                      className={
+                        selectedFinish ===
+                        finish
+                          ? "primary"
+                          : "secondary"
+                      }
+                      onClick={() =>
+                        setSelectedFinish(
+                          finish
+                        )
+                      }
+                    >
+                      {finishLabel(
+                        finish
+                      )}
+                      {" · "}
+                      {formatEuro(
+                        euroPriceFor(
+                          selectedCard,
+                          finish
+                        )
+                      )}
+                    </button>
+                  )
+                )}
+              </div>
+            )
+            : (
+              <div className="muted">
+                Für diese Ausgabe meldet Scryfall kein unterstütztes
+                Non-Foil- oder Foil-Finish.
+              </div>
+            )}
+        </div>
 
         <div className="variant-actions">
           <button
@@ -965,6 +1307,20 @@ function SearchCard({
                           p.lang !== "en"
                             ? ` · ${p.lang.toUpperCase()}`
                             : ""}
+                          {" · "}
+                          {availableFinishes(
+                            p
+                          )
+                            .map(
+                              finish =>
+                                `${finishLabel(finish)} ${formatEuro(
+                                  euroPriceFor(
+                                    p,
+                                    finish
+                                  )
+                                )}`
+                            )
+                            .join(" / ")}
                         </option>
                       ))}
                     </select>
@@ -1032,8 +1388,15 @@ function SearchCard({
         <div className="row search-card-actions">
           <button
             className="primary"
+            disabled={
+              selectedFinishes.length ===
+              0
+            }
             onClick={() =>
-              onAdd(selectedCard)
+              onAdd(
+                selectedCard,
+                selectedFinish
+              )
             }
           >
             + Sammlung
@@ -1139,9 +1502,25 @@ function Collection({
               : sort === "count"
                 ? b.count -
                   a.count
-                : a.name.localeCompare(
-                    b.name
-                  )
+                : sort === "value"
+                  ? (
+                      (
+                        highestOwnedUnitValue(
+                          b
+                        ) ?? -1
+                      ) -
+                      (
+                        highestOwnedUnitValue(
+                          a
+                        ) ?? -1
+                      )
+                    ) ||
+                    a.name.localeCompare(
+                      b.name
+                    )
+                  : a.name.localeCompare(
+                      b.name
+                    )
           ),
       [
         cards,
@@ -1157,230 +1536,365 @@ function Collection({
       0
     );
 
-  const collectionStats=useMemo(()=>{
-  const physicalTotal=
-    cards.reduce(
-      (sum,card)=>sum+card.count,
-      0
-    );
+  const collectionStats = useMemo(() => {
+    const physicalTotal =
+      cards.reduce(
+        (sum, card) =>
+          sum + card.count,
+        0
+      );
 
-  const uniqueTotal=
-    cards.length;
+    const uniqueTotal =
+      cards.length;
 
-  const nonlandCards=
-    cards.filter(
-      card=>
-        !/(?:^|\s)Land(?:\s|$|—)/i.test(
-          card.typeLine??""
-        )
-    );
+    const nonlandCards =
+      cards.filter(
+        card =>
+          !/(?:^|\s)Land(?:\s|$|—)/i.test(
+            card.typeLine ?? ""
+          )
+      );
 
-  const nonlandPhysicalTotal=
-    nonlandCards.reduce(
-      (sum,card)=>sum+card.count,
-      0
-    );
+    const nonlandPhysicalTotal =
+      nonlandCards.reduce(
+        (sum, card) =>
+          sum + card.count,
+        0
+      );
 
-  const averageCopies=
-    uniqueTotal>0
-      ?physicalTotal/uniqueTotal
-      :0;
+    const averageCopies =
+      uniqueTotal > 0
+        ? physicalTotal /
+          uniqueTotal
+        : 0;
 
-  const weightedManaValue=
-    nonlandCards.reduce(
-      (sum,card)=>
-        sum+
-        (
-          Number.isFinite(card.manaValue)
-            ?card.manaValue
-            :0
-        )*card.count,
-      0
-    );
+    const weightedManaValue =
+      nonlandCards.reduce(
+        (sum, card) =>
+          sum +
+          (
+            Number.isFinite(
+              card.manaValue
+            )
+              ? card.manaValue
+              : 0
+          ) *
+            card.count,
+        0
+      );
 
-  const averageManaValue=
-    nonlandPhysicalTotal>0
-      ?weightedManaValue/nonlandPhysicalTotal
-      :0;
+    const averageManaValue =
+      nonlandPhysicalTotal > 0
+        ? weightedManaValue /
+          nonlandPhysicalTotal
+        : 0;
 
-  const colorCounts:Record<string,number>={
-    "Weiß":0,
-    "Blau":0,
-    "Schwarz":0,
-    "Rot":0,
-    "Grün":0,
-    "Mehrfarbig":0,
-    "Farblos":0
-  };
+    const colorCounts:
+      Record<string, number> = {
+        Weiß: 0,
+        Blau: 0,
+        Schwarz: 0,
+        Rot: 0,
+        Grün: 0,
+        Mehrfarbig: 0,
+        Farblos: 0
+      };
 
-  for(const card of cards){
-    const colors=card.colors??[];
-    let key="Farblos";
+    for (
+      const card
+      of cards
+    ) {
+      const colors =
+        card.colors ?? [];
 
-    if(colors.length>1){
-      key="Mehrfarbig";
-    }else if(colors.length===1){
-      key=
-        COLOR_NAMES[colors[0]]??
+      let key =
         "Farblos";
-    }
 
-    colorCounts[key]=
-      (colorCounts[key]??0)+
-      card.count;
-  }
-
-  const manaCounts:Record<string,number>={
-    "MV 0":0,
-    "MV 1":0,
-    "MV 2":0,
-    "MV 3":0,
-    "MV 4":0,
-    "MV 5":0,
-    "MV 6":0,
-    "MV 7+":0
-  };
-
-  for(const card of nonlandCards){
-    const mv=Math.max(
-      0,
-      Math.floor(
-        Number.isFinite(card.manaValue)
-          ?card.manaValue
-          :0
-      )
-    );
-
-    const key=
-      mv>=7
-        ?"MV 7+"
-        :`MV ${mv}`;
-
-    manaCounts[key]=
-      (manaCounts[key]??0)+
-      card.count;
-  }
-
-  const typeCounts:Record<string,number>=
-    Object.fromEntries(
-      TYPE_ORDER.map(
-        type=>[type,0]
-      )
-    );
-
-  for(const card of cards){
-    const key=
-      primaryTypeGroup(
-        card.typeLine
-      );
-
-    typeCounts[key]=
-      (typeCounts[key]??0)+
-      card.count;
-  }
-
-  const setMap=
-    new Map<
-      string,
-      {
-        name:string;
-        count:number;
+      if (
+        colors.length > 1
+      ) {
+        key =
+          "Mehrfarbig";
+      } else if (
+        colors.length === 1
+      ) {
+        key =
+          COLOR_NAMES[
+            colors[0]
+          ] ??
+          "Farblos";
       }
-    >();
 
-  for(const card of cards){
-    const key=
-      card.set.toLowerCase();
-
-    const existing=
-      setMap.get(key);
-
-    if(existing){
-      existing.count+=card.count;
-    }else{
-      setMap.set(
-        key,
-        {
-          name:
-            card.setName??
-            card.set.toUpperCase(),
-          count:card.count
-        }
-      );
+      colorCounts[key] =
+        (
+          colorCounts[key] ??
+          0
+        ) +
+        card.count;
     }
-  }
 
-  const sets=
-    Array.from(
-      setMap.values()
-    )
-      .sort(
-        (a,b)=>
-          b.count-a.count ||
+    const manaCounts:
+      Record<string, number> = {
+        "MV 0": 0,
+        "MV 1": 0,
+        "MV 2": 0,
+        "MV 3": 0,
+        "MV 4": 0,
+        "MV 5": 0,
+        "MV 6": 0,
+        "MV 7+": 0
+      };
+
+    for (
+      const card
+      of nonlandCards
+    ) {
+      const mv =
+        Math.max(
+          0,
+          Math.floor(
+            Number.isFinite(
+              card.manaValue
+            )
+              ? card.manaValue
+              : 0
+          )
+        );
+
+      const key =
+        mv >= 7
+          ? "MV 7+"
+          : `MV ${mv}`;
+
+      manaCounts[key] =
+        (
+          manaCounts[key] ??
+          0
+        ) +
+        card.count;
+    }
+
+    const typeCounts:
+      Record<string, number> =
+        Object.fromEntries(
+          TYPE_ORDER.map(
+            type => [
+              type,
+              0
+            ]
+          )
+        );
+
+    for (
+      const card
+      of cards
+    ) {
+      const key =
+        primaryTypeGroup(
+          card.typeLine
+        );
+
+      typeCounts[key] =
+        (
+          typeCounts[key] ??
+          0
+        ) +
+        card.count;
+    }
+
+    const setMap =
+      new Map<
+        string,
+        {
+          name: string;
+          count: number;
+        }
+      >();
+
+    for (
+      const card
+      of cards
+    ) {
+      const key =
+        card.set.toLowerCase();
+
+      const existing =
+        setMap.get(key);
+
+      if (existing) {
+        existing.count +=
+          card.count;
+      } else {
+        setMap.set(
+          key,
+          {
+            name:
+              card.setName ??
+              card.set.toUpperCase(),
+            count:
+              card.count
+          }
+        );
+      }
+    }
+
+    const sets =
+      Array.from(
+        setMap.values()
+      ).sort(
+        (a, b) =>
+          b.count -
+            a.count ||
           a.name.localeCompare(
             b.name,
             "de"
           )
       );
 
-  const mostFrequent=
-    [...cards]
-      .filter(
-        card=>card.count>1
-      )
-      .sort(
-        (a,b)=>
-          b.count-a.count ||
-          a.name.localeCompare(
-            b.name,
-            "de"
+    const mostFrequent =
+      [...cards]
+        .filter(
+          card =>
+            card.count > 1
+        )
+        .sort(
+          (a, b) =>
+            b.count -
+              a.count ||
+            a.name.localeCompare(
+              b.name,
+              "de"
+            )
+        )
+        .slice(
+          0,
+          10
+        );
+
+    let collectionValue = 0;
+    let unpricedCopies = 0;
+
+    let mostValuableCard:
+      | {
+          name: string;
+          finish: CardFinish;
+          value: number;
+        }
+      | null = null;
+
+    for (
+      const card
+      of cards
+    ) {
+      const cardValue =
+        collectionValueForCard(
+          card
+        );
+
+      collectionValue +=
+        cardValue.value;
+
+      unpricedCopies +=
+        cardValue.unpricedCopies;
+
+      const counts =
+        finishCountsFor(card);
+
+      for (
+        const finish
+        of [
+          "nonfoil",
+          "foil"
+        ] as CardFinish[]
+      ) {
+        if (
+          counts[finish] <= 0
+        ) {
+          continue;
+        }
+
+        const value =
+          priceForRecord(
+            card,
+            finish
+          );
+
+        if (
+          value !== undefined &&
+          (
+            !mostValuableCard ||
+            value >
+              mostValuableCard.value
           )
-      )
-      .slice(0,10);
+        ) {
+          mostValuableCard = {
+            name: card.name,
+            finish,
+            value
+          };
+        }
+      }
+    }
 
-  const toRows=(
-    counts:Record<string,number>,
-    base:number
-  )=>
-    Object.entries(counts).map(
-      ([label,count])=>({
-        label,
-        count,
-        percentage:
-          base>0
-            ?(count/base)*100
-            :0
-      })
-    );
+    const toRows = (
+      counts:
+        Record<
+          string,
+          number
+        >,
+      base: number
+    ) =>
+      Object.entries(
+        counts
+      ).map(
+        ([
+          label,
+          count
+        ]) => ({
+          label,
+          count,
+          percentage:
+            base > 0
+              ? (
+                  count /
+                  base
+                ) *
+                100
+              : 0
+        })
+      );
 
-  return {
-    physicalTotal,
-    uniqueTotal,
-    averageCopies,
-    averageManaValue,
+    return {
+      physicalTotal,
+      uniqueTotal,
+      averageCopies,
+      averageManaValue,
+      collectionValue,
+      unpricedCopies,
+      mostValuableCard,
 
-    colors:
-      toRows(
-        colorCounts,
-        physicalTotal
-      ),
+      colors:
+        toRows(
+          colorCounts,
+          physicalTotal
+        ),
 
-    manaValues:
-      toRows(
-        manaCounts,
-        nonlandPhysicalTotal
-      ),
+      manaValues:
+        toRows(
+          manaCounts,
+          nonlandPhysicalTotal
+        ),
 
-    types:
-      toRows(
-        typeCounts,
-        physicalTotal
-      ),
+      types:
+        toRows(
+          typeCounts,
+          physicalTotal
+        ),
 
-    sets,
-    mostFrequent
-  };
-},[cards]);
+      sets,
+      mostFrequent
+    };
+  }, [cards]);
 
   const groups =
     useMemo(() => {
@@ -1658,8 +2172,50 @@ function Collection({
               );
 
             if (existing) {
+              const counts =
+                finishCountsFor(
+                  existing
+                );
+
+              const nextCounts = {
+                ...counts,
+                nonfoil:
+                  counts.nonfoil +
+                  row.count
+              };
+
               existing.count +=
                 row.count;
+
+              existing.finishCounts =
+                nextCounts;
+
+              existing.availableFinishes =
+                normalized.availableFinishes;
+
+              if (
+                normalized.priceEur !==
+                undefined
+              ) {
+                existing.priceEur =
+                  normalized.priceEur;
+              }
+
+              if (
+                normalized.priceEurFoil !==
+                undefined
+              ) {
+                existing.priceEurFoil =
+                  normalized.priceEurFoil;
+              }
+
+              existing.priceUpdatedAt =
+                normalized.priceUpdatedAt;
+
+              existing.foil =
+                legacyFoilFlag(
+                  nextCounts
+                );
 
               existing.updatedAt =
                 Date.now();
@@ -1888,6 +2444,59 @@ function Collection({
               Ø Mana Value ohne Länder
             </span>
           </div>
+
+          <div className="collection-stat-card">
+            <strong>
+              {collectionStats.unpricedCopies <
+              collectionStats.physicalTotal
+                ? formatEuro(
+                    collectionStats.collectionValue
+                  )
+                : "—"}
+            </strong>
+
+            <span className="muted">
+              Sammlungswert
+            </span>
+
+            {collectionStats.unpricedCopies > 0 && (
+              <small className="muted">
+                {collectionStats.unpricedCopies} Exemplar(e) ohne EUR-Preis
+              </small>
+            )}
+          </div>
+
+          <div className="collection-stat-card">
+            <strong>
+              {collectionStats.mostValuableCard
+                ? formatEuro(
+                    collectionStats
+                      .mostValuableCard
+                      .value
+                  )
+                : "—"}
+            </strong>
+
+            <span className="muted">
+              Teuerste Karte
+            </span>
+
+            {collectionStats.mostValuableCard && (
+              <small className="muted">
+                {
+                  collectionStats
+                    .mostValuableCard
+                    .name
+                }
+                {" · "}
+                {finishLabel(
+                  collectionStats
+                    .mostValuableCard
+                    .finish
+                )}
+              </small>
+            )}
+          </div>
         </div>
 
         <div className="collection-stat-grid">
@@ -2065,7 +2674,7 @@ function Collection({
           </h3>
 
           <p className="muted">
-            Du kannst eine Textliste oder eine CSV-Datei importieren. CSV-Dateien aus Arcane Decksmith enthalten Set und Collector Number und können Druckausgaben dadurch genauer zuordnen.
+            Du kannst eine Textliste oder eine CSV-Datei importieren. CSV-Dateien aus Arcane Decksmith enthalten Set und Collector Number und können Druckausgaben dadurch genauer zuordnen. Importierte Exemplare ohne Finish-Angabe werden als Non-Foil übernommen.
           </p>
 
           <label>
@@ -2245,6 +2854,10 @@ function Collection({
           <option value="count">
             Anzahl
           </option>
+
+          <option value="value">
+            Wert
+          </option>
         </select>
 
         <select
@@ -2388,6 +3001,63 @@ function CollectionCard({
     id: string
   ) => Promise<void>;
 }) {
+  const counts =
+    finishCountsFor(card);
+
+  const finishesToShow =
+    (
+      [
+        "nonfoil",
+        "foil"
+      ] as CardFinish[]
+    ).filter(
+      finish =>
+        counts[finish] > 0 ||
+        card.availableFinishes
+          ?.includes(finish)
+    );
+
+  const cardValue =
+    collectionValueForCard(
+      card
+    );
+
+  const changeFinishCount = (
+    finish: CardFinish,
+    delta: number
+  ) => {
+    const nextCounts = {
+      ...counts,
+      [finish]:
+        Math.max(
+          0,
+          counts[finish] +
+            delta
+        )
+    };
+
+    const nextTotal =
+      nextCounts.nonfoil +
+      nextCounts.foil;
+
+    if (nextTotal < 1) {
+      return;
+    }
+
+    void onChange({
+      ...card,
+      count: nextTotal,
+      finishCounts:
+        nextCounts,
+      foil:
+        legacyFoilFlag(
+          nextCounts
+        ),
+      updatedAt:
+        Date.now()
+    });
+  };
+
   return (
     <article className="collection-card">
       <div className="select">
@@ -2424,42 +3094,109 @@ function CollectionCard({
           {card.typeLine}
         </p>
 
+        <div className="variant-box">
+          <div className="variant-info-title">
+            Finish & Scryfall-Preis
+          </div>
+
+          {finishesToShow.map(
+            finish => (
+              <div
+                className="variant-info-row"
+                key={finish}
+              >
+                <span>
+                  {finishLabel(
+                    finish
+                  )}
+                  {" ×"}
+                  {counts[finish]}
+                </span>
+
+                <strong>
+                  {formatEuro(
+                    priceForRecord(
+                      card,
+                      finish
+                    )
+                  )}
+                </strong>
+
+                <span className="row">
+                  <button
+                    onClick={() =>
+                      changeFinishCount(
+                        finish,
+                        -1
+                      )
+                    }
+                    disabled={
+                      counts[finish] ===
+                        0 ||
+                      card.count <= 1
+                    }
+                    aria-label={`${finishLabel(finish)} verringern`}
+                  >
+                    −
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      changeFinishCount(
+                        finish,
+                        1
+                      )
+                    }
+                    disabled={
+                      !card.availableFinishes
+                        ?.includes(
+                          finish
+                        ) &&
+                      counts[finish] ===
+                        0
+                    }
+                    aria-label={`${finishLabel(finish)} erhöhen`}
+                  >
+                    +
+                  </button>
+                </span>
+              </div>
+            )
+          )}
+
+          <div className="variant-info-row">
+            <span>
+              Gesamt
+            </span>
+
+            <strong>
+              {card.count}×
+            </strong>
+          </div>
+
+          <div className="variant-info-row">
+            <span>
+              Gesamtwert
+            </span>
+
+            <strong>
+              {cardValue.unpricedCopies <
+              card.count
+                ? formatEuro(
+                    cardValue.value
+                  )
+                : "kein EUR-Preis"}
+            </strong>
+          </div>
+
+          {cardValue.unpricedCopies > 0 && (
+            <small className="muted">
+              {cardValue.unpricedCopies} Exemplar(e) ohne EUR-Preis
+            </small>
+          )}
+        </div>
+
         <div className="quantity">
-          <button
-            onClick={() =>
-              onChange({
-                ...card,
-                count:
-                  Math.max(
-                    1,
-                    card.count - 1
-                  ),
-                updatedAt:
-                  Date.now()
-              })
-            }
-          >
-            −
-          </button>
-
-          <strong>
-            {card.count}
-          </strong>
-
-          <button
-            onClick={() =>
-              onChange({
-                ...card,
-                count:
-                  card.count + 1,
-                updatedAt:
-                  Date.now()
-              })
-            }
-          >
-            +
-          </button>
-
           <button
             className="danger ghost"
             onClick={() =>

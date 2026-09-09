@@ -1,6 +1,12 @@
 export type Format = "commander" | "standard";
 export type GroupBy = "none" | "color" | "type" | "set" | "manaValue";
 export type ViewMode = "grid" | "list";
+export type CardFinish = "nonfoil" | "foil";
+
+export interface CardFinishCounts {
+  nonfoil: number;
+  foil: number;
+}
 
 export interface CardRecord {
   id: string;
@@ -11,6 +17,11 @@ export interface CardRecord {
   collectorNumber: string;
   lang: string;
   foil: boolean;
+  finishCounts?: CardFinishCounts;
+  availableFinishes?: CardFinish[];
+  priceEur?: number;
+  priceEurFoil?: number;
+  priceUpdatedAt?: number;
   variant?: string;
   count: number;
   addedAt: number;
