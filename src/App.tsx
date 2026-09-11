@@ -1338,31 +1338,6 @@ function Search({
   </section>
 );
 }
-      <SearchCollectionTools
-        cards={cards}
-        onImport={onImport}
-      />
-
-      {busy
-        ? (
-          <div className="loading">
-            Scryfall fragt Karten ab…
-          </div>
-        )
-        : (
-          <div className="card-grid">
-            {results.map(c => (
-              <SearchCard
-                key={c.id}
-                card={c}
-                onAdd={onAdd}
-              />
-            ))}
-          </div>
-        )}
-    </section>
-  );
-}
 
 function SearchCollectionTools({
   cards,
