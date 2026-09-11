@@ -6461,16 +6461,12 @@ function Decks({
             );
           const ownedCount =
             owned?.count ?? 0;
-          const missingCount =
-            Math.max(
-              0,
-              deckCard.count -
-                ownedCount
-            );
 
-          if (missingCount === 0) {
-            continue;
-          }
+          // Jede per Deck-Bulk eingegebene Hauptdeck-Karte
+          // wird zusätzlich zur Sammlung übernommen – auch wenn
+          // bereits Exemplare dieser Ausgabe vorhanden sind.
+          const addCount =
+            deckCard.count;
 
           const finishes =
             source.availableFinishes ?? [];
@@ -6491,7 +6487,7 @@ function Decks({
               ...counts,
               [finish]:
                 counts[finish] +
-                missingCount
+                addCount
             };
 
             collectionUpdates.push({
@@ -6499,7 +6495,7 @@ function Decks({
               ...owned,
               count:
                 ownedCount +
-                missingCount,
+                addCount,
               finishCounts:
                 nextCounts,
               availableFinishes:
@@ -6528,11 +6524,11 @@ function Decks({
               foil: 0
             };
             counts[finish] =
-              missingCount;
+              addCount;
 
             collectionUpdates.push({
               ...source,
-              count: missingCount,
+              count: addCount,
               finishCounts: counts,
               foil:
                 finish === "foil",
@@ -6541,12 +6537,12 @@ function Decks({
             });
           }
 
-          addedCopies += missingCount;
+          addedCopies += addCount;
         }
 
         if (addedCopies > 0) {
           warnings.push(
-            `${addedCopies} Karte${addedCopies === 1 ? "" : "n"} aus dem Bulk-Deck ${addedCopies === 1 ? "ist" : "sind"} noch nicht in ausreichender Anzahl in deiner Sammlung und ${addedCopies === 1 ? "wird" : "werden"} beim Speichern automatisch hinzugefügt.`
+            `${addedCopies} Karte${addedCopies === 1 ? "" : "n"} aus dem Bulk-Deck ${addedCopies === 1 ? "wird" : "werden"} zusätzlich zur Sammlung übernommen. Der Commander wird dabei nicht erneut hinzugefügt.`
           );
         }
 
