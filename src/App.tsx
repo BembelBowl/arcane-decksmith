@@ -1860,6 +1860,8 @@ function Search({
     useState<string[]>([]);
   const [busy, setBusy] =
     useState(false);
+    const [searchFocused, setSearchFocused] =
+  useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -1942,17 +1944,26 @@ function Search({
 
       <div className="searchbar">
         <input
-          value={q}
-          onChange={e =>
-            setQ(e.target.value)
-          }
-          onKeyDown={e =>
-            e.key === "Enter" &&
-            void go()
-          }
-          placeholder="z. B. Lightning Bolt"
-        />
-
+  value={q}
+  onChange={e =>
+    setQ(e.target.value)
+  }
+  onFocus={() =>
+    setSearchFocused(true)
+  }
+  onBlur={() => {
+    setTimeout(
+      () =>
+        setSearchFocused(false),
+      120
+    );
+  }}
+  onKeyDown={e =>
+    e.key === "Enter" &&
+    void go()
+  }
+  placeholder="z. B. Lightning Bolt"
+/>
         <button
           className="primary"
           onClick={go}
@@ -1962,7 +1973,8 @@ function Search({
       </div>
     </div>
 
-    {suggestions.length > 0 && (
+   {searchFocused &&
+  suggestions.length > 0 && (
       <div className="suggestions">
         {suggestions.map(s => (
           <button
@@ -9545,16 +9557,6 @@ function DeckEditor({
                             key={
                               card.id
                             }
-                        onPointerEnter={event => {
-                            if (
-                              event.pointerType ===
-                              "mouse"
-                            ) {
-                              setPreviewCardId(
-                                card.id
-                              );
-                            }
-                          }}
                           >
                             <button
                               type="button"
