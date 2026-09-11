@@ -1253,36 +1253,64 @@ function Search({
         }
       `}</style>
 
-      <div className="search-sticky-head">
-        <div className="pagehead">
-          <div>
-            <h2>Kartensuche</h2>
-            <p className="muted">
-              Scryfall-Suche, Import und Bulk-Hinzufügen.
-            </p>
-          </div>
-        </div>
+<div className="search-sticky-head">
+  <div className="pagehead">
+    <div>
+      <h2>Kartensuche</h2>
+      <p className="muted">
+        Scryfall-Suche, Import und Bulk-Hinzufügen.
+      </p>
+    </div>
+  </div>
 
-        <div className="searchbar">
-          <input
-            value={q}
-            onChange={e =>
-              setQ(e.target.value)
-            }
-            onKeyDown={e =>
-              e.key === "Enter" &&
-              void go()
-            }
-            placeholder="z. B. Lightning Bolt"
-          />
+  <div className="searchbar">
+    <input
+      value={q}
+      onChange={e =>
+        setQ(e.target.value)
+      }
+      onKeyDown={e =>
+        e.key === "Enter" &&
+        void go()
+      }
+      placeholder="z. B. Lightning Bolt"
+    />
 
-          <button
-            className="primary"
-            onClick={go}
-          >
-            Suchen
-          </button>
-        </div>
+    <button
+      className="primary"
+      onClick={go}
+    >
+      Suchen
+    </button>
+  </div>
+</div>
+
+{suggestions.length > 0 && (
+  <div className="suggestions">
+    {suggestions.map(s => (
+      <button
+        key={s}
+        onClick={async () => {
+          setQ(s);
+          setSuggestions([]);
+          setBusy(true);
+
+          try {
+            setResults(
+              await searchCards(s)
+            );
+          } catch (e: any) {
+            alert(e.message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {s}
+      </button>
+    ))}
+  </div>
+)}
 
         {suggestions.length > 0 && (
           <div className="suggestions">
