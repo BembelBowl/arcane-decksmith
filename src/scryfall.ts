@@ -250,10 +250,29 @@ export function imageFor(
   card: ScryfallCard | CardRecord
 ): string | undefined {
   if ("image_uris" in card) {
-    return (
+    const directImage =
       card.image_uris?.normal ??
       card.image_uris?.large ??
-      card.image_uris?.small
+      card.image_uris?.small;
+
+    if (directImage) {
+      return directImage;
+    }
+
+    const faceWithImage =
+      card.card_faces?.find(
+        face =>
+          Boolean(
+            face.image_uris?.normal ??
+            face.image_uris?.large ??
+            face.image_uris?.small
+          )
+      );
+
+    return (
+      faceWithImage?.image_uris?.normal ??
+      faceWithImage?.image_uris?.large ??
+      faceWithImage?.image_uris?.small
     );
   }
 
