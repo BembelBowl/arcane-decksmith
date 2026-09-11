@@ -175,75 +175,6 @@ function commanderCount(
     : 0;
 }
 
-function deckCompletenessText(
-  deck: DeckRecord
-): string {
-  const mainDeck =
-    countMainDeckCards(deck);
-
-  const commanders =
-    commanderCount(deck);
-
-  const total =
-    mainDeck +
-    commanders;
-
-  if (
-    deck.format ===
-    "standard"
-  ) {
-    const minimum = 60;
-    const missing =
-      Math.max(
-        0,
-        minimum - mainDeck
-      );
-
-    return [
-      `Vorgeschriebene Mindestgröße Hauptdeck: ${minimum}`,
-      `Aktuelle Hauptdeckgröße: ${mainDeck}`,
-      `Fehlende Karten bis zur Mindestgröße: ${missing}`,
-      "Wenn die Bewertung der endgültigen Länderzahl als NICHT MÖGLICH angegeben ist, darf die KI weder einen Ländermangel noch einen Länderüberschuss behaupten.",
-      "Bei einem unvollständigen Deck darf die KI keine Empfehlung geben, eine bestimmte Zahl oder Menge Länder hinzuzufügen; sie darf lediglich die aktuell vorhandene Länderzahl nennen.",
-      `Deckstatus: ${
-        missing > 0
-          ? "UNVOLLSTÄNDIG"
-          : "MINDESTGRÖSSE ERREICHT"
-      }`
-    ].join("\n");
-  }
-
-  const requiredTotal = 100;
-  const missing =
-    Math.max(
-      0,
-      requiredTotal - total
-    );
-
-  const excess =
-    Math.max(
-      0,
-      total - requiredTotal
-    );
-
-  return [
-    `Vorgeschriebene Gesamtgröße inklusive Commander: ${requiredTotal}`,
-    `Aktuelle Gesamtgröße inklusive Commander: ${total}`,
-    `Commander-Anzahl: ${commanders}`,
-    `Fehlende Karten bis 100: ${missing}`,
-    `Karten über 100: ${excess}`,
-    `Deckstatus: ${
-      commanders === 0
-        ? "UNVOLLSTÄNDIG – COMMANDER FEHLT"
-        : total < requiredTotal
-          ? "UNVOLLSTÄNDIG"
-          : total > requiredTotal
-            ? "UNGÜLTIGE DECKGRÖSSE"
-            : "VOLLSTÄNDIG"
-    }`
-  ].join("\n");
-}
-
 function isLand(
   typeLine:
     | string
@@ -601,14 +532,10 @@ export function generateDeckExplanation(
         )
       : "Nicht angegeben";
 
-return [
-  `Deck: ${deck.name}`,
-  `Format: ${deck.format}`,
-  "",
-  "Deckgrößenstatus:",
-  deckCompletenessText(deck),
-  "",
-  `Karten gesamt inklusive Commander: ${total}`,
+  return [
+    `Deck: ${deck.name}`,
+    `Format: ${deck.format}`,
+    `Karten gesamt inklusive Commander: ${total}`,
     `Hauptdeck: ${mainDeck}`,
     `Commander: ${commanders}`,
     `Länder: ${types.lands}`,
@@ -692,19 +619,10 @@ function technicalDeckData(
         )
       : "Nicht angegeben";
 
-return [
-  `Format: ${deck.format}`,
-`Farbinformation: ${
-  deck.format === "standard" &&
-  deck.colors.length === 0
-    ? "Nicht festgelegt. Bei Standard bedeutet eine leere Farbliste nicht, dass das Deck farblos ist."
-    : colorIdentityText(deck.colors)
-}`,
-  "",
-  "AUTORITATIVER DECKGRÖSSENSTATUS",
-  deckCompletenessText(deck),
-  "",
-  `Karten gesamt inklusive Commander: ${mainDeck + commanders}`,
+  return [
+    `Format: ${deck.format}`,
+    `Farbidentität des Decks: ${colorIdentityText(deck.colors)}`,
+    `Karten gesamt inklusive Commander: ${mainDeck + commanders}`,
     `Hauptdeck: ${mainDeck}`,
     `Commander-Anzahl: ${commanders}`,
     `Länder: ${types.lands}`,
@@ -1740,28 +1658,13 @@ function analysisRules(): string {
   return [
     "DATENREGELN FÜR DIE ANALYSE",
     "C-Kennungen = Commander.",
-    "D-Kennungen = tatsächliche Karten des aktuell übergebenen Hauptdecks. Das Deck kann ausdrücklich noch unvollständig sein.",
+    "D-Kennungen = tatsächliche Karten des fertigen Decks.",
     "P-Kennungen = ausschließlich verifizierte optionale Anschaffungskandidaten.",
-    "Die vollständige D-Kennungsliste ist autoritativ für die aktuelle Deckzugehörigkeit und wird niemals gekürzt.",
+    "Die vollständige D-Kennungsliste ist autoritativ für die Deckzugehörigkeit und wird niemals gekürzt.",
     "Konkrete Karteneffekte dürfen ausschließlich aus ausdrücklich geliefertem Oracle-Text abgeleitet werden.",
-    "P-Kennungen gehören niemals zum aktuellen Deck.",
+    "P-Kennungen gehören niemals zum fertigen Deck.",
     "Die KI darf P-Kennungen lediglich auswählen. Die sichtbare Beschreibung der optionalen Anschaffungen wird deterministisch von Arcane Decksmith erzeugt.",
-    "Die deterministische Kurvenbewertung in den technischen Deckdaten ist autoritativ und darf nicht widersprochen werden.",
-    "Der AUTORITATIVE DECKGRÖSSENSTATUS ist bindend und darf niemals ignoriert oder umgedeutet werden.",
-    "Standard benötigt mindestens 60 Karten im Hauptdeck.",
-    "Commander benötigt insgesamt exakt 100 Karten inklusive Commander beziehungsweise Commander-Paar.",
-    "Wenn der Deckstatus UNVOLLSTÄNDIG ist, muss dies gleich zu Beginn der Analyse deutlich genannt werden.",
-    "Bei einem unvollständigen Deck dürfen Länderzahl, Mana-Kurve, Rollenverteilung, Synergiedichte oder Gesamtaufbau niemals als abschließend ausreichend, optimal oder fertig bewertet werden.",
-    "Bei einem unvollständigen Deck müssen Bewertungen ausdrücklich als vorläufige Zwischenanalyse formuliert werden.",
-    "Die KI darf niemals eine eigene Deckgröße wie etwa ein 36-Karten-Deck als gültige Bezugsgröße erfinden.",
-    "Bei einem unvollständigen Deck dürfen aktuelle absolute Kartenmengen nicht so behandelt werden, als wären sie bereits die endgültige 60- beziehungsweise 100-Karten-Verteilung.",
-    "Insbesondere darf aus einer aktuellen Länderzahl bei einem unvollständigen Deck nicht automatisch ein Länderdefizit oder Länderüberschuss des fertigen Decks abgeleitet werden.",
-    "Bei unvollständigen Decks dürfen Begriffe wie stark, ausreichend, robust, optimal, konkurrenzfähig oder ausgewogen nur ausdrücklich als vorläufige Einschätzung des vorhandenen Teildecks verwendet werden.",
-    "Wenn bei einem Standard-Deck keine Farbinformation hinterlegt ist, darf daraus niemals geschlossen werden, dass das Deck farblos ist.",
-    "Bei einem unvollständigen Commander-Deck darf die aktuelle Länderquote weder als angemessen noch als unangemessen bewertet werden.",
-  "Bei einem unvollständigen Deck dürfen konkrete Rollen- oder Funktionsdefizite wie Boardwipe, Counter, Lebensgewinn, Ramp, Finisher oder Interaktion nicht als feststehende Schwächen formuliert werden, solange die fehlenden Karten noch unbekannt sind.",
-  "Solche Bereiche dürfen nur als mögliche Prüfpunkte für die Vervollständigung genannt werden.",
-  "Das Fazit eines unvollständigen Decks muss klar zwischen bereits erkennbaren Themen des vorhandenen Teildecks und noch offenen Entscheidungen für die fehlenden Karten unterscheiden."
+    "Die deterministische Kurvenbewertung in den technischen Deckdaten ist autoritativ und darf nicht widersprochen werden."
   ].join("\n");
 }
 
@@ -1898,15 +1801,18 @@ async function createAiRequestContext(
     ...purchaseEntries
   ];
 
-  const purchaseContext =
-    purchaseCandidateContext(
-      purchaseCandidates,
-      purchaseEntries,
-      allEntries,
-      PURCHASE_CONTEXT_LIMIT
+  const overview =
+    fullDeckOverview(
+      deck,
+      deckEntries
     );
 
-  const fixedSections = [
+  // Die vollständige Deckübersicht und die technischen Daten haben Vorrang.
+  // Zusätzliche Scryfall-Kaufkandidaten und Oracle-Details werden nur mit
+  // dem tatsächlich noch verfügbaren Platz übertragen. Dadurch scheitern
+  // insbesondere vollständige 100-Karten-Commander-Decks nicht mehr nur
+  // wegen des Größenlimits.
+  const coreSections = [
     analysisRules(),
     "",
     authoritativeTokenList(
@@ -1926,55 +1832,100 @@ async function createAiRequestContext(
       collection,
       commanderEntries,
       allEntries
-    ),
+    )
+  ].join("\n");
+
+  const minimumDetailReserve =
+    320;
+
+  const purchaseBudget =
+    Math.max(
+      0,
+      Math.min(
+        PURCHASE_CONTEXT_LIMIT,
+        MAX_ANALYSIS_LENGTH -
+          coreSections.length -
+          overview.length -
+          minimumDetailReserve -
+          8
+      )
+    );
+
+  const purchaseContext =
+    purchaseBudget >=
+    450
+      ? purchaseCandidateContext(
+          purchaseCandidates,
+          purchaseEntries,
+          allEntries,
+          purchaseBudget
+        )
+      : [
+          "SCRYFALL-VERIFIZIERTE OPTIONALE ANSCHAFFUNGSKANDIDATEN",
+          "Für diese Analyse wurden die optionalen Kandidatendetails aus Platzgründen gekürzt."
+        ].join("\n");
+
+  const fixedSections = [
+    coreSections,
     "",
     purchaseContext,
     ""
   ].join("\n");
 
-  const overview =
-    fullDeckOverview(
-      deck,
-      deckEntries
-    );
-
   const detailBudget =
-    MAX_ANALYSIS_LENGTH -
-    fixedSections.length -
-    overview.length -
-    2;
-
-  if (
-    detailBudget <
-    500
-  ) {
-    throw new Error(
-      "Die KI-Deckdaten sind zu groß, um sie zuverlässig und vollständig zu analysieren."
+    Math.max(
+      0,
+      MAX_ANALYSIS_LENGTH -
+        fixedSections.length -
+        overview.length -
+        4
     );
-  }
 
   const details =
-    prioritizedDeckDetails(
-      deck,
-      collection,
-      deckEntries,
-      allEntries,
-      detailBudget
-    );
+    detailBudget >=
+    220
+      ? prioritizedDeckDetails(
+          deck,
+          collection,
+          deckEntries,
+          allEntries,
+          detailBudget
+        )
+      : [
+          "PRIORISIERTE KARTENDETAILS",
+          "Zusätzliche Oracle-Details wurden aus Platzgründen weggelassen. Die vollständige Deckübersicht bleibt autoritativ."
+        ].join("\n");
 
-  const analysis = [
+  let analysis = [
     fixedSections,
     overview,
     "",
     details
   ].join("\n");
 
+  // Letzte Sicherheitsstufe: Sollte die variable Detailsektion durch
+  // besonders lange Daten doch über das Limit wachsen, wird ausschließlich
+  // diese optionale Sektion entfernt. Die vollständige Deckliste bleibt
+  // erhalten und die KI-Anfrage kann weiterhin ausgeführt werden.
+  if (
+    analysis.length >
+    MAX_ANALYSIS_LENGTH
+  ) {
+    analysis = [
+      fixedSections,
+      overview,
+      "",
+      "PRIORISIERTE KARTENDETAILS",
+      "Zusätzliche Kartendetails wurden wegen des Größenlimits weggelassen."
+    ].join("\n");
+  }
+
   if (
     analysis.length >
     MAX_ANALYSIS_LENGTH
   ) {
     throw new Error(
-      "Die KI-Deckdaten überschreiten das sichere Größenlimit."
+      "Die technischen Kerndaten des Decks überschreiten das sichere KI-Größenlimit."
     );
   }
 
