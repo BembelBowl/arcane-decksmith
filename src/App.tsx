@@ -293,6 +293,209 @@ function legacyFoilFlag(
   );
 }
 
+
+type CommanderBracketEstimate = {
+  bracket: 2 | 3 | 4 | 5;
+  label: string;
+  gameChangers: number;
+  extraTurnCards: number;
+  massLandDenialCards: number;
+  tutorCards: number;
+  reasons: string[];
+};
+
+function looksLikeExtraTurnCard(
+  card: CardRecord
+): boolean {
+  return /take an extra turn/i.test(
+    card.oracleText ?? ""
+  );
+}
+
+function looksLikeMassLandDenial(
+  card: CardRecord
+): boolean {
+  const text =
+    card.oracleText ?? "";
+
+  return (
+    /destroy all lands/i.test(text) ||
+    /destroy all nonbasic lands/i.test(text) ||
+    /return all lands to their owners'? hands/i.test(text) ||
+    /lands don'?t untap/i.test(text) ||
+    /nonbasic lands are mountains/i.test(text) ||
+    /each player sacrifices .*lands?/i.test(text)
+  );
+}
+
+function looksLikeTutor(
+  card: CardRecord
+): boolean {
+  const text =
+    card.oracleText ?? "";
+
+  return (
+    /search your library for (?:a|an) (?!basic land|land)/i.test(text) ||
+    /search your library for up to (?:one|two|three|four|\d+) (?!basic land|land)/i.test(text)
+  );
+}
+
+function commanderBracketEstimate(
+  deck: DeckRecord,
+  pool: CardRecord[]
+): CommanderBracketEstimate | null {
+  if (deck.format !== "commander") {
+    return null;
+  }
+
+  const entries: Array<{
+    card: CardRecord;
+    count: number;
+  }> = [];
+
+  for (const deckCard of deck.cards) {
+    const source = pool.find(
+      card => card.id === deckCard.id
+    );
+
+    if (source) {
+      entries.push({
+        card: source,
+        count: deckCard.count
+      });
+    }
+  }
+
+  for (const commanderId of deck.commanderIds) {
+    const commander = pool.find(
+      card => card.id === commanderId
+    );
+
+    if (commander) {
+      entries.push({
+        card: commander,
+        count: 1
+      });
+    }
+  }
+
+  const countMatching = (
+    predicate: (card: CardRecord) => boolean
+  ) =>
+    entries.reduce(
+      (sum, entry) =>
+        sum +
+        (predicate(entry.card)
+          ? entry.count
+          : 0),
+      0
+    );
+
+  const gameChangers =
+    countMatching(
+      card => card.gameChanger === true
+    );
+
+  const extraTurnCards =
+    countMatching(
+      looksLikeExtraTurnCard
+    );
+
+  const massLandDenialCards =
+    countMatching(
+      looksLikeMassLandDenial
+    );
+
+  const tutorCards =
+    countMatching(
+      looksLikeTutor
+    );
+
+  if (deck.cedh) {
+    return {
+      bracket: 5,
+      label: "Bracket 5 – cEDH",
+      gameChangers,
+      extraTurnCards,
+      massLandDenialCards,
+      tutorCards,
+      reasons: [
+        "Im Deck-Editor ausdrücklich als cEDH-Deck markiert."
+      ]
+    };
+  }
+
+  const reasons: string[] = [];
+
+  let bracket: 2 | 3 | 4 = 2;
+
+  if (
+    gameChangers > 3 ||
+    massLandDenialCards > 0 ||
+    extraTurnCards >= 3 ||
+    tutorCards >= 6
+  ) {
+    bracket = 4;
+  } else if (
+    gameChangers > 0 ||
+    extraTurnCards > 0 ||
+    tutorCards >= 3
+  ) {
+    bracket = 3;
+  }
+
+  if (gameChangers > 0) {
+    reasons.push(
+      `${gameChangers} Game Changer${gameChangers === 1 ? "" : "s"} erkannt.`
+    );
+  } else {
+    reasons.push(
+      "Keine Game Changer in den geladenen Scryfall-Daten erkannt."
+    );
+  }
+
+  if (extraTurnCards > 0) {
+    reasons.push(
+      `${extraTurnCards} Extra-Turn-Karte${extraTurnCards === 1 ? "" : "n"} erkannt.`
+    );
+  }
+
+  if (massLandDenialCards > 0) {
+    reasons.push(
+      `${massLandDenialCards} Karte${massLandDenialCards === 1 ? "" : "n"} mit möglicher massenhafter Landverwehrung erkannt.`
+    );
+  }
+
+  if (tutorCards >= 3) {
+    reasons.push(
+      `${tutorCards} Nichtland-Tutoren erkannt.`
+    );
+  }
+
+  if (bracket === 2) {
+    reasons.push(
+      "Keine automatisch erkannten Merkmale erzwingen Bracket 3 oder 4."
+    );
+  }
+
+  const label =
+    bracket === 4
+      ? "Bracket 4 – Optimized"
+      : bracket === 3
+        ? "Bracket 3 – Upgraded"
+        : "Bracket 2 – Core";
+
+  return {
+    bracket,
+    label,
+    gameChangers,
+    extraTurnCards,
+    massLandDenialCards,
+    tutorCards,
+    reasons
+  };
+}
+
 function parseCollectorNumbers(
   input: string
 ): string[] {
@@ -655,6 +858,10 @@ function Main({
           fresh.priceUpdatedAt ??
           Date.now(),
 
+        gameChanger:
+          fresh.gameChanger ??
+          card.gameChanger,
+
         foil:
           legacyFoilFlag(
             counts
@@ -814,20 +1021,21 @@ for (
                 cards={collection}
                 onChange={persistCard}
                 onDelete={delCard}
-                onImport={async next => {
-                  for (const c of next) {
-                    await saveCard(uid, c);
-                  }
-
-                  setCollection(
-                    await loadCollection(uid)
-                  );
-                }}
               />
             )
             : page === "search"
               ? (
 <Search
+  cards={collection}
+  onImport={async next => {
+    for (const c of next) {
+      await saveCard(uid, c);
+    }
+
+    setCollection(
+      await loadCollection(uid)
+    );
+  }}
   onAdd={async (
     c,
     finish
@@ -890,6 +1098,9 @@ for (
           : {}),
         priceUpdatedAt:
           fresh.priceUpdatedAt,
+        gameChanger:
+          fresh.gameChanger ??
+          existing.gameChanger,
         foil:
           legacyFoilFlag(
             nextCounts
@@ -954,20 +1165,24 @@ for (
 }
 
 function Search({
-  onAdd
+  cards,
+  onAdd,
+  onImport
 }: {
+  cards: CardRecord[];
   onAdd: (
     c: ScryfallCard,
     finish: CardFinish
+  ) => Promise<void>;
+  onImport: (
+    c: CardRecord[]
   ) => Promise<void>;
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] =
     useState<ScryfallCard[]>([]);
-
   const [suggestions, setSuggestions] =
     useState<string[]>([]);
-
   const [busy, setBusy] =
     useState(false);
 
@@ -1004,64 +1219,104 @@ function Search({
 
   return (
     <section>
-      <div className="pagehead">
-        <div>
-          <h2>Kartensuche</h2>
+      <style>{`
+        .search-sticky-head{
+          position:sticky;
+          top:72px;
+          z-index:20;
+          margin:0 -4px 16px;
+          padding:8px 4px 12px;
+          background:linear-gradient(
+            180deg,
+            rgba(5,9,18,.98) 0%,
+            rgba(5,9,18,.94) 82%,
+            rgba(5,9,18,0) 100%
+          );
+          backdrop-filter:blur(14px);
+        }
 
-          <p className="muted">
-            Scryfall-Suche mit lokalem
-            Sitzungscache.
-          </p>
+        .search-sticky-head .pagehead{
+          margin-bottom:10px;
+        }
+
+        .search-tool-actions{
+          display:flex;
+          flex-wrap:wrap;
+          gap:8px;
+          margin-top:8px;
+        }
+
+        @media (max-width:850px){
+          .search-sticky-head{
+            top:112px;
+          }
+        }
+      `}</style>
+
+      <div className="search-sticky-head">
+        <div className="pagehead">
+          <div>
+            <h2>Kartensuche</h2>
+            <p className="muted">
+              Scryfall-Suche, Import und Bulk-Hinzufügen.
+            </p>
+          </div>
         </div>
+
+        <div className="searchbar">
+          <input
+            value={q}
+            onChange={e =>
+              setQ(e.target.value)
+            }
+            onKeyDown={e =>
+              e.key === "Enter" &&
+              void go()
+            }
+            placeholder="z. B. Lightning Bolt"
+          />
+
+          <button
+            className="primary"
+            onClick={go}
+          >
+            Suchen
+          </button>
+        </div>
+
+        {suggestions.length > 0 && (
+          <div className="suggestions">
+            {suggestions.map(s => (
+              <button
+                key={s}
+                onClick={async () => {
+                  setQ(s);
+                  setSuggestions([]);
+                  setBusy(true);
+
+                  try {
+                    setResults(
+                      await searchCards(s)
+                    );
+                  } catch (e: any) {
+                    alert(e.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
       </div>
 
-      <div className="searchbar">
-        <input
-          value={q}
-          onChange={e =>
-            setQ(e.target.value)
-          }
-          onKeyDown={e =>
-            e.key === "Enter" &&
-            void go()
-          }
-          placeholder="z. B. Lightning Bolt"
-        />
-
-        <button
-          className="primary"
-          onClick={go}
-        >
-          Suchen
-        </button>
-      </div>
-
-      {suggestions.length > 0 && (
-        <div className="suggestions">
-          {suggestions.map(s => (
-            <button
-              key={s}
-              onClick={async () => {
-                setQ(s);
-                setSuggestions([]);
-                setBusy(true);
-
-                try {
-                  setResults(
-                    await searchCards(s)
-                  );
-                } catch (e: any) {
-                  alert(e.message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
+      <SearchCollectionTools
+        cards={cards}
+        onImport={onImport}
+      />
 
       {busy
         ? (
@@ -1081,6 +1336,886 @@ function Search({
           </div>
         )}
     </section>
+  );
+}
+
+function SearchCollectionTools({
+  cards,
+  onImport
+}: {
+  cards: CardRecord[];
+  onImport: (
+    c: CardRecord[]
+  ) => Promise<void>;
+}) {
+  const [showImport, setShowImport] =
+    useState(false);
+  const [importText, setImportText] =
+    useState("");
+  const [importBusy, setImportBusy] =
+    useState(false);
+  const [importPreview, setImportPreview] =
+    useState<{
+      cards: CardRecord[];
+      requestedRows: number;
+      resolvedRows: number;
+      addedCopies: number;
+      source: "csv" | "text";
+      issues: string[];
+    } | null>(null);
+
+  const [showBulkAdd, setShowBulkAdd] =
+    useState(false);
+  const [bulkSetCode, setBulkSetCode] =
+    useState("");
+  const [bulkNumbers, setBulkNumbers] =
+    useState("");
+  const [bulkSets, setBulkSets] =
+    useState<ScryfallSet[]>([]);
+  const [bulkSetsBusy, setBulkSetsBusy] =
+    useState(false);
+  const [bulkBusy, setBulkBusy] =
+    useState(false);
+  const [bulkPreview, setBulkPreview] =
+    useState<{
+      cards: CardRecord[];
+      rows: Array<{
+        collectorNumber: string;
+        count: number;
+        name?: string;
+        finish?: CardFinish;
+        found: boolean;
+      }>;
+      requestedCopies: number;
+      resolvedCopies: number;
+      issues: string[];
+    } | null>(null);
+
+  const resetImport = () => {
+    setImportText("");
+    setImportPreview(null);
+  };
+
+  const closeImport = () => {
+    resetImport();
+    setShowImport(false);
+  };
+
+  const resetBulkAdd = () => {
+    setBulkNumbers("");
+    setBulkPreview(null);
+  };
+
+  const closeBulkAdd = () => {
+    resetBulkAdd();
+    setShowBulkAdd(false);
+  };
+
+  const ensureBulkSets = async () => {
+    if (
+      bulkSets.length > 0 ||
+      bulkSetsBusy
+    ) {
+      return;
+    }
+
+    setBulkSetsBusy(true);
+
+    try {
+      setBulkSets(
+        await getSets()
+      );
+    } catch (error) {
+      console.error(
+        "Scryfall-Sets konnten nicht geladen werden:",
+        error
+      );
+      alert(
+        "Die Set-Liste konnte nicht von Scryfall geladen werden."
+      );
+    } finally {
+      setBulkSetsBusy(false);
+    }
+  };
+
+  const toggleBulkAdd = () => {
+    const next = !showBulkAdd;
+
+    if (next) {
+      closeImport();
+      void ensureBulkSets();
+    }
+
+    setShowBulkAdd(next);
+  };
+
+  const previewBulkAdd = async () => {
+    const numbers =
+      parseCollectorNumbers(
+        bulkNumbers
+      );
+
+    if (
+      !bulkSetCode ||
+      numbers.length === 0
+    ) {
+      return;
+    }
+
+    setBulkBusy(true);
+    setBulkPreview(null);
+
+    try {
+      const counts =
+        collectorNumberCounts(
+          numbers
+        );
+
+      const lookup =
+        await getCardsBySetAndCollectorNumbers(
+          bulkSetCode,
+          Array.from(
+            counts.keys()
+          )
+        );
+
+      const byCollectorNumber =
+        new Map(
+          lookup.cards.map(
+            card => [
+              card.collector_number
+                .toLowerCase(),
+              card
+            ] as const
+          )
+        );
+
+      const next =
+        cards.map(
+          card => ({
+            ...card,
+            ...(card.finishCounts
+              ? {
+                  finishCounts: {
+                    ...card.finishCounts
+                  }
+                }
+              : {})
+          })
+        );
+
+      const rows:
+        Array<{
+          collectorNumber: string;
+          count: number;
+          name?: string;
+          finish?: CardFinish;
+          found: boolean;
+        }> = [];
+      const issues: string[] = [];
+      let resolvedCopies = 0;
+
+      for (
+        const [
+          collectorNumber,
+          count
+        ] of counts
+      ) {
+        const scryfallCard =
+          byCollectorNumber.get(
+            collectorNumber
+          );
+
+        if (!scryfallCard) {
+          rows.push({
+            collectorNumber,
+            count,
+            found: false
+          });
+          issues.push(
+            `#${collectorNumber}: in diesem Set nicht gefunden.`
+          );
+          continue;
+        }
+
+        const finishes =
+          availableFinishes(
+            scryfallCard
+          );
+
+        const finish:
+          CardFinish | undefined =
+            finishes.includes(
+              "nonfoil"
+            )
+              ? "nonfoil"
+              : finishes.includes(
+                  "foil"
+                )
+                ? "foil"
+                : undefined;
+
+        if (!finish) {
+          rows.push({
+            collectorNumber,
+            count,
+            name: scryfallCard.name,
+            found: false
+          });
+          issues.push(
+            `#${collectorNumber} ${scryfallCard.name}: Scryfall meldet kein unterstütztes Finish.`
+          );
+          continue;
+        }
+
+        const normalized =
+          normalizeCard(
+            scryfallCard,
+            count,
+            finish === "foil"
+          );
+
+        const existing =
+          next.find(
+            card =>
+              card.id ===
+                normalized.id ||
+              (
+                card.oracleId ===
+                  normalized.oracleId &&
+                card.set.toLowerCase() ===
+                  normalized.set.toLowerCase() &&
+                card.collectorNumber.toLowerCase() ===
+                  normalized.collectorNumber.toLowerCase()
+              )
+          );
+
+        if (existing) {
+          const currentCounts =
+            finishCountsFor(
+              existing
+            );
+          const nextCounts = {
+            ...currentCounts,
+            [finish]:
+              currentCounts[finish] +
+              count
+          };
+
+          existing.count += count;
+          existing.finishCounts =
+            nextCounts;
+          existing.availableFinishes =
+            normalized.availableFinishes;
+          existing.priceEur =
+            normalized.priceEur ??
+            existing.priceEur;
+          existing.priceEurFoil =
+            normalized.priceEurFoil ??
+            existing.priceEurFoil;
+          existing.priceUpdatedAt =
+            normalized.priceUpdatedAt;
+          existing.gameChanger =
+            normalized.gameChanger ??
+            existing.gameChanger;
+          existing.foil =
+            legacyFoilFlag(
+              nextCounts
+            );
+          existing.updatedAt =
+            Date.now();
+        } else {
+          next.push(
+            normalized
+          );
+        }
+
+        rows.push({
+          collectorNumber:
+            scryfallCard.collector_number,
+          count,
+          name:
+            scryfallCard.name,
+          finish,
+          found: true
+        });
+
+        resolvedCopies += count;
+      }
+
+      setBulkPreview({
+        cards: next,
+        rows,
+        requestedCopies:
+          numbers.length,
+        resolvedCopies,
+        issues
+      });
+    } catch (error) {
+      console.error(
+        "Bulk-Hinzufügen fehlgeschlagen:",
+        error
+      );
+      alert(
+        "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden."
+      );
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const applyBulkAdd = async () => {
+    if (
+      !bulkPreview ||
+      bulkPreview.resolvedCopies === 0
+    ) {
+      return;
+    }
+
+    setBulkBusy(true);
+
+    try {
+      await onImport(
+        bulkPreview.cards
+      );
+      closeBulkAdd();
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const readImportFile = async (
+    file: File | undefined
+  ) => {
+    if (!file) {
+      return;
+    }
+
+    try {
+      setImportText(
+        await file.text()
+      );
+      setImportPreview(null);
+    } catch {
+      setImportPreview({
+        cards: cards.map(
+          card => ({ ...card })
+        ),
+        requestedRows: 0,
+        resolvedRows: 0,
+        addedCopies: 0,
+        source: "text",
+        issues: [
+          "Die ausgewählte Datei konnte nicht gelesen werden."
+        ]
+      });
+    }
+  };
+
+  const previewCollectionImport =
+    async () => {
+      if (!importText.trim()) {
+        return;
+      }
+
+      setImportBusy(true);
+      setImportPreview(null);
+
+      try {
+        const csvRows =
+          parseCollectionCsv(
+            importText
+          );
+
+        const source:
+          "csv" | "text" =
+            csvRows.length > 0
+              ? "csv"
+              : "text";
+
+        const parsedTextRows =
+          parseDeckList(
+            importText
+          );
+
+        const rows =
+          source === "csv"
+            ? csvRows
+            : parsedTextRows.flatMap(
+                row =>
+                  row.kind === "card"
+                    ? [
+                        {
+                          name: row.name,
+                          count: row.count,
+                          set: row.set,
+                          collectorNumber:
+                            row.collectorNumber
+                        }
+                      ]
+                    : []
+              );
+
+        const next =
+          cards.map(
+            card => ({
+              ...card,
+              ...(card.finishCounts
+                ? {
+                    finishCounts: {
+                      ...card.finishCounts
+                    }
+                  }
+                : {})
+            })
+          );
+
+        const issues: string[] = [];
+        let resolvedRows = 0;
+        let addedCopies = 0;
+
+        for (const row of rows) {
+          try {
+            const matches =
+              await searchCards(
+                row.name
+              );
+
+            const exactNameMatches =
+              matches.filter(
+                card =>
+                  card.name.toLowerCase() ===
+                  row.name.toLowerCase()
+              );
+
+            let candidates =
+              exactNameMatches.length > 0
+                ? exactNameMatches
+                : matches;
+
+            if (row.set) {
+              candidates =
+                candidates.filter(
+                  card =>
+                    card.set.toLowerCase() ===
+                    row.set!.toLowerCase()
+                );
+            }
+
+            if (row.collectorNumber) {
+              candidates =
+                candidates.filter(
+                  card =>
+                    card.collector_number.toLowerCase() ===
+                    row.collectorNumber!.toLowerCase()
+                );
+            }
+
+            const chosen =
+              candidates[0];
+
+            if (!chosen) {
+              issues.push(
+                `${row.count}× ${row.name}: nicht bei Scryfall gefunden${row.set ? ` (Set ${row.set.toUpperCase()})` : ""}.`
+              );
+              continue;
+            }
+
+            const finishes =
+              availableFinishes(
+                chosen
+              );
+            const isFoilOnly =
+              !finishes.includes(
+                "nonfoil"
+              ) &&
+              finishes.includes(
+                "foil"
+              );
+
+            const normalized =
+              normalizeCard(
+                chosen,
+                row.count,
+                isFoilOnly
+              );
+
+            const existing =
+              next.find(
+                card =>
+                  card.id ===
+                    normalized.id
+              );
+
+            if (existing) {
+              const counts =
+                finishCountsFor(
+                  existing
+                );
+              const finish:
+                CardFinish =
+                  isFoilOnly
+                    ? "foil"
+                    : "nonfoil";
+              const nextCounts = {
+                ...counts,
+                [finish]:
+                  counts[finish] +
+                  row.count
+              };
+
+              existing.count +=
+                row.count;
+              existing.finishCounts =
+                nextCounts;
+              existing.availableFinishes =
+                normalized.availableFinishes;
+              existing.priceEur =
+                normalized.priceEur ??
+                existing.priceEur;
+              existing.priceEurFoil =
+                normalized.priceEurFoil ??
+                existing.priceEurFoil;
+              existing.priceUpdatedAt =
+                normalized.priceUpdatedAt;
+              existing.gameChanger =
+                normalized.gameChanger ??
+                existing.gameChanger;
+              existing.foil =
+                legacyFoilFlag(
+                  nextCounts
+                );
+              existing.updatedAt =
+                Date.now();
+            } else {
+              next.push(
+                normalized
+              );
+            }
+
+            resolvedRows += 1;
+            addedCopies +=
+              row.count;
+          } catch {
+            issues.push(
+              `${row.count}× ${row.name}: Scryfall-Abfrage fehlgeschlagen.`
+            );
+          }
+        }
+
+        setImportPreview({
+          cards: next,
+          requestedRows:
+            rows.length,
+          resolvedRows,
+          addedCopies,
+          source,
+          issues
+        });
+      } finally {
+        setImportBusy(false);
+      }
+    };
+
+  const applyCollectionImport =
+    async () => {
+      if (
+        !importPreview ||
+        importPreview.resolvedRows === 0
+      ) {
+        return;
+      }
+
+      setImportBusy(true);
+
+      try {
+        await onImport(
+          importPreview.cards
+        );
+        closeImport();
+      } finally {
+        setImportBusy(false);
+      }
+    };
+
+  return (
+    <>
+      <div className="search-tool-actions">
+        <button
+          className="secondary"
+          onClick={toggleBulkAdd}
+        >
+          Bulk hinzufügen
+        </button>
+
+        <button
+          className="secondary"
+          onClick={() => {
+            if (showImport) {
+              closeImport();
+            } else {
+              closeBulkAdd();
+              setShowImport(true);
+            }
+          }}
+        >
+          Import
+        </button>
+      </div>
+
+      {showBulkAdd && (
+        <div className="panel">
+          <h3>Bulk hinzufügen</h3>
+          <p className="muted">
+            Wähle ein Set und gib die Collector Numbers durch Kommas getrennt ein. Wiederholte Nummern erhöhen automatisch die Anzahl. Gibt es Non-Foil und Foil, wird beim Bulk standardmäßig Non-Foil verwendet.
+          </p>
+
+          <div className="two">
+            <label>
+              Set
+              <select
+                value={bulkSetCode}
+                onChange={e => {
+                  setBulkSetCode(
+                    e.target.value
+                  );
+                  setBulkPreview(null);
+                }}
+                disabled={bulkSetsBusy}
+              >
+                <option value="">
+                  {bulkSetsBusy
+                    ? "Sets werden geladen…"
+                    : "— Set auswählen —"}
+                </option>
+                {bulkSets.map(set => (
+                  <option
+                    key={set.id}
+                    value={set.code}
+                  >
+                    {set.name} ({set.code.toUpperCase()})
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Collector Numbers
+              <textarea
+                value={bulkNumbers}
+                onChange={e => {
+                  setBulkNumbers(
+                    e.target.value
+                  );
+                  setBulkPreview(null);
+                }}
+                rows={4}
+                placeholder="z. B. 12, 18, 18, 34, 105"
+              />
+            </label>
+          </div>
+
+          <div className="row">
+            <button
+              className="primary"
+              onClick={() =>
+                void previewBulkAdd()
+              }
+              disabled={
+                bulkBusy ||
+                !bulkSetCode ||
+                parseCollectorNumbers(
+                  bulkNumbers
+                ).length === 0
+              }
+            >
+              {bulkBusy
+                ? "Bulk wird geprüft…"
+                : "Bulk prüfen"}
+            </button>
+            <button
+              className="secondary"
+              onClick={closeBulkAdd}
+              disabled={bulkBusy}
+            >
+              Abbrechen
+            </button>
+          </div>
+
+          {bulkPreview && (
+            <div className="ai-box">
+              <h3>Bulk-Vorschau</h3>
+              <p>
+                Eingaben: <strong>{bulkPreview.requestedCopies}</strong> Karten
+                <br />
+                Gefunden: <strong>{bulkPreview.resolvedCopies}</strong> Karten
+              </p>
+
+              <div className="deck-list">
+                {bulkPreview.rows.map(row => (
+                  <div key={row.collectorNumber}>
+                    <span>
+                      #{row.collectorNumber}
+                      {row.name
+                        ? ` · ${row.name}`
+                        : " · nicht gefunden"}
+                    </span>
+                    <strong>
+                      {row.count}×
+                      {row.finish
+                        ? ` · ${finishLabel(row.finish)}`
+                        : ""}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+
+              {bulkPreview.issues.length > 0 && (
+                <div className="notice">
+                  <strong>Hinweise:</strong>
+                  <div className="deck-list">
+                    {bulkPreview.issues.map(
+                      (issue, index) => (
+                        <div key={`${issue}-${index}`}>
+                          <span>{issue}</span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="row">
+                <button
+                  className="primary"
+                  onClick={() =>
+                    void applyBulkAdd()
+                  }
+                  disabled={
+                    bulkBusy ||
+                    bulkPreview.resolvedCopies === 0
+                  }
+                >
+                  Bulk übernehmen
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    setBulkPreview(null)
+                  }
+                  disabled={bulkBusy}
+                >
+                  Eingabe bearbeiten
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showImport && (
+        <div className="panel">
+          <h3>Sammlung importieren</h3>
+          <p className="muted">
+            Du kannst eine Textliste oder eine CSV-Datei importieren. CSV-Dateien aus Arcane Decksmith können Set und Collector Number zur genauen Zuordnung enthalten.
+          </p>
+
+          <label>
+            CSV- oder Textdatei auswählen
+            <input
+              type="file"
+              accept=".csv,text/csv,.txt,text/plain"
+              onChange={e =>
+                void readImportFile(
+                  e.target.files?.[0]
+                )
+              }
+            />
+          </label>
+
+          <textarea
+            value={importText}
+            onChange={e => {
+              setImportText(
+                e.target.value
+              );
+              setImportPreview(null);
+            }}
+            placeholder={
+              "4 Lightning Bolt\n2x Counterspell\n1 Sol Ring"
+            }
+            rows={7}
+          />
+
+          <div className="row">
+            <button
+              className="primary"
+              onClick={() =>
+                void previewCollectionImport()
+              }
+              disabled={
+                importBusy ||
+                !importText.trim()
+              }
+            >
+              {importBusy
+                ? "Import wird geprüft…"
+                : "Import prüfen"}
+            </button>
+            <button
+              className="secondary"
+              onClick={closeImport}
+              disabled={importBusy}
+            >
+              Abbrechen
+            </button>
+          </div>
+
+          {importPreview && (
+            <div className="ai-box">
+              <h3>Import-Zusammenfassung</h3>
+              <p>
+                Quelle: <strong>{importPreview.source === "csv" ? "CSV" : "Textliste"}</strong>
+                <br />
+                Zeilen erkannt: <strong>{importPreview.requestedRows}</strong>
+                <br />
+                Erfolgreich aufgelöst: <strong>{importPreview.resolvedRows}</strong>
+                <br />
+                Hinzugefügte Karten: <strong>{importPreview.addedCopies}</strong>
+              </p>
+
+              {importPreview.issues.length > 0 && (
+                <div className="notice">
+                  <strong>Hinweise vor dem Übernehmen:</strong>
+                  <div className="deck-list">
+                    {importPreview.issues.map(
+                      (issue, index) => (
+                        <div key={`${issue}-${index}`}>
+                          <span>{issue}</span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <button
+                className="primary"
+                onClick={() =>
+                  void applyCollectionImport()
+                }
+                disabled={
+                  importBusy ||
+                  importPreview.resolvedRows === 0
+                }
+              >
+                Import übernehmen
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1478,8 +2613,7 @@ function SearchCard({
 function Collection({
   cards,
   onChange,
-  onDelete,
-  onImport
+  onDelete
 }: {
   cards: CardRecord[];
   onChange: (
@@ -1487,9 +2621,6 @@ function Collection({
   ) => Promise<void>;
   onDelete: (
     id: string
-  ) => Promise<void>;
-  onImport: (
-    c: CardRecord[]
   ) => Promise<void>;
 }) {
   const [query, setQuery] =
@@ -1508,91 +2639,6 @@ function Collection({
     useState<Set<string>>(
       new Set()
     );
-
-  const [
-    importText,
-    setImportText
-  ] =
-    useState("");
-
-  const [
-    showImport,
-    setShowImport
-  ] =
-    useState(false);
-
-  const [
-    importBusy,
-    setImportBusy
-  ] =
-    useState(false);
-
-  const [
-    importPreview,
-    setImportPreview
-  ] =
-    useState<{
-      cards: CardRecord[];
-      requestedRows: number;
-      resolvedRows: number;
-      addedCopies: number;
-      source: "csv" | "text";
-      issues: string[];
-    } | null>(null);
-
-  const [
-    showBulkAdd,
-    setShowBulkAdd
-  ] =
-    useState(false);
-
-  const [
-    bulkSetCode,
-    setBulkSetCode
-  ] =
-    useState("");
-
-  const [
-    bulkNumbers,
-    setBulkNumbers
-  ] =
-    useState("");
-
-  const [
-    bulkSets,
-    setBulkSets
-  ] =
-    useState<ScryfallSet[]>([]);
-
-  const [
-    bulkSetsBusy,
-    setBulkSetsBusy
-  ] =
-    useState(false);
-
-  const [
-    bulkBusy,
-    setBulkBusy
-  ] =
-    useState(false);
-
-  const [
-    bulkPreview,
-    setBulkPreview
-  ] =
-    useState<{
-      cards: CardRecord[];
-      rows: Array<{
-        collectorNumber: string;
-        count: number;
-        name?: string;
-        finish?: CardFinish;
-        found: boolean;
-      }>;
-      requestedCopies: number;
-      resolvedCopies: number;
-      issues: string[];
-    } | null>(null);
 
   const filtered =
     useMemo(
@@ -2080,632 +3126,6 @@ function Collection({
       group
     ]);
 
-  const resetImport = () => {
-    setImportText("");
-    setImportPreview(null);
-  };
-
-  const closeImport = () => {
-    resetImport();
-    setShowImport(false);
-  };
-
-  const resetBulkAdd = () => {
-    setBulkNumbers("");
-    setBulkPreview(null);
-  };
-
-  const closeBulkAdd = () => {
-    resetBulkAdd();
-    setShowBulkAdd(false);
-  };
-
-  const ensureBulkSets =
-    async () => {
-      if (
-        bulkSets.length > 0 ||
-        bulkSetsBusy
-      ) {
-        return;
-      }
-
-      setBulkSetsBusy(true);
-
-      try {
-        setBulkSets(
-          await getSets()
-        );
-      } catch (error) {
-        console.error(
-          "Scryfall-Sets konnten nicht geladen werden:",
-          error
-        );
-
-        alert(
-          "Die Set-Liste konnte nicht von Scryfall geladen werden."
-        );
-      } finally {
-        setBulkSetsBusy(false);
-      }
-    };
-
-  const toggleBulkAdd = () => {
-    const next =
-      !showBulkAdd;
-
-    if (next) {
-      closeImport();
-      void ensureBulkSets();
-    }
-
-    setShowBulkAdd(next);
-  };
-
-  const previewBulkAdd =
-    async () => {
-      const numbers =
-        parseCollectorNumbers(
-          bulkNumbers
-        );
-
-      if (
-        !bulkSetCode ||
-        numbers.length === 0
-      ) {
-        return;
-      }
-
-      setBulkBusy(true);
-      setBulkPreview(null);
-
-      try {
-        const counts =
-          collectorNumberCounts(
-            numbers
-          );
-
-        const lookup =
-          await getCardsBySetAndCollectorNumbers(
-            bulkSetCode,
-            Array.from(
-              counts.keys()
-            )
-          );
-
-        const byCollectorNumber =
-          new Map(
-            lookup.cards.map(
-              card => [
-                card.collector_number
-                  .toLowerCase(),
-                card
-              ] as const
-            )
-          );
-
-        const next =
-          cards.map(
-            card => ({
-              ...card,
-              ...(card.finishCounts
-                ? {
-                    finishCounts: {
-                      ...card.finishCounts
-                    }
-                  }
-                : {})
-            })
-          );
-
-        const rows:
-          Array<{
-            collectorNumber: string;
-            count: number;
-            name?: string;
-            finish?: CardFinish;
-            found: boolean;
-          }> = [];
-
-        const issues:
-          string[] = [];
-
-        let resolvedCopies = 0;
-
-        for (
-          const [
-            collectorNumber,
-            count
-          ]
-          of counts
-        ) {
-          const scryfallCard =
-            byCollectorNumber.get(
-              collectorNumber
-            );
-
-          if (!scryfallCard) {
-            rows.push({
-              collectorNumber,
-              count,
-              found: false
-            });
-
-            issues.push(
-              `#${collectorNumber}: in diesem Set nicht gefunden.`
-            );
-
-            continue;
-          }
-
-          const finishes =
-            availableFinishes(
-              scryfallCard
-            );
-
-          const finish:
-            CardFinish |
-            undefined =
-              finishes.includes(
-                "nonfoil"
-              )
-                ? "nonfoil"
-                : finishes.includes(
-                    "foil"
-                  )
-                  ? "foil"
-                  : undefined;
-
-          if (!finish) {
-            rows.push({
-              collectorNumber,
-              count,
-              name:
-                scryfallCard.name,
-              found: false
-            });
-
-            issues.push(
-              `#${collectorNumber} ${scryfallCard.name}: Scryfall meldet kein unterstütztes Finish.`
-            );
-
-            continue;
-          }
-
-          const normalized =
-            normalizeCard(
-              scryfallCard,
-              count,
-              finish === "foil"
-            );
-
-          const existing =
-            next.find(
-              card =>
-                card.id ===
-                  normalized.id ||
-                (
-                  card.oracleId ===
-                    normalized.oracleId &&
-                  card.set.toLowerCase() ===
-                    normalized.set.toLowerCase() &&
-                  card.collectorNumber.toLowerCase() ===
-                    normalized.collectorNumber.toLowerCase()
-                )
-            );
-
-          if (existing) {
-            const finishCounts =
-              finishCountsFor(
-                existing
-              );
-
-            const nextCounts = {
-              ...finishCounts,
-              [finish]:
-                finishCounts[finish] +
-                count
-            };
-
-            existing.count +=
-              count;
-
-            existing.finishCounts =
-              nextCounts;
-
-            existing.availableFinishes =
-              Array.from(
-                new Set<CardFinish>([
-                  ...(existing.availableFinishes ?? []),
-                  ...(normalized.availableFinishes ?? [])
-                ])
-              );
-
-            existing.setName =
-              normalized.setName ??
-              existing.setName;
-
-            if (
-              normalized.priceEur !==
-              undefined
-            ) {
-              existing.priceEur =
-                normalized.priceEur;
-            }
-
-            if (
-              normalized.priceEurFoil !==
-              undefined
-            ) {
-              existing.priceEurFoil =
-                normalized.priceEurFoil;
-            }
-
-            existing.priceUpdatedAt =
-              normalized.priceUpdatedAt;
-
-            existing.foil =
-              legacyFoilFlag(
-                nextCounts
-              );
-
-            existing.updatedAt =
-              Date.now();
-          } else {
-            next.push(
-              normalized
-            );
-          }
-
-          rows.push({
-            collectorNumber:
-              scryfallCard.collector_number,
-            count,
-            name:
-              scryfallCard.name,
-            finish,
-            found: true
-          });
-
-          resolvedCopies +=
-            count;
-        }
-
-        setBulkPreview({
-          cards: next,
-          rows,
-          requestedCopies:
-            numbers.length,
-          resolvedCopies,
-          issues
-        });
-      } catch (error) {
-        console.error(
-          "Bulk-Hinzufügen fehlgeschlagen:",
-          error
-        );
-
-        alert(
-          "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden."
-        );
-      } finally {
-        setBulkBusy(false);
-      }
-    };
-
-  const applyBulkAdd =
-    async () => {
-      if (
-        !bulkPreview ||
-        bulkPreview.resolvedCopies === 0
-      ) {
-        return;
-      }
-
-      setBulkBusy(true);
-
-      try {
-        await onImport(
-          bulkPreview.cards
-        );
-
-        closeBulkAdd();
-      } finally {
-        setBulkBusy(false);
-      }
-    };
-
-  const readImportFile =
-    async (
-      file:
-        | File
-        | undefined
-    ) => {
-      if (!file) {
-        return;
-      }
-
-      try {
-        const text =
-          await file.text();
-
-        setImportText(text);
-        setImportPreview(null);
-      } catch {
-        setImportPreview({
-          cards:
-            cards.map(
-              card => ({
-                ...card
-              })
-            ),
-          requestedRows: 0,
-          resolvedRows: 0,
-          addedCopies: 0,
-          source: "text",
-          issues: [
-            "Die ausgewählte Datei konnte nicht gelesen werden."
-          ]
-        });
-      }
-    };
-
-  const previewCollectionImport =
-    async () => {
-      if (
-        !importText.trim()
-      ) {
-        return;
-      }
-
-      setImportBusy(true);
-      setImportPreview(null);
-
-      try {
-        const csvRows =
-          parseCollectionCsv(
-            importText
-          );
-
-        const source:
-          "csv" |
-          "text" =
-            csvRows.length > 0
-              ? "csv"
-              : "text";
-
-        const parsedTextRows =
-          parseDeckList(
-            importText
-          );
-
-        const rows =
-          source === "csv"
-            ? csvRows
-            : parsedTextRows.flatMap(
-                row =>
-                  row.kind ===
-                  "card"
-                    ? [
-                        {
-                          name:
-                            row.name,
-                          count:
-                            row.count,
-                          set:
-                            row.set,
-                          collectorNumber:
-                            row.collectorNumber
-                        }
-                      ]
-                    : []
-              );
-
-        const next =
-          cards.map(
-            card => ({
-              ...card
-            })
-          );
-
-        const issues:
-          string[] = [];
-
-        let resolvedRows =
-          0;
-
-        let addedCopies =
-          0;
-
-        for (
-          const row
-          of rows
-        ) {
-          try {
-            const matches =
-              await searchCards(
-                row.name
-              );
-
-            const exactNameMatches =
-              matches.filter(
-                card =>
-                  card.name.toLowerCase() ===
-                  row.name.toLowerCase()
-              );
-
-            let candidates =
-              exactNameMatches.length >
-              0
-                ? exactNameMatches
-                : matches;
-
-            if (row.set) {
-              candidates =
-                candidates.filter(
-                  card =>
-                    card.set.toLowerCase() ===
-                    row.set!.toLowerCase()
-                );
-            }
-
-            if (
-              row.collectorNumber
-            ) {
-              candidates =
-                candidates.filter(
-                  card =>
-                    card.collector_number.toLowerCase() ===
-                    row.collectorNumber!.toLowerCase()
-                );
-            }
-
-            const chosen =
-              candidates[0];
-
-            if (!chosen) {
-              issues.push(
-                `${row.count}× ${row.name}: nicht bei Scryfall gefunden${row.set ? ` (Set ${row.set.toUpperCase()})` : ""}.`
-              );
-
-              continue;
-            }
-
-            if (
-              candidates.length >
-                1 &&
-              !row.set &&
-              !row.collectorNumber
-            ) {
-              issues.push(
-                `${row.name}: mehrere Druckausgaben gefunden; verwendet wird ${chosen.set_name ?? chosen.set.toUpperCase()} #${chosen.collector_number}.`
-              );
-            }
-
-            if (
-              exactNameMatches.length ===
-                0 &&
-              chosen.name.toLowerCase() !==
-                row.name.toLowerCase()
-            ) {
-              issues.push(
-                `${row.name}: kein exakter Name gefunden; verwendet wird „${chosen.name}“.`
-              );
-            }
-
-            const normalized =
-              normalizeCard(
-                chosen,
-                row.count
-              );
-
-            const existing =
-              next.find(
-                card =>
-                  card.id ===
-                  normalized.id
-              );
-
-            if (existing) {
-              const counts =
-                finishCountsFor(
-                  existing
-                );
-
-              const nextCounts = {
-                ...counts,
-                nonfoil:
-                  counts.nonfoil +
-                  row.count
-              };
-
-              existing.count +=
-                row.count;
-
-              existing.finishCounts =
-                nextCounts;
-
-              existing.availableFinishes =
-                normalized.availableFinishes;
-
-              if (
-                normalized.priceEur !==
-                undefined
-              ) {
-                existing.priceEur =
-                  normalized.priceEur;
-              }
-
-              if (
-                normalized.priceEurFoil !==
-                undefined
-              ) {
-                existing.priceEurFoil =
-                  normalized.priceEurFoil;
-              }
-
-              existing.priceUpdatedAt =
-                normalized.priceUpdatedAt;
-
-              existing.foil =
-                legacyFoilFlag(
-                  nextCounts
-                );
-
-              existing.updatedAt =
-                Date.now();
-            } else {
-              next.push(
-                normalized
-              );
-            }
-
-            resolvedRows += 1;
-            addedCopies +=
-              row.count;
-          } catch {
-            issues.push(
-              `${row.count}× ${row.name}: Scryfall-Abfrage fehlgeschlagen.`
-            );
-          }
-        }
-
-        setImportPreview({
-          cards: next,
-          requestedRows:
-            rows.length,
-          resolvedRows,
-          addedCopies,
-          source,
-          issues
-        });
-      } finally {
-        setImportBusy(false);
-      }
-    };
-
-  const applyCollectionImport =
-    async () => {
-      if (
-        !importPreview ||
-        importPreview.resolvedRows ===
-          0
-      ) {
-        return;
-      }
-
-      setImportBusy(true);
-
-      try {
-        await onImport(
-          importPreview.cards
-        );
-
-        closeImport();
-      } finally {
-        setImportBusy(false);
-      }
-    };
-
   return (
     <section>
       <div className="pagehead">
@@ -2722,23 +3142,6 @@ function Collection({
             className="secondary"
             onClick={() =>
               download(
-                "collection.json",
-                JSON.stringify(
-                  cards,
-                  null,
-                  2
-                ),
-                "application/json"
-              )
-            }
-          >
-            JSON export
-          </button>
-
-          <button
-            className="secondary"
-            onClick={() =>
-              download(
                 "collection.csv",
                 toCsv(cards),
                 "text/csv;charset=utf-8"
@@ -2746,27 +3149,6 @@ function Collection({
             }
           >
             CSV export
-          </button>
-
-          <button
-            className="secondary"
-            onClick={toggleBulkAdd}
-          >
-            Bulk hinzufügen
-          </button>
-
-          <button
-            className="primary"
-            onClick={() => {
-              if (showImport) {
-                closeImport();
-              } else {
-                closeBulkAdd();
-                setShowImport(true);
-              }
-            }}
-          >
-            Import
           </button>
         </div>
       </div>
@@ -3118,361 +3500,6 @@ function Collection({
           </div>
         </div>
      </details>
-
-      {showBulkAdd && (
-        <div className="panel">
-          <h3>
-            Bulk hinzufügen
-          </h3>
-
-          <p className="muted">
-            Wähle ein Set und gib die Collector Numbers durch Kommas getrennt ein. Wiederholte Nummern erhöhen automatisch die Anzahl. Wenn eine Ausgabe sowohl Non-Foil als auch Foil existiert, wird sie beim Bulk-Hinzufügen als Non-Foil übernommen. Reine Foil-Ausgaben werden als Foil übernommen.
-          </p>
-
-          <div className="two">
-            <label>
-              Set
-
-              <select
-                value={bulkSetCode}
-                onChange={e => {
-                  setBulkSetCode(
-                    e.target.value
-                  );
-                  setBulkPreview(
-                    null
-                  );
-                }}
-                disabled={
-                  bulkSetsBusy
-                }
-              >
-                <option value="">
-                  {bulkSetsBusy
-                    ? "Sets werden geladen…"
-                    : "— Set auswählen —"}
-                </option>
-
-                {bulkSets.map(
-                  set => (
-                    <option
-                      key={set.id}
-                      value={set.code}
-                    >
-                      {set.name} ({set.code.toUpperCase()})
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              Collector Numbers
-
-              <textarea
-                value={bulkNumbers}
-                onChange={e => {
-                  setBulkNumbers(
-                    e.target.value
-                  );
-                  setBulkPreview(
-                    null
-                  );
-                }}
-                rows={5}
-                placeholder="z. B. 12, 18, 18, 34, 105"
-              />
-            </label>
-          </div>
-
-          <div className="row">
-            <button
-              className="primary"
-              onClick={() =>
-                void previewBulkAdd()
-              }
-              disabled={
-                bulkBusy ||
-                !bulkSetCode ||
-                parseCollectorNumbers(
-                  bulkNumbers
-                ).length === 0
-              }
-            >
-              {bulkBusy
-                ? "Bulk wird geprüft…"
-                : "Bulk prüfen"}
-            </button>
-
-            <button
-              className="secondary"
-              onClick={closeBulkAdd}
-              disabled={bulkBusy}
-            >
-              Abbrechen
-            </button>
-          </div>
-
-          {bulkPreview && (
-            <div className="ai-box">
-              <h3>
-                Bulk-Vorschau
-              </h3>
-
-              <p>
-                Eingaben: {" "}
-                <strong>
-                  {bulkPreview.requestedCopies}
-                </strong>
-                {" "}Karten
-                <br />
-                Gefunden: {" "}
-                <strong>
-                  {bulkPreview.resolvedCopies}
-                </strong>
-                {" "}Karten
-              </p>
-
-              <div className="deck-list">
-                {bulkPreview.rows.map(
-                  row => (
-                    <div
-                      key={
-                        row.collectorNumber
-                      }
-                    >
-                      <span>
-                        #{row.collectorNumber}
-                        {row.name
-                          ? ` · ${row.name}`
-                          : " · nicht gefunden"}
-                      </span>
-
-                      <strong>
-                        {row.count}×
-                        {row.finish
-                          ? ` · ${finishLabel(row.finish)}`
-                          : ""}
-                      </strong>
-                    </div>
-                  )
-                )}
-              </div>
-
-              {bulkPreview.issues.length >
-                0 && (
-                <div className="notice">
-                  <strong>
-                    Hinweise:
-                  </strong>
-
-                  <div className="deck-list">
-                    {bulkPreview.issues.map(
-                      (
-                        issue,
-                        index
-                      ) => (
-                        <div
-                          key={`${issue}-${index}`}
-                        >
-                          <span>
-                            {issue}
-                          </span>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="row">
-                <button
-                  className="primary"
-                  onClick={() =>
-                    void applyBulkAdd()
-                  }
-                  disabled={
-                    bulkBusy ||
-                    bulkPreview.resolvedCopies ===
-                      0
-                  }
-                >
-                  Bulk übernehmen
-                </button>
-
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    setBulkPreview(
-                      null
-                    )
-                  }
-                  disabled={bulkBusy}
-                >
-                  Eingabe bearbeiten
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {showImport && (
-        <div className="panel">
-          <h3>
-            Sammlung importieren
-          </h3>
-
-          <p className="muted">
-            Du kannst eine Textliste oder eine CSV-Datei importieren. CSV-Dateien aus Arcane Decksmith enthalten Set und Collector Number und können Druckausgaben dadurch genauer zuordnen. Importierte Exemplare ohne Finish-Angabe werden als Non-Foil übernommen.
-          </p>
-
-          <label>
-            CSV- oder Textdatei auswählen
-
-            <input
-              type="file"
-              accept=".csv,text/csv,.txt,text/plain"
-              onChange={e =>
-                void readImportFile(
-                  e.target.files?.[0]
-                )
-              }
-            />
-          </label>
-
-          <textarea
-            value={importText}
-            onChange={e => {
-              setImportText(
-                e.target.value
-              );
-
-              setImportPreview(
-                null
-              );
-            }}
-            placeholder={
-              "4 Lightning Bolt\n2x Counterspell\n1 Sol Ring"
-            }
-            rows={8}
-          />
-
-          <div className="row">
-            <button
-              className="primary"
-              onClick={() =>
-                void previewCollectionImport()
-              }
-              disabled={
-                importBusy ||
-                !importText.trim()
-              }
-            >
-              {importBusy
-                ? "Import wird geprüft…"
-                : "Import prüfen"}
-            </button>
-
-            <button
-              className="secondary"
-              onClick={closeImport}
-              disabled={importBusy}
-            >
-              Abbrechen
-            </button>
-          </div>
-
-          {importPreview && (
-            <div className="ai-box">
-              <h3>
-                Import-Zusammenfassung
-              </h3>
-
-              <p>
-                Quelle:{" "}
-                <strong>
-                  {importPreview.source ===
-                  "csv"
-                    ? "CSV"
-                    : "Textliste"}
-                </strong>
-                <br />
-
-                Zeilen erkannt:{" "}
-                <strong>
-                  {
-                    importPreview.requestedRows
-                  }
-                </strong>
-                <br />
-
-                Erfolgreich aufgelöst:{" "}
-                <strong>
-                  {
-                    importPreview.resolvedRows
-                  }
-                </strong>
-                <br />
-
-                Karten, die hinzugefügt werden:{" "}
-                <strong>
-                  {
-                    importPreview.addedCopies
-                  }
-                </strong>
-              </p>
-
-              {importPreview.issues.length >
-                0 && (
-                <div className="notice">
-                  <strong>
-                    Hinweise vor dem Übernehmen:
-                  </strong>
-
-                  <div className="deck-list">
-                    {importPreview.issues.map(
-                      (
-                        issue,
-                        index
-                      ) => (
-                        <div
-                          key={`${issue}-${index}`}
-                        >
-                          <span>
-                            {issue}
-                          </span>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {importPreview.resolvedRows ===
-                0 && (
-                <div className="error">
-                  Es konnte keine Karte für den Import aufgelöst werden.
-                </div>
-              )}
-
-              <button
-                className="primary"
-                onClick={() =>
-                  void applyCollectionImport()
-                }
-                disabled={
-                  importBusy ||
-                  importPreview.resolvedRows ===
-                    0
-                }
-              >
-                Import übernehmen
-              </button>
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="toolbar">
         <input
@@ -5792,16 +5819,22 @@ function Decks({
     );
 
   const [
-    bulkDeckSetCode,
-    setBulkDeckSetCode
+    bulkDeckGroups,
+    setBulkDeckGroups
   ] =
-    useState("");
-
-  const [
-    bulkDeckNumbers,
-    setBulkDeckNumbers
-  ] =
-    useState("");
+    useState<
+      Array<{
+        id: string;
+        setCode: string;
+        numbers: string;
+      }>
+    >(() => [
+      {
+        id: crypto.randomUUID(),
+        setCode: "",
+        numbers: ""
+      }
+    ]);
 
   const [
     bulkDeckCommanderId,
@@ -5834,6 +5867,7 @@ function Decks({
     useState<{
       deck: DeckRecord;
       rows: Array<{
+        setCode: string;
         collectorNumber: string;
         count: number;
         name?: string;
@@ -5893,7 +5927,13 @@ function Decks({
     };
 
   const resetBulkDeck = () => {
-    setBulkDeckNumbers("");
+    setBulkDeckGroups([
+      {
+        id: crypto.randomUUID(),
+        setCode: "",
+        numbers: ""
+      }
+    ]);
     setBulkDeckPreview(null);
   };
 
@@ -5945,15 +5985,22 @@ function Decks({
 
   const previewBulkDeck =
     async () => {
-      const numbers =
-        parseCollectorNumbers(
-          bulkDeckNumbers
-        );
+      const groups =
+        bulkDeckGroups
+          .map(group => ({
+            ...group,
+            numbers:
+              parseCollectorNumbers(
+                group.numbers
+              )
+          }))
+          .filter(
+            group =>
+              group.setCode &&
+              group.numbers.length > 0
+          );
 
-      if (
-        !bulkDeckSetCode ||
-        numbers.length === 0
-      ) {
+      if (groups.length === 0) {
         return;
       }
 
@@ -5961,30 +6008,6 @@ function Decks({
       setBulkDeckPreview(null);
 
       try {
-        const counts =
-          collectorNumberCounts(
-            numbers
-          );
-
-        const lookup =
-          await getCardsBySetAndCollectorNumbers(
-            bulkDeckSetCode,
-            Array.from(
-              counts.keys()
-            )
-          );
-
-        const byCollectorNumber =
-          new Map(
-            lookup.cards.map(
-              card => [
-                card.collector_number
-                  .toLowerCase(),
-                card
-              ] as const
-            )
-          );
-
         const commander =
           bulkDeckFormat ===
             "commander"
@@ -6004,33 +6027,23 @@ function Decks({
 
         const rows:
           Array<{
+            setCode: string;
             collectorNumber: string;
             count: number;
             name?: string;
             errors: string[];
           }> = [];
 
-        const errors:
-          string[] = [];
-
-        const warnings:
-          string[] = [];
-
+        const errors: string[] = [];
+        const warnings: string[] = [];
         const mainCards:
           DeckRecord["cards"] = [];
-
         let resolvedCards = 0;
 
         const pushError =
           (message: string) => {
-            if (
-              !errors.includes(
-                message
-              )
-            ) {
-              errors.push(
-                message
-              );
+            if (!errors.includes(message)) {
+              errors.push(message);
             }
           };
 
@@ -6044,269 +6057,220 @@ function Decks({
           );
         }
 
-        for (
-          const [
-            collectorNumber,
-            count
-          ]
-          of counts
-        ) {
-          const rowErrors:
-            string[] = [];
-
-          const scryfallCard =
-            byCollectorNumber.get(
-              collectorNumber
+        for (const group of groups) {
+          const counts =
+            collectorNumberCounts(
+              group.numbers
             );
 
-          if (!scryfallCard) {
-            const message =
-              `#${collectorNumber}: in diesem Set nicht gefunden.`;
-
-            rowErrors.push(
-              message
-            );
-            pushError(
-              message
+          const lookup =
+            await getCardsBySetAndCollectorNumbers(
+              group.setCode,
+              Array.from(
+                counts.keys()
+              )
             );
 
-            rows.push({
+          const byCollectorNumber =
+            new Map(
+              lookup.cards.map(
+                card => [
+                  card.collector_number
+                    .toLowerCase(),
+                  card
+                ] as const
+              )
+            );
+
+          for (
+            const [
               collectorNumber,
-              count,
-              errors:
-                rowErrors
-            });
+              count
+            ] of counts
+          ) {
+            const rowErrors: string[] = [];
+            const scryfallCard =
+              byCollectorNumber.get(
+                collectorNumber
+              );
 
-            continue;
-          }
+            if (!scryfallCard) {
+              const message =
+                `${group.setCode.toUpperCase()} #${collectorNumber}: in diesem Set nicht gefunden.`;
+              rowErrors.push(message);
+              pushError(message);
+              rows.push({
+                setCode: group.setCode,
+                collectorNumber,
+                count,
+                errors: rowErrors
+              });
+              continue;
+            }
 
-          const source =
-            pool.find(
-              card =>
-                card.id ===
-                  scryfallCard.id ||
-                (
-                  card.oracleId ===
-                    scryfallCard.oracle_id &&
-                  card.set.toLowerCase() ===
-                    scryfallCard.set.toLowerCase() &&
-                  card.collectorNumber.toLowerCase() ===
-                    scryfallCard.collector_number.toLowerCase()
-                )
-            );
+            const source =
+              pool.find(
+                card =>
+                  card.id ===
+                    scryfallCard.id ||
+                  (
+                    card.oracleId ===
+                      scryfallCard.oracle_id &&
+                    card.set.toLowerCase() ===
+                      scryfallCard.set.toLowerCase() &&
+                    card.collectorNumber.toLowerCase() ===
+                      scryfallCard.collector_number.toLowerCase()
+                  )
+              );
 
-          if (!source) {
-            const message =
-              `#${scryfallCard.collector_number} ${scryfallCard.name}: diese Ausgabe ist nicht in deiner Sammlung vorhanden.`;
+            if (!source) {
+              const message =
+                `${group.setCode.toUpperCase()} #${scryfallCard.collector_number} ${scryfallCard.name}: diese Ausgabe ist nicht in deiner Sammlung vorhanden.`;
+              rowErrors.push(message);
+              pushError(message);
+              rows.push({
+                setCode: group.setCode,
+                collectorNumber:
+                  scryfallCard.collector_number,
+                count,
+                name: scryfallCard.name,
+                errors: rowErrors
+              });
+              continue;
+            }
 
-            rowErrors.push(
-              message
-            );
-            pushError(
-              message
-            );
+            if (
+              commander &&
+              source.name.toLowerCase() ===
+                commander.name.toLowerCase()
+            ) {
+              const message =
+                `${source.name}: der gewählte Commander darf nicht zusätzlich im Hauptdeck stehen.`;
+              rowErrors.push(message);
+              pushError(message);
+            }
 
+            const legal =
+              bulkDeckFormat ===
+                "standard"
+                ? cardLegalForDeck(
+                    source,
+                    "standard"
+                  )
+                : commander
+                  ? cardLegalForDeck(
+                      source,
+                      "commander",
+                      commanderColors
+                    )
+                  : true;
+
+            if (!legal) {
+              const message =
+                bulkDeckFormat ===
+                  "commander"
+                  ? `${source.name}: im Commander-Format bzw. mit der Farbidentität des Commanders nicht erlaubt.`
+                  : `${source.name}: im Standard-Format nicht erlaubt.`;
+              rowErrors.push(message);
+              pushError(message);
+            }
+
+            const existing =
+              mainCards.find(
+                card =>
+                  card.id === source.id
+              );
+
+            if (existing) {
+              existing.count += count;
+            } else {
+              mainCards.push({
+                id: source.id,
+                name: source.name,
+                count,
+                manaValue:
+                  source.manaValue,
+                typeLine:
+                  source.typeLine,
+                role: "Bulk",
+                reason:
+                  "Per Set und Collector Number hinzugefügt.",
+                available:
+                  source.count
+              });
+            }
+
+            resolvedCards += count;
             rows.push({
+              setCode: group.setCode,
               collectorNumber:
                 scryfallCard.collector_number,
               count,
-              name:
-                scryfallCard.name,
-              errors:
-                rowErrors
+              name: source.name,
+              errors: rowErrors
             });
-
-            continue;
           }
-
-          if (
-            commander &&
-            source.name.toLowerCase() ===
-              commander.name.toLowerCase()
-          ) {
-            const message =
-              `${source.name}: der gewählte Commander darf nicht zusätzlich im Hauptdeck stehen.`;
-
-            rowErrors.push(
-              message
-            );
-            pushError(
-              message
-            );
-          }
-
-          const legal =
-            bulkDeckFormat ===
-              "standard"
-              ? cardLegalForDeck(
-                  source,
-                  "standard"
-                )
-              : commander
-                ? cardLegalForDeck(
-                    source,
-                    "commander",
-                    commanderColors
-                  )
-                : true;
-
-          if (!legal) {
-            const message =
-              bulkDeckFormat ===
-                "commander"
-                ? `${source.name}: im Commander-Format bzw. mit der Farbidentität des Commanders nicht erlaubt.`
-                : `${source.name}: im Standard-Format nicht erlaubt.`;
-
-            rowErrors.push(
-              message
-            );
-            pushError(
-              message
-            );
-          }
-
-          const ruleLimit =
-            deckCopyLimit(
-              source,
-              bulkDeckFormat
-            );
-
-          if (
-            count > ruleLimit
-          ) {
-            const limitLabel =
-              Number.isFinite(
-                ruleLimit
-              )
-                ? String(
-                    ruleLimit
-                  )
-                : "beliebig";
-
-            const message =
-              `${source.name}: ${count} Exemplare eingegeben, erlaubt sind höchstens ${limitLabel}.`;
-
-            rowErrors.push(
-              message
-            );
-            pushError(
-              message
-            );
-          }
-
-          if (
-            count > source.count
-          ) {
-            const message =
-              `${source.name}: ${count} Exemplare eingegeben, aber nur ${source.count} in deiner Sammlung vorhanden.`;
-
-            rowErrors.push(
-              message
-            );
-            pushError(
-              message
-            );
-          }
-
-          mainCards.push({
-            id:
-              source.id,
-            name:
-              source.name,
-            count,
-            manaValue:
-              source.manaValue,
-            typeLine:
-              source.typeLine,
-            role:
-              "Bulk",
-            reason:
-              "Per Set und Collector Number hinzugefügt.",
-            available:
-              source.count
-          });
-
-          resolvedCards +=
-            count;
-
-          rows.push({
-            collectorNumber:
-              scryfallCard.collector_number,
-            count,
-            name:
-              source.name,
-            errors:
-              rowErrors
-          });
         }
 
         const totalByName =
           mainCards.reduce<
-            Record<
-              string,
-              number
-            >
+            Record<string, number>
           >(
             (result, card) => {
               const key =
                 card.name.toLowerCase();
-
               result[key] =
                 (result[key] ?? 0) +
                 card.count;
-
               return result;
             },
             {}
           );
 
-        for (
-          const card
-          of mainCards
-        ) {
+        for (const card of mainCards) {
           const source =
             pool.find(
               item =>
-                item.id ===
-                card.id
+                item.id === card.id
             );
 
           if (!source) {
             continue;
           }
 
+          const totalForName =
+            totalByName[
+              card.name.toLowerCase()
+            ] ?? 0;
           const ruleLimit =
             deckCopyLimit(
               source,
               bulkDeckFormat
             );
 
-          const totalForName =
-            totalByName[
-              card.name.toLowerCase()
-            ] ?? 0;
-
-          if (
-            totalForName >
-            ruleLimit
-          ) {
+          if (totalForName > ruleLimit) {
             const limitLabel =
-              Number.isFinite(
-                ruleLimit
-              )
-                ? String(
-                    ruleLimit
-                  )
+              Number.isFinite(ruleLimit)
+                ? String(ruleLimit)
                 : "beliebig";
-
             pushError(
               `${card.name}: insgesamt ${totalForName} Exemplare eingegeben, erlaubt sind höchstens ${limitLabel}.`
+            );
+          }
+
+          if (card.count > source.count) {
+            pushError(
+              `${card.name}: ${card.count} Exemplare dieser Ausgabe eingegeben, aber nur ${source.count} in deiner Sammlung vorhanden.`
             );
           }
         }
 
         const requestedMain =
-          numbers.length;
+          groups.reduce(
+            (sum, group) =>
+              sum + group.numbers.length,
+            0
+          );
 
         const requestedTotal =
           requestedMain +
@@ -6324,20 +6288,14 @@ function Decks({
             ? 100
             : 60;
 
-        if (
-          requestedTotal >
-          targetSize
-        ) {
+        if (requestedTotal > targetSize) {
           pushError(
             bulkDeckFormat ===
               "commander"
               ? `Das Commander-Deck hätte ${requestedTotal} Karten inklusive Commander. Erlaubt sind genau 100.`
               : `Das Standard-Deck hätte ${requestedTotal} Karten. Für den Bulk-Import sind maximal 60 Karten vorgesehen.`
           );
-        } else if (
-          requestedTotal <
-          targetSize
-        ) {
+        } else if (requestedTotal < targetSize) {
           warnings.push(
             bulkDeckFormat ===
               "commander"
@@ -6364,33 +6322,35 @@ function Decks({
                 )
               );
 
-        const now =
-          Date.now();
+        const now = Date.now();
+        const usedSets =
+          Array.from(
+            new Set(
+              groups.map(
+                group =>
+                  group.setCode.toUpperCase()
+              )
+            )
+          );
 
-        const deck:
-          DeckRecord = {
-            id:
-              crypto.randomUUID(),
-            name:
-              bulkDeckName.trim() ||
-              "Bulk-Deck",
-            format:
-              bulkDeckFormat,
-            commanderIds:
-              commander
-                ? [commander.id]
-                : [],
-            cards:
-              mainCards,
-            sideboard: [],
-            colors,
-            createdAt:
-              now,
-            updatedAt:
-              now,
-            notes:
-              `Bulk-Deck aus Set ${bulkDeckSetCode.toUpperCase()} über Collector Numbers erstellt.`
-          };
+        const deck: DeckRecord = {
+          id: crypto.randomUUID(),
+          name:
+            bulkDeckName.trim() ||
+            "Bulk-Deck",
+          format: bulkDeckFormat,
+          commanderIds:
+            commander
+              ? [commander.id]
+              : [],
+          cards: mainCards,
+          sideboard: [],
+          colors,
+          createdAt: now,
+          updatedAt: now,
+          notes:
+            `Bulk-Deck aus ${usedSets.length} Set${usedSets.length === 1 ? "" : "s"} (${usedSets.join(", ")}) über Collector Numbers erstellt.`
+        };
 
         setBulkDeckPreview({
           deck,
@@ -6406,7 +6366,6 @@ function Decks({
           "Bulk-Deck konnte nicht geprüft werden:",
           error
         );
-
         alert(
           "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden."
         );
@@ -7288,97 +7247,157 @@ function Decks({
             </label>
           </div>
 
-          <div className="two">
+          {bulkDeckFormat ===
+            "commander" && (
             <label>
-              Set
-
+              Commander
               <select
-                value={bulkDeckSetCode}
+                value={bulkDeckCommanderId}
                 onChange={e => {
-                  setBulkDeckSetCode(
+                  setBulkDeckCommanderId(
                     e.target.value
                   );
-                  setBulkDeckPreview(
-                    null
-                  );
+                  setBulkDeckPreview(null);
                 }}
-                disabled={
-                  bulkDeckSetsBusy
-                }
               >
                 <option value="">
-                  {bulkDeckSetsBusy
-                    ? "Sets werden geladen…"
-                    : "— Set auswählen —"}
+                  — Commander wählen —
                 </option>
-
-                {bulkDeckSets.map(
-                  set => (
+                {bulkCommanderOptions.map(
+                  card => (
                     <option
-                      key={set.id}
-                      value={set.code}
+                      key={card.id}
+                      value={card.id}
                     >
-                      {set.name} ({set.code.toUpperCase()})
+                      {card.name}
                     </option>
                   )
                 )}
               </select>
             </label>
+          )}
 
-            {bulkDeckFormat ===
-              "commander" && (
-              <label>
-                Commander
-
-                <select
-                  value={
-                    bulkDeckCommanderId
-                  }
-                  onChange={e => {
-                    setBulkDeckCommanderId(
-                      e.target.value
-                    );
-                    setBulkDeckPreview(
-                      null
-                    );
-                  }}
+          <div className="deck-list">
+            {bulkDeckGroups.map(
+              (group, index) => (
+                <div
+                  className="panel"
+                  key={group.id}
                 >
-                  <option value="">
-                    — Commander wählen —
-                  </option>
-
-                  {bulkCommanderOptions.map(
-                    card => (
-                      <option
-                        key={card.id}
-                        value={card.id}
+                  <div className="two">
+                    <label>
+                      Set {index + 1}
+                      <select
+                        value={group.setCode}
+                        onChange={e => {
+                          const value =
+                            e.target.value;
+                          setBulkDeckGroups(
+                            current =>
+                              current.map(
+                                item =>
+                                  item.id ===
+                                  group.id
+                                    ? {
+                                        ...item,
+                                        setCode:
+                                          value
+                                      }
+                                    : item
+                              )
+                          );
+                          setBulkDeckPreview(null);
+                        }}
+                        disabled={bulkDeckSetsBusy}
                       >
-                        {card.name}
-                      </option>
-                    )
+                        <option value="">
+                          {bulkDeckSetsBusy
+                            ? "Sets werden geladen…"
+                            : "— Set auswählen —"}
+                        </option>
+                        {bulkDeckSets.map(
+                          set => (
+                            <option
+                              key={set.id}
+                              value={set.code}
+                            >
+                              {set.name} ({set.code.toUpperCase()})
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </label>
+
+                    <label>
+                      Collector Numbers
+                      <textarea
+                        value={group.numbers}
+                        onChange={e => {
+                          const value =
+                            e.target.value;
+                          setBulkDeckGroups(
+                            current =>
+                              current.map(
+                                item =>
+                                  item.id ===
+                                  group.id
+                                    ? {
+                                        ...item,
+                                        numbers:
+                                          value
+                                      }
+                                    : item
+                              )
+                          );
+                          setBulkDeckPreview(null);
+                        }}
+                        rows={4}
+                        placeholder="z. B. 12, 18, 23, 56"
+                      />
+                    </label>
+                  </div>
+
+                  {bulkDeckGroups.length > 1 && (
+                    <button
+                      className="danger ghost"
+                      onClick={() => {
+                        setBulkDeckGroups(
+                          current =>
+                            current.filter(
+                              item =>
+                                item.id !==
+                                group.id
+                            )
+                        );
+                        setBulkDeckPreview(null);
+                      }}
+                    >
+                      Set-Block entfernen
+                    </button>
                   )}
-                </select>
-              </label>
+                </div>
+              )
             )}
           </div>
 
-          <label>
-            Collector Numbers
-
-            <textarea
-              value={bulkDeckNumbers}
-              onChange={e => {
-                setBulkDeckNumbers(
-                  e.target.value
-                );
-                setBulkDeckPreview(
-                  null
-                );
-              }}
-              rows={6}
-              placeholder="z. B. 12, 18, 23, 23, 56"
-            />
-          </label>
+          <button
+            className="secondary"
+            onClick={() => {
+              setBulkDeckGroups(
+                current => [
+                  ...current,
+                  {
+                    id: crypto.randomUUID(),
+                    setCode: "",
+                    numbers: ""
+                  }
+                ]
+              );
+              setBulkDeckPreview(null);
+            }}
+          >
+            + weiteres Set
+          </button>
 
           {bulkDeckFormat ===
             "commander" && (
@@ -7395,10 +7414,13 @@ function Decks({
               }
               disabled={
                 bulkDeckBusy ||
-                !bulkDeckSetCode ||
-                parseCollectorNumbers(
-                  bulkDeckNumbers
-                ).length === 0 ||
+                !bulkDeckGroups.some(
+                  group =>
+                    group.setCode &&
+                    parseCollectorNumbers(
+                      group.numbers
+                    ).length > 0
+                ) ||
                 (
                   bulkDeckFormat ===
                     "commander" &&
@@ -7456,12 +7478,10 @@ function Decks({
                 {bulkDeckPreview.rows.map(
                   row => (
                     <div
-                      key={
-                        row.collectorNumber
-                      }
+                      key={`${row.setCode}-${row.collectorNumber}`}
                     >
                       <span>
-                        #{row.collectorNumber}
+                        {row.setCode.toUpperCase()} #{row.collectorNumber}
                         {row.name
                           ? ` · ${row.name}`
                           : " · nicht gefunden"}
@@ -7893,6 +7913,12 @@ function Decks({
         )
       );
 
+    const bracketEstimate =
+      commanderBracketEstimate(
+        d,
+        pool
+      );
+
     return (
       <article
         className="panel saved-deck-card"
@@ -7995,6 +8021,12 @@ function Decks({
               }
               {" · "}
               {totalWithCommanders} Karten
+              {bracketEstimate && (
+                <>
+                  {" · "}
+                  {bracketEstimate.label}
+                </>
+              )}
             </div>
           </div>
 
@@ -8296,6 +8328,12 @@ function DeckEditor({
   const totalCards =
     mainDeckCount +
     commanderCount;
+
+  const bracketEstimate =
+    commanderBracketEstimate(
+      d,
+      pool
+    );
 
   const commanderMainTarget =
     100 -
@@ -8818,7 +8856,12 @@ function DeckEditor({
           format ===
           "commander"
             ? current.colors
-            : []
+            : [],
+        cedh:
+          format ===
+          "commander"
+            ? current.cedh
+            : false
       }));
 
       setAnalysisText("");
@@ -9082,6 +9125,45 @@ function DeckEditor({
               </span>
             </div>
           )}
+
+        {d.format ===
+          "commander" && (
+          <label className="row">
+            <input
+              type="checkbox"
+              checked={Boolean(d.cedh)}
+              onChange={e => {
+                setD(current => ({
+                  ...current,
+                  cedh:
+                    e.target.checked
+                }));
+                setAnalysisText("");
+              }}
+            />
+            Dieses Deck ist gezielt für cEDH gebaut (Bracket 5)
+          </label>
+        )}
+
+        {bracketEstimate && (
+          <div className="ai-box">
+            <strong>
+              {bracketEstimate.label}
+            </strong>
+            <div className="muted">
+              Schätzung nach den Wizards-Commander-Bracket-Leitlinien. Spielabsicht und Zwei-Karten-Kombos lassen sich nicht vollständig automatisch aus der Deckliste bestimmen.
+            </div>
+            <div className="deck-list">
+              {bracketEstimate.reasons.map(
+                reason => (
+                  <div key={reason}>
+                    <span>{reason}</span>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="stats">
           <div>

@@ -56,6 +56,7 @@ export interface ScryfallCard {
   }>;
 
   legalities?: Record<string, string>;
+  game_changer?: boolean;
   rarity?: string;
   set_name?: string;
   prices?: Record<string, string | null>;
@@ -351,6 +352,7 @@ export function normalizeCard(
     imageUri: imageFor(card),
     imageUris: card.image_uris ?? face?.image_uris,
     legalities: card.legalities,
+    gameChanger: card.game_changer === true,
     isBasicLand: /^Basic Land\b/i.test(card.type_line ?? "")
   };
 }

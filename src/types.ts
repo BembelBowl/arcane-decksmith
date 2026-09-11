@@ -39,6 +39,7 @@ export interface CardRecord {
   imageUri?: string;
   imageUris?: { small?: string; normal?: string; large?: string };
   legalities?: Record<string, string>;
+  gameChanger?: boolean;
   isBasicLand?: boolean;
 }
 
@@ -68,4 +69,5 @@ export interface DeckRecord {
   updatedAt: number;
   notes?: string;
   score?: number;
+  cedh?: boolean;
 }
