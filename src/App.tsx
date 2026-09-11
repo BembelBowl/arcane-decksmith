@@ -7471,56 +7471,69 @@ function Decks({
             </label>
           )}
 
-          <div className="deck-list">
-            {bulkDeckGroups.map(
-              (group, index) => (
-                <div
-                  className="panel"
-                  key={group.id}
-                >
-                  <div className="two">
-                    <label>
-                      Set {index + 1}
-                      <select
-                        value={group.setCode}
-                        onChange={e => {
-                          const value =
-                            e.target.value;
-                          setBulkDeckGroups(
-                            current =>
-                              current.map(
-                                item =>
-                                  item.id ===
-                                  group.id
-                                    ? {
-                                        ...item,
-                                        setCode:
-                                          value
-                                      }
-                                    : item
-                              )
-                          );
-                          setBulkDeckPreview(null);
-                        }}
-                        disabled={bulkDeckSetsBusy}
-                      >
-                        <option value="">
-                          {bulkDeckSetsBusy
-                            ? "Sets werden geladen…"
-                            : "— Set auswählen —"}
-                        </option>
-                        {bulkDeckSets.map(
-                          set => (
-                            <option
-                              key={set.id}
-                              value={set.code}
-                            >
-                              {set.name} ({set.code.toUpperCase()})
-                            </option>
-                          )
-                        )}
-                      </select>
-                    </label>
+        <div className="deck-list">
+  {bulkDeckGroups.map(
+    (group, index) => (
+      <div
+        className="panel"
+        key={group.id}
+      >
+        <div className="two">
+          <label>
+            Set {index + 1}
+            <select
+              value={group.setCode}
+              onChange={e => {
+                const value =
+                  e.target.value;
+
+                setBulkDeckGroups(
+                  current =>
+                    current.map(
+                      item =>
+                        item.id ===
+                        group.id
+                          ? {
+                              ...item,
+                              setCode:
+                                value
+                            }
+                          : item
+                    )
+                );
+
+                setBulkDeckPreview(null);
+              }}
+              disabled={bulkDeckSetsBusy}
+            >
+              <option value="">
+                {bulkDeckSetsBusy
+                  ? "Sets werden geladen…"
+                  : "— Set auswählen —"}
+              </option>
+
+              {[...bulkDeckSets]
+                .sort((a, b) =>
+                  a.name.localeCompare(
+                    b.name,
+                    "de",
+                    {
+                      sensitivity: "base"
+                    }
+                  )
+                )
+                .map(
+                  set => (
+                    <option
+                      key={set.id}
+                      value={set.code}
+                    >
+                      {set.name} ({set.code.toUpperCase()})
+                    </option>
+                  )
+                )}
+            </select>
+          </label>
 
                     <label>
                       Collector Numbers
