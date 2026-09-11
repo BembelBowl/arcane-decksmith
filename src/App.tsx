@@ -5950,6 +5950,8 @@ function Decks({
       deck: DeckRecord;
       requestedCards: number;
       importedCards: number;
+      collectionUpdates: CardRecord[];
+      addedCopies: number;
       issues: string[];
       formatDetectedBy: string;
     } | null>(null);
@@ -6759,7 +6761,8 @@ function Decks({
     };
 
   const previewDeckImport =
-    () => {
+    async () => {
+      setImportBusy(true);
       const parsed =
         parseDeckList(
           importText
@@ -6802,6 +6805,7 @@ function Decks({
         setImportPreview(
           null
         );
+        setImportBusy(false);
 
         return;
       }
@@ -6835,6 +6839,343 @@ function Decks({
       const issues:
         string[] = [];
 
+      // Für Datei-Importe wird zuerst eine virtuelle Sammlung aufgebaut.
+      // Fehlende Karten bzw. fehlende Exemplare werden dabei über Scryfall
+      // aufgelöst und für das spätere Speichern vorgemerkt.
+      const workingPool =
+        pool.map(card => ({
+          ...card,
+          ...(card.finishCounts
+            ? {
+                finishCounts: {
+                  ...card.finishCounts
+                }
+              }
+            : {})
+        }));
+
+      const collectionUpdatesById =
+        new Map<
+          string,
+          CardRecord
+        >();
+
+      const plannedUsedById =
+        new Map<
+          string,
+          number
+        >();
+
+      let addedCopies = 0;
+
+      const rowMatches =
+        (
+          row:
+            Extract<
+              typeof cardRows[number],
+              {
+                kind:
+                  "card";
+              }
+            >
+        ) => {
+          let matches =
+            workingPool.filter(
+              card =>
+                card.name.toLowerCase() ===
+                row.name.toLowerCase()
+            );
+
+          if (row.set) {
+            matches =
+              matches.filter(
+                card =>
+                  card.set.toLowerCase() ===
+                  row.set!.toLowerCase()
+              );
+          }
+
+          if (
+            row.collectorNumber
+          ) {
+            matches =
+              matches.filter(
+                card =>
+                  card.collectorNumber.toLowerCase() ===
+                  row.collectorNumber!.toLowerCase()
+              );
+          }
+
+          return matches;
+        };
+
+      const addMissingCopies =
+        (
+          source:
+            CardRecord,
+          amount:
+            number
+        ) => {
+          if (amount <= 0) {
+            return;
+          }
+
+          const current =
+            collectionUpdatesById.get(
+              source.id
+            ) ??
+            pool.find(
+              card =>
+                card.id ===
+                source.id
+            ) ??
+            source;
+
+          const finishes =
+            source.availableFinishes ??
+            current.availableFinishes ??
+            [];
+
+          const finish:
+            CardFinish =
+              finishes.includes(
+                "nonfoil"
+              )
+                ? "nonfoil"
+                : "foil";
+
+          const counts =
+            finishCountsFor(
+              current
+            );
+
+          const nextCounts = {
+            ...counts,
+            [finish]:
+              counts[finish] +
+              amount
+          };
+
+          const updated:
+            CardRecord = {
+              ...source,
+              ...current,
+              count:
+                current.count +
+                amount,
+              finishCounts:
+                nextCounts,
+              availableFinishes:
+                source.availableFinishes ??
+                current.availableFinishes,
+              priceEur:
+                source.priceEur ??
+                current.priceEur,
+              priceEurFoil:
+                source.priceEurFoil ??
+                current.priceEurFoil,
+              priceUpdatedAt:
+                source.priceUpdatedAt ??
+                current.priceUpdatedAt,
+              gameChanger:
+                source.gameChanger ??
+                current.gameChanger,
+              foil:
+                legacyFoilFlag(
+                  nextCounts
+                ),
+              updatedAt:
+                Date.now()
+            };
+
+          collectionUpdatesById.set(
+            updated.id,
+            updated
+          );
+
+          const index =
+            workingPool.findIndex(
+              card =>
+                card.id ===
+                updated.id
+            );
+
+          if (index >= 0) {
+            workingPool[index] =
+              updated;
+          } else {
+            workingPool.push(
+              updated
+            );
+          }
+
+          addedCopies += amount;
+        };
+
+      try {
+        for (
+          const row
+          of cardRows
+        ) {
+          let matches =
+            rowMatches(
+              row
+            );
+
+          let remaining =
+            row.count;
+
+          for (
+            const source
+            of matches
+          ) {
+            if (
+              remaining <= 0
+            ) {
+              break;
+            }
+
+            const planned =
+              plannedUsedById.get(
+                source.id
+              ) ??
+              0;
+
+            const free =
+              Math.max(
+                0,
+                source.count -
+                  planned
+              );
+
+            const use =
+              Math.min(
+                remaining,
+                free
+              );
+
+            if (use > 0) {
+              plannedUsedById.set(
+                source.id,
+                planned + use
+              );
+              remaining -= use;
+            }
+          }
+
+          if (remaining <= 0) {
+            continue;
+          }
+
+          let source =
+            matches[0];
+
+          if (!source) {
+            let scryfallCard:
+              ScryfallCard |
+              undefined;
+
+            if (
+              row.set &&
+              row.collectorNumber
+            ) {
+              const lookup =
+                await getCardsBySetAndCollectorNumbers(
+                  row.set,
+                  [
+                    row.collectorNumber
+                  ]
+                );
+
+              scryfallCard =
+                lookup.cards[0];
+            } else {
+              const found =
+                await searchCards(
+                  row.name
+                );
+
+              let candidates =
+                found.filter(
+                  card =>
+                    card.name.toLowerCase() ===
+                    row.name.toLowerCase()
+                );
+
+              if (row.set) {
+                candidates =
+                  candidates.filter(
+                    card =>
+                      card.set.toLowerCase() ===
+                      row.set!.toLowerCase()
+                  );
+              }
+
+              if (
+                row.collectorNumber
+              ) {
+                candidates =
+                  candidates.filter(
+                    card =>
+                      card.collector_number.toLowerCase() ===
+                      row.collectorNumber!.toLowerCase()
+                  );
+              }
+
+              scryfallCard =
+                candidates[0] ??
+                found[0];
+            }
+
+            if (!scryfallCard) {
+              issues.push(
+                `${row.count}× ${row.name}: weder in deiner Sammlung noch bei Scryfall gefunden.`
+              );
+              continue;
+            }
+
+            const finishes =
+              availableFinishes(
+                scryfallCard
+              );
+
+            const finish:
+              CardFinish =
+                finishes.includes(
+                  "nonfoil"
+                )
+                  ? "nonfoil"
+                  : "foil";
+
+            source =
+              normalizeCard(
+                scryfallCard,
+                0,
+                finish === "foil"
+              );
+
+            workingPool.push(
+              source
+            );
+          }
+
+          addMissingCopies(
+            source,
+            remaining
+          );
+
+          plannedUsedById.set(
+            source.id,
+            (
+              plannedUsedById.get(
+                source.id
+              ) ??
+              0
+            ) +
+              remaining
+          );
+        }
+
       const usedById =
         new Map<
           string,
@@ -6857,7 +7198,7 @@ function Decks({
           name:
             string
         ) =>
-          pool.filter(
+          workingPool.filter(
             card =>
               card.name.toLowerCase() ===
               name.toLowerCase()
@@ -6871,7 +7212,7 @@ function Decks({
           const needle =
             name.toLowerCase();
 
-          return pool.filter(
+          return workingPool.filter(
             card =>
               card.name
                 .toLowerCase()
@@ -7209,7 +7550,7 @@ function Decks({
           1
         ) {
           const primary =
-            pool.find(
+            workingPool.find(
               card =>
                 card.id ===
                 commanderIds[0]
@@ -7218,7 +7559,7 @@ function Decks({
           if (
             primary &&
             !commanderCandidates(
-              pool
+              workingPool
             ).some(
               card =>
                 card.id ===
@@ -7236,14 +7577,14 @@ function Decks({
           2
         ) {
           const primary =
-            pool.find(
+            workingPool.find(
               card =>
                 card.id ===
                 commanderIds[0]
             );
 
           const second =
-            pool.find(
+            workingPool.find(
               card =>
                 card.id ===
                 commanderIds[1]
@@ -7253,7 +7594,7 @@ function Decks({
             primary &&
             second &&
             !commanderPairCandidates(
-              pool,
+              workingPool,
               primary
             ).some(
               card =>
@@ -7321,7 +7662,7 @@ function Decks({
         commanderIds
           .map(
             id =>
-              pool.find(
+              workingPool.find(
                 card =>
                   card.id ===
                   id
@@ -7344,7 +7685,7 @@ function Decks({
               new Set(
                 mainCards.flatMap(
                   deckCard =>
-                    pool.find(
+                    workingPool.find(
                       card =>
                         card.id ===
                         deckCard.id
@@ -7420,9 +7761,26 @@ function Decks({
         deck,
         requestedCards,
         importedCards,
+        collectionUpdates:
+          Array.from(
+            collectionUpdatesById.values()
+          ),
+        addedCopies,
         issues,
         formatDetectedBy
       });
+      } catch (error) {
+        console.error(
+          "Deckdatei konnte nicht vollständig geprüft werden:",
+          error
+        );
+
+        alert(
+          "Die Deckdatei konnte nicht vollständig geprüft werden. Bitte versuche es erneut."
+        );
+      } finally {
+        setImportBusy(false);
+      }
     };
 
   const applyDeckImport =
@@ -7444,11 +7802,21 @@ function Decks({
       setImportBusy(true);
 
       try {
-        await onSave(
-          importPreview.deck
+        await onBulkSave(
+          importPreview.deck,
+          importPreview.collectionUpdates
         );
 
         closeDeckImport();
+      } catch (error) {
+        console.error(
+          "Deckdatei konnte nicht gespeichert werden:",
+          error
+        );
+
+        alert(
+          "Das importierte Deck konnte nicht vollständig gespeichert werden. Bereits geschriebene Sammlungsänderungen wurden soweit möglich zurückgesetzt. Bitte versuche es erneut."
+        );
       } finally {
         setImportBusy(false);
       }
@@ -7985,8 +8353,8 @@ function Decks({
           <div className="row">
             <button
               className="primary"
-              onClick={
-                previewDeckImport
+              onClick={() =>
+                void previewDeckImport()
               }
               disabled={
                 !importText.trim() ||
