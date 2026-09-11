@@ -1150,6 +1150,15 @@ for (
                     pool={collection}
                     onDelete={delDeck}
                     onSave={persistDeck}
+                    onAddCards={async next => {
+                      for (const card of next) {
+                        await saveCard(uid, card);
+                      }
+
+                      setCollection(
+                        await loadCollection(uid)
+                      );
+                    }}
                     demoMode={demoMode}
                   />
                 )}
@@ -1203,20 +1212,20 @@ function Search({
       clearTimeout(t);
   }, [q]);
 
-const go = async () => {
-  setSuggestions([]);
-  setBusy(true);
+  const go = async () => {
+    setSuggestions([]);
+    setBusy(true);
 
-  try {
-    setResults(
-      await searchCards(q)
-    );
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    setBusy(false);
-  }
-};
+    try {
+      setResults(
+        await searchCards(q)
+      );
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
  return (
   <section>
@@ -1339,7 +1348,6 @@ const go = async () => {
   </section>
 );
 }
-
 function SearchCollectionTools({
   cards,
   onImport
@@ -5748,6 +5756,7 @@ function Decks({
   pool,
   onDelete,
   onSave,
+  onAddCards,
   demoMode
 }: {
   decks: DeckRecord[];
@@ -5757,6 +5766,9 @@ function Decks({
   ) => Promise<void>;
   onSave: (
     d: DeckRecord
+  ) => Promise<void>;
+  onAddCards: (
+    cards: CardRecord[]
   ) => Promise<void>;
   demoMode: boolean;
 }) {
@@ -5876,6 +5888,8 @@ function Decks({
       }>;
       requestedCards: number;
       resolvedCards: number;
+      collectionUpdates: CardRecord[];
+      addedCopies: number;
       errors: string[];
       warnings: string[];
     } | null>(null);
@@ -6039,6 +6053,8 @@ function Decks({
         const warnings: string[] = [];
         const mainCards:
           DeckRecord["cards"] = [];
+        const sourceById =
+          new Map<string, CardRecord>();
         let resolvedCards = 0;
 
         const pushError =
@@ -6109,7 +6125,7 @@ function Decks({
               continue;
             }
 
-            const source =
+            const ownedSource =
               pool.find(
                 card =>
                   card.id ===
@@ -6124,9 +6140,25 @@ function Decks({
                   )
               );
 
-            if (!source) {
+            const finishes =
+              availableFinishes(
+                scryfallCard
+              );
+            const defaultFinish:
+              CardFinish | undefined =
+                finishes.includes(
+                  "nonfoil"
+                )
+                  ? "nonfoil"
+                  : finishes.includes(
+                      "foil"
+                    )
+                    ? "foil"
+                    : undefined;
+
+            if (!defaultFinish) {
               const message =
-                `${group.setCode.toUpperCase()} #${scryfallCard.collector_number} ${scryfallCard.name}: diese Ausgabe ist nicht in deiner Sammlung vorhanden.`;
+                `${group.setCode.toUpperCase()} #${scryfallCard.collector_number} ${scryfallCard.name}: Scryfall meldet kein unterstütztes Finish.`;
               rowErrors.push(message);
               pushError(message);
               rows.push({
@@ -6139,6 +6171,41 @@ function Decks({
               });
               continue;
             }
+
+            const normalized =
+              normalizeCard(
+                scryfallCard,
+                Math.max(
+                  count,
+                  ownedSource?.count ?? 0
+                ),
+                defaultFinish === "foil"
+              );
+
+            const source: CardRecord =
+              ownedSource
+                ? {
+                    ...ownedSource,
+                    availableFinishes:
+                      normalized.availableFinishes,
+                    priceEur:
+                      normalized.priceEur ??
+                      ownedSource.priceEur,
+                    priceEurFoil:
+                      normalized.priceEurFoil ??
+                      ownedSource.priceEurFoil,
+                    priceUpdatedAt:
+                      normalized.priceUpdatedAt,
+                    gameChanger:
+                      normalized.gameChanger ??
+                      ownedSource.gameChanger
+                  }
+                : normalized;
+
+            sourceById.set(
+              source.id,
+              source
+            );
 
             if (
               commander &&
@@ -6184,6 +6251,12 @@ function Decks({
 
             if (existing) {
               existing.count += count;
+              existing.available =
+                Math.max(
+                  existing.available,
+                  existing.count,
+                  source.count
+                );
             } else {
               mainCards.push({
                 id: source.id,
@@ -6197,7 +6270,10 @@ function Decks({
                 reason:
                   "Per Set und Collector Number hinzugefügt.",
                 available:
-                  source.count
+                  Math.max(
+                    source.count,
+                    count
+                  )
               });
             }
 
@@ -6230,6 +6306,9 @@ function Decks({
 
         for (const card of mainCards) {
           const source =
+            sourceById.get(
+              card.id
+            ) ??
             pool.find(
               item =>
                 item.id === card.id
@@ -6258,12 +6337,117 @@ function Decks({
               `${card.name}: insgesamt ${totalForName} Exemplare eingegeben, erlaubt sind höchstens ${limitLabel}.`
             );
           }
+        }
 
-          if (card.count > source.count) {
-            pushError(
-              `${card.name}: ${card.count} Exemplare dieser Ausgabe eingegeben, aber nur ${source.count} in deiner Sammlung vorhanden.`
+        const collectionUpdates:
+          CardRecord[] = [];
+        let addedCopies = 0;
+
+        for (const deckCard of mainCards) {
+          const source =
+            sourceById.get(
+              deckCard.id
             );
+
+          if (!source) {
+            continue;
           }
+
+          const owned =
+            pool.find(
+              card =>
+                card.id ===
+                  deckCard.id
+            );
+          const ownedCount =
+            owned?.count ?? 0;
+          const missingCount =
+            Math.max(
+              0,
+              deckCard.count -
+                ownedCount
+            );
+
+          if (missingCount === 0) {
+            continue;
+          }
+
+          const finishes =
+            source.availableFinishes ?? [];
+          const finish:
+            CardFinish =
+              finishes.includes(
+                "nonfoil"
+              )
+                ? "nonfoil"
+                : "foil";
+
+          if (owned) {
+            const counts =
+              finishCountsFor(
+                owned
+              );
+            const nextCounts = {
+              ...counts,
+              [finish]:
+                counts[finish] +
+                missingCount
+            };
+
+            collectionUpdates.push({
+              ...source,
+              ...owned,
+              count:
+                ownedCount +
+                missingCount,
+              finishCounts:
+                nextCounts,
+              availableFinishes:
+                source.availableFinishes,
+              priceEur:
+                source.priceEur ??
+                owned.priceEur,
+              priceEurFoil:
+                source.priceEurFoil ??
+                owned.priceEurFoil,
+              priceUpdatedAt:
+                source.priceUpdatedAt,
+              gameChanger:
+                source.gameChanger ??
+                owned.gameChanger,
+              foil:
+                legacyFoilFlag(
+                  nextCounts
+                ),
+              updatedAt:
+                Date.now()
+            });
+          } else {
+            const counts = {
+              nonfoil: 0,
+              foil: 0
+            };
+            counts[finish] =
+              missingCount;
+
+            collectionUpdates.push({
+              ...source,
+              count: missingCount,
+              finishCounts: counts,
+              foil:
+                finish === "foil",
+              updatedAt:
+                Date.now()
+            });
+          }
+
+          addedCopies += missingCount;
+        }
+
+        if (addedCopies > 0) {
+          warnings.push(
+            `${addedCopies} Karte${addedCopies === 1 ? "" : "n"} aus dem Bulk-Deck ${addedCopies === 1 ? "ist" : "sind"} noch nicht in ausreichender Anzahl in deiner Sammlung und ${addedCopies === 1 ? "wird" : "werden"} beim Speichern automatisch hinzugefügt.`
+          );
         }
 
         const requestedMain =
@@ -6313,10 +6497,8 @@ function Decks({
                 new Set(
                   mainCards.flatMap(
                     deckCard =>
-                      pool.find(
-                        card =>
-                          card.id ===
-                          deckCard.id
+                      sourceById.get(
+                        deckCard.id
                       )?.colorIdentity ??
                       []
                   )
@@ -6359,6 +6541,8 @@ function Decks({
           requestedCards:
             requestedMain,
           resolvedCards,
+          collectionUpdates,
+          addedCopies,
           errors,
           warnings
         });
@@ -6390,6 +6574,15 @@ function Decks({
       setBulkDeckBusy(true);
 
       try {
+        if (
+          bulkDeckPreview.collectionUpdates.length >
+          0
+        ) {
+          await onAddCards(
+            bulkDeckPreview.collectionUpdates
+          );
+        }
+
         await onSave(
           bulkDeckPreview.deck
         );
@@ -7189,7 +7382,7 @@ function Decks({
           </h3>
 
           <p className="muted">
-            Wähle Format und Set und gib anschließend nur die Collector Numbers ein. Doppelte Nummern zählen als mehrere Exemplare. Das Deck wird vor dem Speichern gegen deine Sammlung und die Formatregeln geprüft.
+            Wähle Format und Set und gib anschließend nur die Collector Numbers ein. Doppelte Nummern zählen als mehrere Exemplare. Karten, die noch nicht oder nicht in ausreichender Anzahl in deiner Sammlung sind, werden beim Speichern automatisch zur Sammlung hinzugefügt. Das Deck wird außerdem gegen die Formatregeln geprüft.
           </p>
 
           <div className="two">
@@ -7463,9 +7656,14 @@ function Decks({
                   {bulkDeckPreview.requestedCards}
                 </strong>
                 <br />
-                Aus der Sammlung aufgelöst: {" "}
+                Erfolgreich aufgelöst: {" "}
                 <strong>
                   {bulkDeckPreview.resolvedCards}
+                </strong>
+                <br />
+                Automatisch zur Sammlung: {" "}
+                <strong>
+                  {bulkDeckPreview.addedCopies}
                 </strong>
                 <br />
                 Deckgröße inklusive Commander: {" "}
