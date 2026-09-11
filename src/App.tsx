@@ -1217,130 +1217,127 @@ function Search({
     }
   };
 
-  return (
-    <section>
-      <style>{`
+ return (
+  <section>
+    <style>{`
+      .search-sticky-head{
+        position:sticky;
+        top:72px;
+        z-index:20;
+        margin:0 -4px 16px;
+        padding:8px 4px 12px;
+        background:linear-gradient(
+          180deg,
+          rgba(5,9,18,.98) 0%,
+          rgba(5,9,18,.94) 82%,
+          rgba(5,9,18,0) 100%
+        );
+        backdrop-filter:blur(14px);
+      }
+
+      .search-sticky-head .pagehead{
+        margin-bottom:10px;
+      }
+
+      .search-tool-actions{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin-top:8px;
+      }
+
+      @media (max-width:850px){
         .search-sticky-head{
-          position:sticky;
-          top:72px;
-          z-index:20;
-          margin:0 -4px 16px;
-          padding:8px 4px 12px;
-          background:linear-gradient(
-            180deg,
-            rgba(5,9,18,.98) 0%,
-            rgba(5,9,18,.94) 82%,
-            rgba(5,9,18,0) 100%
-          );
-          backdrop-filter:blur(14px);
+          top:112px;
         }
-
-        .search-sticky-head .pagehead{
-          margin-bottom:10px;
-        }
-
-        .search-tool-actions{
-          display:flex;
-          flex-wrap:wrap;
-          gap:8px;
-          margin-top:8px;
-        }
-
-        @media (max-width:850px){
-          .search-sticky-head{
-            top:112px;
-          }
-        }
-      `}</style>
-
-<div className="search-sticky-head">
-  <div className="pagehead">
-    <div>
-      <h2>Kartensuche</h2>
-      <p className="muted">
-        Scryfall-Suche, Import und Bulk-Hinzufügen.
-      </p>
-    </div>
-  </div>
-
-  <div className="searchbar">
-    <input
-      value={q}
-      onChange={e =>
-        setQ(e.target.value)
       }
-      onKeyDown={e =>
-        e.key === "Enter" &&
-        void go()
-      }
-      placeholder="z. B. Lightning Bolt"
-    />
+    `}</style>
 
-    <button
-      className="primary"
-      onClick={go}
-    >
-      Suchen
-    </button>
-  </div>
-</div>
+    <div className="search-sticky-head">
+      <div className="pagehead">
+        <div>
+          <h2>Kartensuche</h2>
 
-{suggestions.length > 0 && (
-  <div className="suggestions">
-    {suggestions.map(s => (
-      <button
-        key={s}
-        onClick={async () => {
-          setQ(s);
-          setSuggestions([]);
-          setBusy(true);
-
-          try {
-            setResults(
-              await searchCards(s)
-            );
-          } catch (e: any) {
-            alert(e.message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {s}
-      </button>
-    ))}
-  </div>
-)}
-
-        {suggestions.length > 0 && (
-          <div className="suggestions">
-            {suggestions.map(s => (
-              <button
-                key={s}
-                onClick={async () => {
-                  setQ(s);
-                  setSuggestions([]);
-                  setBusy(true);
-
-                  try {
-                    setResults(
-                      await searchCards(s)
-                    );
-                  } catch (e: any) {
-                    alert(e.message);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-
+          <p className="muted">
+            Scryfall-Suche, Import und Bulk-Hinzufügen.
+          </p>
+        </div>
       </div>
 
+      <div className="searchbar">
+        <input
+          value={q}
+          onChange={e =>
+            setQ(e.target.value)
+          }
+          onKeyDown={e =>
+            e.key === "Enter" &&
+            void go()
+          }
+          placeholder="z. B. Lightning Bolt"
+        />
+
+        <button
+          className="primary"
+          onClick={go}
+        >
+          Suchen
+        </button>
+      </div>
+    </div>
+
+    {suggestions.length > 0 && (
+      <div className="suggestions">
+        {suggestions.map(s => (
+          <button
+            key={s}
+            onClick={async () => {
+              setQ(s);
+              setSuggestions([]);
+              setBusy(true);
+
+              try {
+                setResults(
+                  await searchCards(s)
+                );
+              } catch (e: any) {
+                alert(e.message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+    )}
+
+    <SearchCollectionTools
+      cards={cards}
+      onImport={onImport}
+    />
+
+    {busy
+      ? (
+        <div className="loading">
+          Scryfall fragt Karten ab…
+        </div>
+      )
+      : (
+        <div className="card-grid">
+          {results.map(c => (
+            <SearchCard
+              key={c.id}
+              card={c}
+              onAdd={onAdd}
+            />
+          ))}
+        </div>
+      )}
+  </section>
+);
+}
       <SearchCollectionTools
         cards={cards}
         onImport={onImport}
