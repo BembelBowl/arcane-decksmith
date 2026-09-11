@@ -1167,6 +1167,20 @@ for (
                       const writtenIds:
                         string[] = [];
 
+                      // Firestore lehnt Felder mit dem Wert "undefined" ab.
+                      // Bei Scryfall-Karten können optionale Daten wie Preise,
+                      // Bilder oder Mana-Kosten fehlen. Vor jedem Bulk-Speichern
+                      // entfernen wir deshalb ausschließlich undefined-Felder.
+                      const cleanForFirestore =
+                        <T,>(
+                          value: T
+                        ): T =>
+                          JSON.parse(
+                            JSON.stringify(
+                              value
+                            )
+                          ) as T;
+
                       const saveCardWithRetry =
                         async (
                           card: CardRecord
@@ -1182,7 +1196,9 @@ for (
                             try {
                               await saveCard(
                                 uid,
-                                card
+                                cleanForFirestore(
+                                  card
+                                )
                               );
                               return;
                             } catch (error) {
@@ -1222,7 +1238,9 @@ for (
 
                         await saveDeck(
                           uid,
-                          deck
+                          cleanForFirestore(
+                            deck
+                          )
                         );
 
                         setCollection(
@@ -1274,7 +1292,9 @@ for (
                             if (previous) {
                               await saveCard(
                                 uid,
-                                previous
+                                cleanForFirestore(
+                                  previous
+                                )
                               );
                             } else {
                               await removeCard(
