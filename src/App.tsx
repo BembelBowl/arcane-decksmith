@@ -1520,19 +1520,6 @@ function LandingPage({
           line-height:1.7;
         }
 
-        .landing-hero-actions{
-          display:flex;
-          flex-wrap:wrap;
-          gap:10px;
-          margin-top:28px;
-        }
-
-        .landing-hero-actions button{
-          min-height:46px;
-          padding:0 18px;
-          border-radius:12px;
-        }
-
         .landing-stats{
           display:grid;
           grid-template-columns:
@@ -1723,15 +1710,6 @@ function LandingPage({
             border-radius:18px;
           }
 
-          .landing-hero-actions{
-            display:grid;
-            grid-template-columns:1fr;
-          }
-
-          .landing-hero-actions button{
-            width:100%;
-          }
-
           .landing-stats{
             grid-template-columns:1fr 1fr;
             gap:8px;
@@ -1763,26 +1741,6 @@ function LandingPage({
           baue Decks und bringe deine Listen von der Idee bis
           zum fertigen Deck an einen Ort.
         </p>
-
-        <div className="landing-hero-actions">
-          <button
-            className="primary"
-            onClick={() =>
-              onNavigate("search")
-            }
-          >
-            Karten entdecken
-          </button>
-
-          <button
-            className="secondary"
-            onClick={() =>
-              onNavigate("builder")
-            }
-          >
-            Neues Deck bauen
-          </button>
-        </div>
       </div>
 
       <div className="landing-stats">
@@ -1834,12 +1792,6 @@ function LandingPage({
             Wohin möchtest du?
           </h2>
         </div>
-
-        <p>
-          Alle Bereiche bleiben weiterhin über die Navigation
-          oben erreichbar. Hier hast du zusätzlich den direkten
-          Einstieg in deinen Workflow.
-        </p>
       </div>
 
       <div className="landing-grid">
