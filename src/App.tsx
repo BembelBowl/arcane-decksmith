@@ -1203,19 +1203,20 @@ function Search({
       clearTimeout(t);
   }, [q]);
 
-  const go = async () => {
-    setBusy(true);
+const go = async () => {
+  setSuggestions([]);
+  setBusy(true);
 
-    try {
-      setResults(
-        await searchCards(q)
-      );
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  try {
+    setResults(
+      await searchCards(q)
+    );
+  } catch (e: any) {
+    alert(e.message);
+  } finally {
+    setBusy(false);
+  }
+};
 
  return (
   <section>
