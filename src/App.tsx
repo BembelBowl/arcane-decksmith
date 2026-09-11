@@ -1150,14 +1150,156 @@ for (
                     pool={collection}
                     onDelete={delDeck}
                     onSave={persistDeck}
-                    onAddCards={async next => {
-                      for (const card of next) {
-                        await saveCard(uid, card);
-                      }
+                    onBulkSave={async (
+                      deck,
+                      cardUpdates
+                    ) => {
+                      const beforeById =
+                        new Map(
+                          collection.map(
+                            card => [
+                              card.id,
+                              card
+                            ] as const
+                          )
+                        );
 
-                      setCollection(
-                        await loadCollection(uid)
-                      );
+                      const writtenIds:
+                        string[] = [];
+
+                      const saveCardWithRetry =
+                        async (
+                          card: CardRecord
+                        ) => {
+                          let lastError:
+                            unknown = null;
+
+                          for (
+                            let attempt = 1;
+                            attempt <= 3;
+                            attempt += 1
+                          ) {
+                            try {
+                              await saveCard(
+                                uid,
+                                card
+                              );
+                              return;
+                            } catch (error) {
+                              lastError =
+                                error;
+
+                              if (
+                                attempt < 3
+                              ) {
+                                await new Promise(
+                                  resolve =>
+                                    setTimeout(
+                                      resolve,
+                                      250 *
+                                        attempt
+                                    )
+                                );
+                              }
+                            }
+                          }
+
+                          throw lastError;
+                        };
+
+                      try {
+                        for (
+                          const card
+                          of cardUpdates
+                        ) {
+                          await saveCardWithRetry(
+                            card
+                          );
+                          writtenIds.push(
+                            card.id
+                          );
+                        }
+
+                        await saveDeck(
+                          uid,
+                          deck
+                        );
+
+                        setCollection(
+                          await loadCollection(
+                            uid
+                          )
+                        );
+                        setDecks(
+                          await loadDecks(
+                            uid
+                          )
+                        );
+
+                        setPage("decks");
+                        setToast(
+                          cardUpdates.length > 0
+                            ? "Deck und Sammlung gespeichert."
+                            : "Deck gespeichert."
+                        );
+
+                        setTimeout(
+                          () =>
+                            setToast(""),
+                          2200
+                        );
+                      } catch (error) {
+                        try {
+                          await removeDeck(
+                            uid,
+                            deck.id
+                          );
+                        } catch {
+                          // Falls das Deck noch nicht geschrieben wurde,
+                          // gibt es hier nichts zu entfernen.
+                        }
+
+                        for (
+                          const id
+                          of [
+                            ...writtenIds
+                          ].reverse()
+                        ) {
+                          const previous =
+                            beforeById.get(
+                              id
+                            );
+
+                          try {
+                            if (previous) {
+                              await saveCard(
+                                uid,
+                                previous
+                              );
+                            } else {
+                              await removeCard(
+                                uid,
+                                id
+                              );
+                            }
+                          } catch {
+                            // Der ursprüngliche Fehler wird unten weitergegeben.
+                          }
+                        }
+
+                        setCollection(
+                          await loadCollection(
+                            uid
+                          )
+                        );
+                        setDecks(
+                          await loadDecks(
+                            uid
+                          )
+                        );
+
+                        throw error;
+                      }
                     }}
                     demoMode={demoMode}
                   />
@@ -5756,7 +5898,7 @@ function Decks({
   pool,
   onDelete,
   onSave,
-  onAddCards,
+  onBulkSave,
   demoMode
 }: {
   decks: DeckRecord[];
@@ -5767,7 +5909,8 @@ function Decks({
   onSave: (
     d: DeckRecord
   ) => Promise<void>;
-  onAddCards: (
+  onBulkSave: (
+    deck: DeckRecord,
     cards: CardRecord[]
   ) => Promise<void>;
   demoMode: boolean;
@@ -6574,20 +6717,21 @@ function Decks({
       setBulkDeckBusy(true);
 
       try {
-        if (
-          bulkDeckPreview.collectionUpdates.length >
-          0
-        ) {
-          await onAddCards(
-            bulkDeckPreview.collectionUpdates
-          );
-        }
-
-        await onSave(
-          bulkDeckPreview.deck
+        await onBulkSave(
+          bulkDeckPreview.deck,
+          bulkDeckPreview.collectionUpdates
         );
 
         closeBulkDeck();
+      } catch (error) {
+        console.error(
+          "Bulk-Deck konnte nicht gespeichert werden:",
+          error
+        );
+
+        alert(
+          "Das Bulk-Deck konnte nicht vollständig gespeichert werden. Bereits geschriebene Sammlungsänderungen wurden soweit möglich zurückgesetzt. Bitte versuche es erneut."
+        );
       } finally {
         setBulkDeckBusy(false);
       }
