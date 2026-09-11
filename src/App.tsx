@@ -51,12 +51,15 @@ import {
   euroPriceFor,
   getCard,
   getCards,
+  getCardsBySetAndCollectorNumbers,
   getPrintings,
+  getSets,
   imageFor,
   searchCards,
   scryfallUrl,
   normalizeCard,
-  type ScryfallCard
+  type ScryfallCard,
+  type ScryfallSet
 } from "./scryfall";
 import {
   buildDeck,
@@ -288,6 +291,39 @@ function legacyFoilFlag(
     counts.foil > 0 &&
     counts.nonfoil === 0
   );
+}
+
+function parseCollectorNumbers(
+  input: string
+): string[] {
+  return input
+    .split(/[\s,;]+/)
+    .map(value =>
+      value.trim()
+    )
+    .filter(Boolean);
+}
+
+function collectorNumberCounts(
+  numbers: string[]
+): Map<string, number> {
+  const counts =
+    new Map<string, number>();
+
+  for (
+    const number
+    of numbers
+  ) {
+    const key =
+      number.toLowerCase();
+
+    counts.set(
+      key,
+      (counts.get(key) ?? 0) + 1
+    );
+  }
+
+  return counts;
 }
 
 function colorGroupName(colors: string[]): string {
@@ -1504,6 +1540,60 @@ function Collection({
       issues: string[];
     } | null>(null);
 
+  const [
+    showBulkAdd,
+    setShowBulkAdd
+  ] =
+    useState(false);
+
+  const [
+    bulkSetCode,
+    setBulkSetCode
+  ] =
+    useState("");
+
+  const [
+    bulkNumbers,
+    setBulkNumbers
+  ] =
+    useState("");
+
+  const [
+    bulkSets,
+    setBulkSets
+  ] =
+    useState<ScryfallSet[]>([]);
+
+  const [
+    bulkSetsBusy,
+    setBulkSetsBusy
+  ] =
+    useState(false);
+
+  const [
+    bulkBusy,
+    setBulkBusy
+  ] =
+    useState(false);
+
+  const [
+    bulkPreview,
+    setBulkPreview
+  ] =
+    useState<{
+      cards: CardRecord[];
+      rows: Array<{
+        collectorNumber: string;
+        count: number;
+        name?: string;
+        finish?: CardFinish;
+        found: boolean;
+      }>;
+      requestedCopies: number;
+      resolvedCopies: number;
+      issues: string[];
+    } | null>(null);
+
   const filtered =
     useMemo(
       () =>
@@ -2000,6 +2090,330 @@ function Collection({
     setShowImport(false);
   };
 
+  const resetBulkAdd = () => {
+    setBulkNumbers("");
+    setBulkPreview(null);
+  };
+
+  const closeBulkAdd = () => {
+    resetBulkAdd();
+    setShowBulkAdd(false);
+  };
+
+  const ensureBulkSets =
+    async () => {
+      if (
+        bulkSets.length > 0 ||
+        bulkSetsBusy
+      ) {
+        return;
+      }
+
+      setBulkSetsBusy(true);
+
+      try {
+        setBulkSets(
+          await getSets()
+        );
+      } catch (error) {
+        console.error(
+          "Scryfall-Sets konnten nicht geladen werden:",
+          error
+        );
+
+        alert(
+          "Die Set-Liste konnte nicht von Scryfall geladen werden."
+        );
+      } finally {
+        setBulkSetsBusy(false);
+      }
+    };
+
+  const toggleBulkAdd = () => {
+    const next =
+      !showBulkAdd;
+
+    if (next) {
+      closeImport();
+      void ensureBulkSets();
+    }
+
+    setShowBulkAdd(next);
+  };
+
+  const previewBulkAdd =
+    async () => {
+      const numbers =
+        parseCollectorNumbers(
+          bulkNumbers
+        );
+
+      if (
+        !bulkSetCode ||
+        numbers.length === 0
+      ) {
+        return;
+      }
+
+      setBulkBusy(true);
+      setBulkPreview(null);
+
+      try {
+        const counts =
+          collectorNumberCounts(
+            numbers
+          );
+
+        const lookup =
+          await getCardsBySetAndCollectorNumbers(
+            bulkSetCode,
+            Array.from(
+              counts.keys()
+            )
+          );
+
+        const byCollectorNumber =
+          new Map(
+            lookup.cards.map(
+              card => [
+                card.collector_number
+                  .toLowerCase(),
+                card
+              ] as const
+            )
+          );
+
+        const next =
+          cards.map(
+            card => ({
+              ...card,
+              ...(card.finishCounts
+                ? {
+                    finishCounts: {
+                      ...card.finishCounts
+                    }
+                  }
+                : {})
+            })
+          );
+
+        const rows:
+          Array<{
+            collectorNumber: string;
+            count: number;
+            name?: string;
+            finish?: CardFinish;
+            found: boolean;
+          }> = [];
+
+        const issues:
+          string[] = [];
+
+        let resolvedCopies = 0;
+
+        for (
+          const [
+            collectorNumber,
+            count
+          ]
+          of counts
+        ) {
+          const scryfallCard =
+            byCollectorNumber.get(
+              collectorNumber
+            );
+
+          if (!scryfallCard) {
+            rows.push({
+              collectorNumber,
+              count,
+              found: false
+            });
+
+            issues.push(
+              `#${collectorNumber}: in diesem Set nicht gefunden.`
+            );
+
+            continue;
+          }
+
+          const finishes =
+            availableFinishes(
+              scryfallCard
+            );
+
+          const finish:
+            CardFinish |
+            undefined =
+              finishes.includes(
+                "nonfoil"
+              )
+                ? "nonfoil"
+                : finishes.includes(
+                    "foil"
+                  )
+                  ? "foil"
+                  : undefined;
+
+          if (!finish) {
+            rows.push({
+              collectorNumber,
+              count,
+              name:
+                scryfallCard.name,
+              found: false
+            });
+
+            issues.push(
+              `#${collectorNumber} ${scryfallCard.name}: Scryfall meldet kein unterstütztes Finish.`
+            );
+
+            continue;
+          }
+
+          const normalized =
+            normalizeCard(
+              scryfallCard,
+              count,
+              finish === "foil"
+            );
+
+          const existing =
+            next.find(
+              card =>
+                card.id ===
+                  normalized.id ||
+                (
+                  card.oracleId ===
+                    normalized.oracleId &&
+                  card.set.toLowerCase() ===
+                    normalized.set.toLowerCase() &&
+                  card.collectorNumber.toLowerCase() ===
+                    normalized.collectorNumber.toLowerCase()
+                )
+            );
+
+          if (existing) {
+            const finishCounts =
+              finishCountsFor(
+                existing
+              );
+
+            const nextCounts = {
+              ...finishCounts,
+              [finish]:
+                finishCounts[finish] +
+                count
+            };
+
+            existing.count +=
+              count;
+
+            existing.finishCounts =
+              nextCounts;
+
+            existing.availableFinishes =
+              Array.from(
+                new Set<CardFinish>([
+                  ...(existing.availableFinishes ?? []),
+                  ...(normalized.availableFinishes ?? [])
+                ])
+              );
+
+            existing.setName =
+              normalized.setName ??
+              existing.setName;
+
+            if (
+              normalized.priceEur !==
+              undefined
+            ) {
+              existing.priceEur =
+                normalized.priceEur;
+            }
+
+            if (
+              normalized.priceEurFoil !==
+              undefined
+            ) {
+              existing.priceEurFoil =
+                normalized.priceEurFoil;
+            }
+
+            existing.priceUpdatedAt =
+              normalized.priceUpdatedAt;
+
+            existing.foil =
+              legacyFoilFlag(
+                nextCounts
+              );
+
+            existing.updatedAt =
+              Date.now();
+          } else {
+            next.push(
+              normalized
+            );
+          }
+
+          rows.push({
+            collectorNumber:
+              scryfallCard.collector_number,
+            count,
+            name:
+              scryfallCard.name,
+            finish,
+            found: true
+          });
+
+          resolvedCopies +=
+            count;
+        }
+
+        setBulkPreview({
+          cards: next,
+          rows,
+          requestedCopies:
+            numbers.length,
+          resolvedCopies,
+          issues
+        });
+      } catch (error) {
+        console.error(
+          "Bulk-Hinzufügen fehlgeschlagen:",
+          error
+        );
+
+        alert(
+          "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden."
+        );
+      } finally {
+        setBulkBusy(false);
+      }
+    };
+
+  const applyBulkAdd =
+    async () => {
+      if (
+        !bulkPreview ||
+        bulkPreview.resolvedCopies === 0
+      ) {
+        return;
+      }
+
+      setBulkBusy(true);
+
+      try {
+        await onImport(
+          bulkPreview.cards
+        );
+
+        closeBulkAdd();
+      } finally {
+        setBulkBusy(false);
+      }
+    };
+
   const readImportFile =
     async (
       file:
@@ -2335,11 +2749,19 @@ function Collection({
           </button>
 
           <button
+            className="secondary"
+            onClick={toggleBulkAdd}
+          >
+            Bulk hinzufügen
+          </button>
+
+          <button
             className="primary"
             onClick={() => {
               if (showImport) {
                 closeImport();
               } else {
+                closeBulkAdd();
                 setShowImport(true);
               }
             }}
@@ -2696,6 +3118,204 @@ function Collection({
           </div>
         </div>
      </details>
+
+      {showBulkAdd && (
+        <div className="panel">
+          <h3>
+            Bulk hinzufügen
+          </h3>
+
+          <p className="muted">
+            Wähle ein Set und gib die Collector Numbers durch Kommas getrennt ein. Wiederholte Nummern erhöhen automatisch die Anzahl. Wenn eine Ausgabe sowohl Non-Foil als auch Foil existiert, wird sie beim Bulk-Hinzufügen als Non-Foil übernommen. Reine Foil-Ausgaben werden als Foil übernommen.
+          </p>
+
+          <div className="two">
+            <label>
+              Set
+
+              <select
+                value={bulkSetCode}
+                onChange={e => {
+                  setBulkSetCode(
+                    e.target.value
+                  );
+                  setBulkPreview(
+                    null
+                  );
+                }}
+                disabled={
+                  bulkSetsBusy
+                }
+              >
+                <option value="">
+                  {bulkSetsBusy
+                    ? "Sets werden geladen…"
+                    : "— Set auswählen —"}
+                </option>
+
+                {bulkSets.map(
+                  set => (
+                    <option
+                      key={set.id}
+                      value={set.code}
+                    >
+                      {set.name} ({set.code.toUpperCase()})
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            <label>
+              Collector Numbers
+
+              <textarea
+                value={bulkNumbers}
+                onChange={e => {
+                  setBulkNumbers(
+                    e.target.value
+                  );
+                  setBulkPreview(
+                    null
+                  );
+                }}
+                rows={5}
+                placeholder="z. B. 12, 18, 18, 34, 105"
+              />
+            </label>
+          </div>
+
+          <div className="row">
+            <button
+              className="primary"
+              onClick={() =>
+                void previewBulkAdd()
+              }
+              disabled={
+                bulkBusy ||
+                !bulkSetCode ||
+                parseCollectorNumbers(
+                  bulkNumbers
+                ).length === 0
+              }
+            >
+              {bulkBusy
+                ? "Bulk wird geprüft…"
+                : "Bulk prüfen"}
+            </button>
+
+            <button
+              className="secondary"
+              onClick={closeBulkAdd}
+              disabled={bulkBusy}
+            >
+              Abbrechen
+            </button>
+          </div>
+
+          {bulkPreview && (
+            <div className="ai-box">
+              <h3>
+                Bulk-Vorschau
+              </h3>
+
+              <p>
+                Eingaben: {" "}
+                <strong>
+                  {bulkPreview.requestedCopies}
+                </strong>
+                {" "}Karten
+                <br />
+                Gefunden: {" "}
+                <strong>
+                  {bulkPreview.resolvedCopies}
+                </strong>
+                {" "}Karten
+              </p>
+
+              <div className="deck-list">
+                {bulkPreview.rows.map(
+                  row => (
+                    <div
+                      key={
+                        row.collectorNumber
+                      }
+                    >
+                      <span>
+                        #{row.collectorNumber}
+                        {row.name
+                          ? ` · ${row.name}`
+                          : " · nicht gefunden"}
+                      </span>
+
+                      <strong>
+                        {row.count}×
+                        {row.finish
+                          ? ` · ${finishLabel(row.finish)}`
+                          : ""}
+                      </strong>
+                    </div>
+                  )
+                )}
+              </div>
+
+              {bulkPreview.issues.length >
+                0 && (
+                <div className="notice">
+                  <strong>
+                    Hinweise:
+                  </strong>
+
+                  <div className="deck-list">
+                    {bulkPreview.issues.map(
+                      (
+                        issue,
+                        index
+                      ) => (
+                        <div
+                          key={`${issue}-${index}`}
+                        >
+                          <span>
+                            {issue}
+                          </span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="row">
+                <button
+                  className="primary"
+                  onClick={() =>
+                    void applyBulkAdd()
+                  }
+                  disabled={
+                    bulkBusy ||
+                    bulkPreview.resolvedCopies ===
+                      0
+                  }
+                >
+                  Bulk übernehmen
+                </button>
+
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    setBulkPreview(
+                      null
+                    )
+                  }
+                  disabled={bulkBusy}
+                >
+                  Eingabe bearbeiten
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {showImport && (
         <div className="panel">
@@ -5151,6 +5771,89 @@ function Decks({
       formatDetectedBy: string;
     } | null>(null);
 
+  const [
+    showBulkDeck,
+    setShowBulkDeck
+  ] =
+    useState(false);
+
+  const [
+    bulkDeckName,
+    setBulkDeckName
+  ] =
+    useState("Bulk-Deck");
+
+  const [
+    bulkDeckFormat,
+    setBulkDeckFormat
+  ] =
+    useState<Format>(
+      "standard"
+    );
+
+  const [
+    bulkDeckSetCode,
+    setBulkDeckSetCode
+  ] =
+    useState("");
+
+  const [
+    bulkDeckNumbers,
+    setBulkDeckNumbers
+  ] =
+    useState("");
+
+  const [
+    bulkDeckCommanderId,
+    setBulkDeckCommanderId
+  ] =
+    useState("");
+
+  const [
+    bulkDeckSets,
+    setBulkDeckSets
+  ] =
+    useState<ScryfallSet[]>([]);
+
+  const [
+    bulkDeckSetsBusy,
+    setBulkDeckSetsBusy
+  ] =
+    useState(false);
+
+  const [
+    bulkDeckBusy,
+    setBulkDeckBusy
+  ] =
+    useState(false);
+
+  const [
+    bulkDeckPreview,
+    setBulkDeckPreview
+  ] =
+    useState<{
+      deck: DeckRecord;
+      rows: Array<{
+        collectorNumber: string;
+        count: number;
+        name?: string;
+        errors: string[];
+      }>;
+      requestedCards: number;
+      resolvedCards: number;
+      errors: string[];
+      warnings: string[];
+    } | null>(null);
+
+  const bulkCommanderOptions =
+    useMemo(
+      () =>
+        commanderCandidates(
+          pool
+        ),
+      [pool]
+    );
+
   const newManualDeck =
     () => {
       const now =
@@ -5187,6 +5890,554 @@ function Decks({
     () => {
       resetDeckImport();
       setShowImport(false);
+    };
+
+  const resetBulkDeck = () => {
+    setBulkDeckNumbers("");
+    setBulkDeckPreview(null);
+  };
+
+  const closeBulkDeck = () => {
+    resetBulkDeck();
+    setShowBulkDeck(false);
+  };
+
+  const ensureBulkDeckSets =
+    async () => {
+      if (
+        bulkDeckSets.length > 0 ||
+        bulkDeckSetsBusy
+      ) {
+        return;
+      }
+
+      setBulkDeckSetsBusy(true);
+
+      try {
+        setBulkDeckSets(
+          await getSets()
+        );
+      } catch (error) {
+        console.error(
+          "Scryfall-Sets konnten nicht geladen werden:",
+          error
+        );
+
+        alert(
+          "Die Set-Liste konnte nicht von Scryfall geladen werden."
+        );
+      } finally {
+        setBulkDeckSetsBusy(false);
+      }
+    };
+
+  const toggleBulkDeck = () => {
+    const next =
+      !showBulkDeck;
+
+    if (next) {
+      closeDeckImport();
+      void ensureBulkDeckSets();
+    }
+
+    setShowBulkDeck(next);
+  };
+
+  const previewBulkDeck =
+    async () => {
+      const numbers =
+        parseCollectorNumbers(
+          bulkDeckNumbers
+        );
+
+      if (
+        !bulkDeckSetCode ||
+        numbers.length === 0
+      ) {
+        return;
+      }
+
+      setBulkDeckBusy(true);
+      setBulkDeckPreview(null);
+
+      try {
+        const counts =
+          collectorNumberCounts(
+            numbers
+          );
+
+        const lookup =
+          await getCardsBySetAndCollectorNumbers(
+            bulkDeckSetCode,
+            Array.from(
+              counts.keys()
+            )
+          );
+
+        const byCollectorNumber =
+          new Map(
+            lookup.cards.map(
+              card => [
+                card.collector_number
+                  .toLowerCase(),
+                card
+              ] as const
+            )
+          );
+
+        const commander =
+          bulkDeckFormat ===
+            "commander"
+            ? pool.find(
+                card =>
+                  card.id ===
+                  bulkDeckCommanderId
+              )
+            : undefined;
+
+        const commanderColors =
+          commander
+            ? commanderColorIdentity([
+                commander
+              ])
+            : [];
+
+        const rows:
+          Array<{
+            collectorNumber: string;
+            count: number;
+            name?: string;
+            errors: string[];
+          }> = [];
+
+        const errors:
+          string[] = [];
+
+        const warnings:
+          string[] = [];
+
+        const mainCards:
+          DeckRecord["cards"] = [];
+
+        let resolvedCards = 0;
+
+        const pushError =
+          (message: string) => {
+            if (
+              !errors.includes(
+                message
+              )
+            ) {
+              errors.push(
+                message
+              );
+            }
+          };
+
+        if (
+          bulkDeckFormat ===
+            "commander" &&
+          !commander
+        ) {
+          pushError(
+            "Für ein Commander-Deck muss zuerst ein Commander aus deiner Sammlung gewählt werden."
+          );
+        }
+
+        for (
+          const [
+            collectorNumber,
+            count
+          ]
+          of counts
+        ) {
+          const rowErrors:
+            string[] = [];
+
+          const scryfallCard =
+            byCollectorNumber.get(
+              collectorNumber
+            );
+
+          if (!scryfallCard) {
+            const message =
+              `#${collectorNumber}: in diesem Set nicht gefunden.`;
+
+            rowErrors.push(
+              message
+            );
+            pushError(
+              message
+            );
+
+            rows.push({
+              collectorNumber,
+              count,
+              errors:
+                rowErrors
+            });
+
+            continue;
+          }
+
+          const source =
+            pool.find(
+              card =>
+                card.id ===
+                  scryfallCard.id ||
+                (
+                  card.oracleId ===
+                    scryfallCard.oracle_id &&
+                  card.set.toLowerCase() ===
+                    scryfallCard.set.toLowerCase() &&
+                  card.collectorNumber.toLowerCase() ===
+                    scryfallCard.collector_number.toLowerCase()
+                )
+            );
+
+          if (!source) {
+            const message =
+              `#${scryfallCard.collector_number} ${scryfallCard.name}: diese Ausgabe ist nicht in deiner Sammlung vorhanden.`;
+
+            rowErrors.push(
+              message
+            );
+            pushError(
+              message
+            );
+
+            rows.push({
+              collectorNumber:
+                scryfallCard.collector_number,
+              count,
+              name:
+                scryfallCard.name,
+              errors:
+                rowErrors
+            });
+
+            continue;
+          }
+
+          if (
+            commander &&
+            source.name.toLowerCase() ===
+              commander.name.toLowerCase()
+          ) {
+            const message =
+              `${source.name}: der gewählte Commander darf nicht zusätzlich im Hauptdeck stehen.`;
+
+            rowErrors.push(
+              message
+            );
+            pushError(
+              message
+            );
+          }
+
+          const legal =
+            bulkDeckFormat ===
+              "standard"
+              ? cardLegalForDeck(
+                  source,
+                  "standard"
+                )
+              : commander
+                ? cardLegalForDeck(
+                    source,
+                    "commander",
+                    commanderColors
+                  )
+                : true;
+
+          if (!legal) {
+            const message =
+              bulkDeckFormat ===
+                "commander"
+                ? `${source.name}: im Commander-Format bzw. mit der Farbidentität des Commanders nicht erlaubt.`
+                : `${source.name}: im Standard-Format nicht erlaubt.`;
+
+            rowErrors.push(
+              message
+            );
+            pushError(
+              message
+            );
+          }
+
+          const ruleLimit =
+            deckCopyLimit(
+              source,
+              bulkDeckFormat
+            );
+
+          if (
+            count > ruleLimit
+          ) {
+            const limitLabel =
+              Number.isFinite(
+                ruleLimit
+              )
+                ? String(
+                    ruleLimit
+                  )
+                : "beliebig";
+
+            const message =
+              `${source.name}: ${count} Exemplare eingegeben, erlaubt sind höchstens ${limitLabel}.`;
+
+            rowErrors.push(
+              message
+            );
+            pushError(
+              message
+            );
+          }
+
+          if (
+            count > source.count
+          ) {
+            const message =
+              `${source.name}: ${count} Exemplare eingegeben, aber nur ${source.count} in deiner Sammlung vorhanden.`;
+
+            rowErrors.push(
+              message
+            );
+            pushError(
+              message
+            );
+          }
+
+          mainCards.push({
+            id:
+              source.id,
+            name:
+              source.name,
+            count,
+            manaValue:
+              source.manaValue,
+            typeLine:
+              source.typeLine,
+            role:
+              "Bulk",
+            reason:
+              "Per Set und Collector Number hinzugefügt.",
+            available:
+              source.count
+          });
+
+          resolvedCards +=
+            count;
+
+          rows.push({
+            collectorNumber:
+              scryfallCard.collector_number,
+            count,
+            name:
+              source.name,
+            errors:
+              rowErrors
+          });
+        }
+
+        const totalByName =
+          mainCards.reduce<
+            Record<
+              string,
+              number
+            >
+          >(
+            (result, card) => {
+              const key =
+                card.name.toLowerCase();
+
+              result[key] =
+                (result[key] ?? 0) +
+                card.count;
+
+              return result;
+            },
+            {}
+          );
+
+        for (
+          const card
+          of mainCards
+        ) {
+          const source =
+            pool.find(
+              item =>
+                item.id ===
+                card.id
+            );
+
+          if (!source) {
+            continue;
+          }
+
+          const ruleLimit =
+            deckCopyLimit(
+              source,
+              bulkDeckFormat
+            );
+
+          const totalForName =
+            totalByName[
+              card.name.toLowerCase()
+            ] ?? 0;
+
+          if (
+            totalForName >
+            ruleLimit
+          ) {
+            const limitLabel =
+              Number.isFinite(
+                ruleLimit
+              )
+                ? String(
+                    ruleLimit
+                  )
+                : "beliebig";
+
+            pushError(
+              `${card.name}: insgesamt ${totalForName} Exemplare eingegeben, erlaubt sind höchstens ${limitLabel}.`
+            );
+          }
+        }
+
+        const requestedMain =
+          numbers.length;
+
+        const requestedTotal =
+          requestedMain +
+          (
+            bulkDeckFormat ===
+              "commander" &&
+            commander
+              ? 1
+              : 0
+          );
+
+        const targetSize =
+          bulkDeckFormat ===
+            "commander"
+            ? 100
+            : 60;
+
+        if (
+          requestedTotal >
+          targetSize
+        ) {
+          pushError(
+            bulkDeckFormat ===
+              "commander"
+              ? `Das Commander-Deck hätte ${requestedTotal} Karten inklusive Commander. Erlaubt sind genau 100.`
+              : `Das Standard-Deck hätte ${requestedTotal} Karten. Für den Bulk-Import sind maximal 60 Karten vorgesehen.`
+          );
+        } else if (
+          requestedTotal <
+          targetSize
+        ) {
+          warnings.push(
+            bulkDeckFormat ===
+              "commander"
+              ? `Das Deck ist noch unvollständig: ${targetSize - requestedTotal} Karten fehlen bis 100 inklusive Commander.`
+              : `Das Deck ist noch unvollständig: ${targetSize - requestedTotal} Karten fehlen bis 60.`
+          );
+        }
+
+        const colors =
+          bulkDeckFormat ===
+            "commander"
+            ? commanderColors
+            : Array.from(
+                new Set(
+                  mainCards.flatMap(
+                    deckCard =>
+                      pool.find(
+                        card =>
+                          card.id ===
+                          deckCard.id
+                      )?.colorIdentity ??
+                      []
+                  )
+                )
+              );
+
+        const now =
+          Date.now();
+
+        const deck:
+          DeckRecord = {
+            id:
+              crypto.randomUUID(),
+            name:
+              bulkDeckName.trim() ||
+              "Bulk-Deck",
+            format:
+              bulkDeckFormat,
+            commanderIds:
+              commander
+                ? [commander.id]
+                : [],
+            cards:
+              mainCards,
+            sideboard: [],
+            colors,
+            createdAt:
+              now,
+            updatedAt:
+              now,
+            notes:
+              `Bulk-Deck aus Set ${bulkDeckSetCode.toUpperCase()} über Collector Numbers erstellt.`
+          };
+
+        setBulkDeckPreview({
+          deck,
+          rows,
+          requestedCards:
+            requestedMain,
+          resolvedCards,
+          errors,
+          warnings
+        });
+      } catch (error) {
+        console.error(
+          "Bulk-Deck konnte nicht geprüft werden:",
+          error
+        );
+
+        alert(
+          "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden."
+        );
+      } finally {
+        setBulkDeckBusy(false);
+      }
+    };
+
+  const applyBulkDeck =
+    async () => {
+      if (
+        !bulkDeckPreview ||
+        bulkDeckPreview.errors.length >
+          0 ||
+        bulkDeckPreview.resolvedCards ===
+          0
+      ) {
+        return;
+      }
+
+      setBulkDeckBusy(true);
+
+      try {
+        await onSave(
+          bulkDeckPreview.deck
+        );
+
+        closeBulkDeck();
+      } finally {
+        setBulkDeckBusy(false);
+      }
     };
 
   const readDeckImportFile =
@@ -5948,10 +7199,18 @@ function Decks({
 
           <button
             className="secondary"
+            onClick={toggleBulkDeck}
+          >
+            Bulk-Deck erstellen
+          </button>
+
+          <button
+            className="secondary"
             onClick={() => {
               if (showImport) {
                 closeDeckImport();
               } else {
+                closeBulkDeck();
                 setShowImport(
                   true
                 );
@@ -5962,6 +7221,349 @@ function Decks({
           </button>
         </div>
       </div>
+
+      {showBulkDeck && (
+        <div className="panel">
+          <h3>
+            Bulk-Deck erstellen
+          </h3>
+
+          <p className="muted">
+            Wähle Format und Set und gib anschließend nur die Collector Numbers ein. Doppelte Nummern zählen als mehrere Exemplare. Das Deck wird vor dem Speichern gegen deine Sammlung und die Formatregeln geprüft.
+          </p>
+
+          <div className="two">
+            <label>
+              Deckname
+
+              <input
+                value={bulkDeckName}
+                onChange={e => {
+                  setBulkDeckName(
+                    e.target.value
+                  );
+                  setBulkDeckPreview(
+                    null
+                  );
+                }}
+                placeholder="Bulk-Deck"
+              />
+            </label>
+
+            <label>
+              Format
+
+              <select
+                value={bulkDeckFormat}
+                onChange={e => {
+                  const format =
+                    e.target
+                      .value as Format;
+
+                  setBulkDeckFormat(
+                    format
+                  );
+
+                  if (
+                    format ===
+                    "standard"
+                  ) {
+                    setBulkDeckCommanderId(
+                      ""
+                    );
+                  }
+
+                  setBulkDeckPreview(
+                    null
+                  );
+                }}
+              >
+                <option value="standard">
+                  Standard
+                </option>
+                <option value="commander">
+                  Commander
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <div className="two">
+            <label>
+              Set
+
+              <select
+                value={bulkDeckSetCode}
+                onChange={e => {
+                  setBulkDeckSetCode(
+                    e.target.value
+                  );
+                  setBulkDeckPreview(
+                    null
+                  );
+                }}
+                disabled={
+                  bulkDeckSetsBusy
+                }
+              >
+                <option value="">
+                  {bulkDeckSetsBusy
+                    ? "Sets werden geladen…"
+                    : "— Set auswählen —"}
+                </option>
+
+                {bulkDeckSets.map(
+                  set => (
+                    <option
+                      key={set.id}
+                      value={set.code}
+                    >
+                      {set.name} ({set.code.toUpperCase()})
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            {bulkDeckFormat ===
+              "commander" && (
+              <label>
+                Commander
+
+                <select
+                  value={
+                    bulkDeckCommanderId
+                  }
+                  onChange={e => {
+                    setBulkDeckCommanderId(
+                      e.target.value
+                    );
+                    setBulkDeckPreview(
+                      null
+                    );
+                  }}
+                >
+                  <option value="">
+                    — Commander wählen —
+                  </option>
+
+                  {bulkCommanderOptions.map(
+                    card => (
+                      <option
+                        key={card.id}
+                        value={card.id}
+                      >
+                        {card.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+            )}
+          </div>
+
+          <label>
+            Collector Numbers
+
+            <textarea
+              value={bulkDeckNumbers}
+              onChange={e => {
+                setBulkDeckNumbers(
+                  e.target.value
+                );
+                setBulkDeckPreview(
+                  null
+                );
+              }}
+              rows={6}
+              placeholder="z. B. 12, 18, 23, 23, 56"
+            />
+          </label>
+
+          {bulkDeckFormat ===
+            "commander" && (
+            <p className="muted">
+              Der Commander wird separat gewählt und zählt nicht zu den eingegebenen Collector Numbers. Doppelte Karten, die das Commander-Copy-Limit überschreiten, werden als Fehler markiert.
+            </p>
+          )}
+
+          <div className="row">
+            <button
+              className="primary"
+              onClick={() =>
+                void previewBulkDeck()
+              }
+              disabled={
+                bulkDeckBusy ||
+                !bulkDeckSetCode ||
+                parseCollectorNumbers(
+                  bulkDeckNumbers
+                ).length === 0 ||
+                (
+                  bulkDeckFormat ===
+                    "commander" &&
+                  !bulkDeckCommanderId
+                )
+              }
+            >
+              {bulkDeckBusy
+                ? "Deck wird geprüft…"
+                : "Bulk-Deck prüfen"}
+            </button>
+
+            <button
+              className="secondary"
+              onClick={closeBulkDeck}
+              disabled={bulkDeckBusy}
+            >
+              Abbrechen
+            </button>
+          </div>
+
+          {bulkDeckPreview && (
+            <div className="ai-box">
+              <h3>
+                Bulk-Deck-Prüfung
+              </h3>
+
+              <p>
+                Format: {" "}
+                <strong>
+                  {bulkDeckPreview.deck.format ===
+                  "commander"
+                    ? "Commander"
+                    : "Standard"}
+                </strong>
+                <br />
+                Eingegebene Karten: {" "}
+                <strong>
+                  {bulkDeckPreview.requestedCards}
+                </strong>
+                <br />
+                Aus der Sammlung aufgelöst: {" "}
+                <strong>
+                  {bulkDeckPreview.resolvedCards}
+                </strong>
+                <br />
+                Deckgröße inklusive Commander: {" "}
+                <strong>
+                  {bulkDeckPreview.requestedCards +
+                    bulkDeckPreview.deck.commanderIds.length}
+                </strong>
+              </p>
+
+              <div className="deck-list">
+                {bulkDeckPreview.rows.map(
+                  row => (
+                    <div
+                      key={
+                        row.collectorNumber
+                      }
+                    >
+                      <span>
+                        #{row.collectorNumber}
+                        {row.name
+                          ? ` · ${row.name}`
+                          : " · nicht gefunden"}
+                        {row.errors.length >
+                          0
+                          ? " · ✕"
+                          : " · ✓"}
+                      </span>
+
+                      <strong>
+                        {row.count}×
+                      </strong>
+                    </div>
+                  )
+                )}
+              </div>
+
+              {bulkDeckPreview.errors.length >
+                0 && (
+                <div className="error">
+                  <strong>
+                    Fehler – Speichern ist noch nicht möglich:
+                  </strong>
+
+                  <div className="deck-list">
+                    {bulkDeckPreview.errors.map(
+                      (
+                        error,
+                        index
+                      ) => (
+                        <div
+                          key={`${error}-${index}`}
+                        >
+                          <span>
+                            {error}
+                          </span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {bulkDeckPreview.warnings.length >
+                0 && (
+                <div className="notice">
+                  <strong>
+                    Hinweise:
+                  </strong>
+
+                  <div className="deck-list">
+                    {bulkDeckPreview.warnings.map(
+                      (
+                        warning,
+                        index
+                      ) => (
+                        <div
+                          key={`${warning}-${index}`}
+                        >
+                          <span>
+                            {warning}
+                          </span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="row">
+                <button
+                  className="primary"
+                  onClick={() =>
+                    void applyBulkDeck()
+                  }
+                  disabled={
+                    bulkDeckBusy ||
+                    bulkDeckPreview.resolvedCards ===
+                      0 ||
+                    bulkDeckPreview.errors.length >
+                      0
+                  }
+                >
+                  Bulk-Deck speichern
+                </button>
+
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    setBulkDeckPreview(
+                      null
+                    )
+                  }
+                  disabled={bulkDeckBusy}
+                >
+                  Eingabe bearbeiten
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {showImport && (
         <div className="panel">

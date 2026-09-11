@@ -8,6 +8,7 @@ const API = "https://api.scryfall.com";
 const cache = new Map<string, CardRecord>();
 const searchCache = new Map<string, ScryfallCard[]>();
 const printingsCache = new Map<string, ScryfallCard[]>();
+let setsCache: ScryfallSet[] | null = null;
 
 let lastRequest = 0;
 
@@ -62,6 +63,25 @@ export interface ScryfallCard {
   prints_search_uri?: string;
 }
 
+export interface ScryfallSet {
+  id: string;
+  code: string;
+  name: string;
+  set_type?: string;
+  released_at?: string;
+  card_count?: number;
+  digital?: boolean;
+}
+
+interface SetListResponse {
+  data: ScryfallSet[];
+}
+
+export interface CollectorNumberLookupResult {
+  cards: ScryfallCard[];
+  notFound: string[];
+}
+
 interface SearchResponse {
   data: ScryfallCard[];
   has_more: boolean;
@@ -71,9 +91,11 @@ interface SearchResponse {
 
 interface CollectionResponse {
   data: ScryfallCard[];
-  not_found?: Array<
-    Record<string, unknown>
-  >;
+  not_found?: Array<{
+    set?: string;
+    collector_number?: string;
+    [key: string]: unknown;
+  }>;
 }
 
 const sleep = (ms: number) =>
@@ -366,6 +388,135 @@ export async function searchCards(
   );
 
   return result.data;
+}
+
+export async function getSets(): Promise<ScryfallSet[]> {
+  if (setsCache) {
+    return setsCache;
+  }
+
+  const result =
+    await getJson<SetListResponse>(
+      `${API}/sets`
+    );
+
+  setsCache =
+    result.data
+      .filter(
+        set =>
+          set.digital !== true &&
+          (set.card_count ?? 0) > 0
+      )
+      .sort(
+        (a, b) => {
+          const releasedCompare =
+            (b.released_at ?? "")
+              .localeCompare(
+                a.released_at ?? ""
+              );
+
+          return releasedCompare !== 0
+            ? releasedCompare
+            : a.name.localeCompare(
+                b.name
+              );
+        }
+      );
+
+  return setsCache;
+}
+
+export async function getCardsBySetAndCollectorNumbers(
+  setCode: string,
+  collectorNumbers: string[]
+): Promise<CollectorNumberLookupResult> {
+  const cleanSet =
+    setCode.trim().toLowerCase();
+
+  const uniqueNumbers =
+    Array.from(
+      new Set(
+        collectorNumbers
+          .map(number =>
+            number.trim()
+          )
+          .filter(Boolean)
+      )
+    );
+
+  if (
+    !cleanSet ||
+    uniqueNumbers.length === 0
+  ) {
+    return {
+      cards: [],
+      notFound: []
+    };
+  }
+
+  const cards:
+    ScryfallCard[] = [];
+
+  const notFound:
+    string[] = [];
+
+  for (
+    let index = 0;
+    index < uniqueNumbers.length;
+    index += 75
+  ) {
+    const batch =
+      uniqueNumbers.slice(
+        index,
+        index + 75
+      );
+
+    const response =
+      await postJson<CollectionResponse>(
+        `${API}/cards/collection`,
+        {
+          identifiers:
+            batch.map(
+              collectorNumber => ({
+                set:
+                  cleanSet,
+                collector_number:
+                  collectorNumber
+              })
+            )
+        }
+      );
+
+    cards.push(
+      ...response.data
+    );
+
+    for (
+      const missing
+      of response.not_found ?? []
+    ) {
+      if (
+        typeof missing.collector_number ===
+        "string"
+      ) {
+        notFound.push(
+          missing.collector_number
+        );
+      }
+    }
+  }
+
+  cards.forEach(card =>
+    cache.set(
+      card.id,
+      normalizeCard(card)
+    )
+  );
+
+  return {
+    cards,
+    notFound
+  };
 }
 
 export async function getPrintings(
