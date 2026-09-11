@@ -2622,20 +2622,6 @@ function SearchCollectionTools({
         >
           Bulk hinzufügen
         </button>
-
-        <button
-          className="secondary"
-          onClick={() => {
-            if (showImport) {
-              closeImport();
-            } else {
-              closeBulkAdd();
-              setShowImport(true);
-            }
-          }}
-        >
-          Import
-        </button>
       </div>
 
       {showBulkAdd && (
@@ -2663,14 +2649,22 @@ function SearchCollectionTools({
                     ? "Sets werden geladen…"
                     : "— Set auswählen —"}
                 </option>
-                {bulkSets.map(set => (
-                  <option
-                    key={set.id}
-                    value={set.code}
-                  >
-                    {set.name} ({set.code.toUpperCase()})
-                  </option>
-                ))}
+{[...bulkSets]
+  .sort((a, b) =>
+    a.name.localeCompare(
+      b.name,
+      "de",
+      { sensitivity: "base" }
+    )
+  )
+  .map(set => (
+    <option
+      key={set.id}
+      value={set.code}
+    >
+      {set.name} ({set.code.toUpperCase()})
+    </option>
+  ))}
               </select>
             </label>
 
