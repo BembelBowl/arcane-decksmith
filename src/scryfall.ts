@@ -173,6 +173,52 @@ async function postJson<T>(
   return res.json() as Promise<T>;
 }
 
+function removeUndefinedDeep<T>(
+  value: T
+): T {
+  if (Array.isArray(value)) {
+    return value
+      .map(item =>
+        removeUndefinedDeep(item)
+      )
+      .filter(
+        item =>
+          item !== undefined
+      ) as T;
+  }
+
+  if (
+    value !== null &&
+    typeof value === "object"
+  ) {
+    const cleaned:
+      Record<string, unknown> = {};
+
+    for (
+      const [key, entry]
+      of Object.entries(
+        value as Record<
+          string,
+          unknown
+        >
+      )
+    ) {
+      if (entry === undefined) {
+        continue;
+      }
+
+      cleaned[key] =
+        removeUndefinedDeep(
+          entry
+        );
+    }
+
+    return cleaned as T;
+  }
+
+  return value;
+}
+
 function parseEuroPrice(
   value: string | null | undefined
 ): number | undefined {
@@ -249,7 +295,7 @@ export function euroPriceFor(
 export function imageFor(
   card: ScryfallCard | CardRecord
 ): string | undefined {
-  if ("image_uris" in card) {
+  if ("collector_number" in card) {
     const directImage =
       card.image_uris?.normal ??
       card.image_uris?.large ??
@@ -259,33 +305,29 @@ export function imageFor(
       return directImage;
     }
 
-    const faceWithImage =
-      card.card_faces?.find(
-        face =>
-          Boolean(
-            face.image_uris?.normal ??
-            face.image_uris?.large ??
-            face.image_uris?.small
-          )
-      );
+    for (
+      const face
+      of card.card_faces ?? []
+    ) {
+      const faceImage =
+        face.image_uris?.normal ??
+        face.image_uris?.large ??
+        face.image_uris?.small;
 
-    return (
-      faceWithImage?.image_uris?.normal ??
-      faceWithImage?.image_uris?.large ??
-      faceWithImage?.image_uris?.small
-    );
+      if (faceImage) {
+        return faceImage;
+      }
+    }
+
+    return undefined;
   }
 
-  if ("imageUris" in card) {
-    return (
-      card.imageUris?.normal ??
-      card.imageUris?.large ??
-      card.imageUris?.small ??
-      card.imageUri
-    );
-  }
-
-  return undefined;
+  return (
+    card.imageUris?.normal ??
+    card.imageUris?.large ??
+    card.imageUris?.small ??
+    card.imageUri
+  );
 }
 
 // Kompatibilität mit der aktuellen App.tsx: bewusst nur englische Daten.
@@ -320,60 +362,135 @@ export function normalizeCard(
   count = 1,
   isFoil = false
 ): CardRecord {
-  const face = card.card_faces?.[0];
-  const finishes = availableFinishes(card);
-  const priceEur = euroPriceFor(card, "nonfoil");
-  const priceEurFoil = euroPriceFor(card, "foil");
+  const face =
+    card.card_faces?.[0];
 
-  return {
-    id: card.id,
-    oracleId: card.oracle_id,
-    name: card.name,
-    set: card.set,
-    setName: card.set_name,
-    collectorNumber: card.collector_number,
-    lang: card.lang ?? "en",
-    foil: isFoil,
-    finishCounts: isFoil
-      ? {
-          nonfoil: 0,
-          foil: count
-        }
-      : {
-          nonfoil: count,
-          foil: 0
-        },
-    availableFinishes: finishes,
-    ...(priceEur !== undefined
-      ? { priceEur }
-      : {}),
-    ...(priceEurFoil !== undefined
-      ? { priceEurFoil }
-      : {}),
-    priceUpdatedAt: Date.now(),
-    count,
-    addedAt: Date.now(),
-    updatedAt: Date.now(),
-    manaCost: card.mana_cost ?? face?.mana_cost,
-    manaValue: Number(card.cmc ?? 0),
-    colors: card.colors ?? face?.colors ?? [],
-    colorIdentity:
-      card.color_identity ??
-      face?.color_identity ??
-      [],
-    typeLine: card.type_line ?? face?.type_line,
-    oracleText:
-      card.oracle_text ??
-      card.card_faces
-        ?.map(face => face.oracle_text)
-        .filter(Boolean)
-        .join("\n//\n"),
-    imageUri: imageFor(card),
-    imageUris: card.image_uris ?? face?.image_uris,
-    legalities: card.legalities,
-    gameChanger: card.game_changer === true,
-    isBasicLand: /^Basic Land\b/i.test(card.type_line ?? "")
-  };
+  const finishes =
+    availableFinishes(card);
+
+  const priceEur =
+    euroPriceFor(
+      card,
+      "nonfoil"
+    );
+
+  const priceEurFoil =
+    euroPriceFor(
+      card,
+      "foil"
+    );
+
+  const imageUri =
+    imageFor(card);
+
+  const imageUris =
+    card.image_uris ??
+    face?.image_uris;
+
+  const record:
+    CardRecord = {
+      id: card.id,
+      oracleId:
+        card.oracle_id,
+      name: card.name,
+      set: card.set,
+      setName:
+        card.set_name,
+      collectorNumber:
+        card.collector_number,
+      lang:
+        card.lang ??
+        "en",
+      foil:
+        isFoil,
+      finishCounts:
+        isFoil
+          ? {
+              nonfoil: 0,
+              foil: count
+            }
+          : {
+              nonfoil: count,
+              foil: 0
+            },
+      availableFinishes:
+        finishes,
+      ...(priceEur !== undefined
+        ? {
+            priceEur
+          }
+        : {}),
+      ...(priceEurFoil !== undefined
+        ? {
+            priceEurFoil
+          }
+        : {}),
+      priceUpdatedAt:
+        Date.now(),
+      count,
+      addedAt:
+        Date.now(),
+      updatedAt:
+        Date.now(),
+      manaCost:
+        card.mana_cost ??
+        face?.mana_cost,
+      manaValue:
+        Number(
+          card.cmc ?? 0
+        ),
+      colors:
+        card.colors ??
+        face?.colors ??
+        [],
+      colorIdentity:
+        card.color_identity ??
+        face?.color_identity ??
+        [],
+      typeLine:
+        card.type_line ??
+        card.card_faces
+          ?.map(
+            item =>
+              item.type_line
+          )
+          .filter(Boolean)
+          .join(" // "),
+      oracleText:
+        card.oracle_text ??
+        card.card_faces
+          ?.map(
+            item =>
+              item.oracle_text
+          )
+          .filter(Boolean)
+          .join("\n//\n"),
+      ...(imageUri !== undefined
+        ? {
+            imageUri
+          }
+        : {}),
+      ...(imageUris !== undefined
+        ? {
+            imageUris
+          }
+        : {}),
+      legalities:
+        card.legalities,
+      gameChanger:
+        card.game_changer ===
+        true,
+      isBasicLand:
+        /^Basic Land\b/i.test(
+          card.type_line ??
+          face?.type_line ??
+          ""
+        )
+    };
+
+  return removeUndefinedDeep(
+    record
+  );
 }
 
 // Rein englische Scryfall-Suche.

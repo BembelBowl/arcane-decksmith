@@ -897,7 +897,16 @@ for (
 
   const persistCard =
     async (c: CardRecord) => {
-      await saveCard(uid, c);
+      const cleanCard =
+        JSON.parse(
+          JSON.stringify(c)
+        ) as CardRecord;
+
+      await saveCard(
+        uid,
+        cleanCard
+      );
+
       setCollection(
         await loadCollection(uid)
       );
@@ -1052,8 +1061,9 @@ for (
     c,
     finish
   ) => {
-    const canonical =
-      await canonicalEnglishCard(c);
+    try {
+      const canonical =
+        await canonicalEnglishCard(c);
 
     const existing =
       collection.find(
@@ -1141,10 +1151,23 @@ for (
       );
     }
 
-    setTimeout(
-      () => setToast(""),
-      2200
-    );
+      setTimeout(
+        () =>
+          setToast(""),
+        2200
+      );
+    } catch (error) {
+      console.error(
+        "Karte konnte nicht zur Sammlung hinzugefügt werden:",
+        error
+      );
+
+      alert(
+        error instanceof Error
+          ? `Karte konnte nicht hinzugefügt werden: ${error.message}`
+          : "Karte konnte nicht hinzugefügt werden."
+      );
+    }
   }}
 />
               )
@@ -3023,7 +3046,10 @@ function SearchCard({
         </h3>
 
         <div className="meta">
-          {selectedCard.mana_cost ?? "—"} ·
+          {selectedCard.mana_cost ??
+            selectedCard.card_faces?.[0]
+              ?.mana_cost ??
+            "—"} ·
           {" "}MV {selectedCard.cmc ?? 0} ·{" "}
           {selectedCard.set.toUpperCase()}
           {" "}#
