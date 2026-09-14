@@ -4,6 +4,11 @@ import type {
   CardRecord,
   DeckRecord
 } from "./types";
+import {
+  evidenceCardNames,
+  formatDeckEvidenceForAi,
+  getDeckAnalysisEvidence
+} from "./deckIntelligence";
 
 const AI_WORKER_URL =
   "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
@@ -18,6 +23,7 @@ const SCRYFALL_SEARCH_URL =
   "https://api.scryfall.com/cards/search";
 
 const PURCHASE_CONTEXT_LIMIT = 2600;
+const EXTERNAL_EVIDENCE_CONTEXT_LIMIT = 2600;
 
 interface ScryfallCandidateCard {
   id: string;
@@ -49,7 +55,8 @@ interface PurchaseCandidate {
 type CardTokenKind =
   | "commander"
   | "deck"
-  | "purchase";
+  | "purchase"
+  | "evidence";
 
 interface CardTokenEntry {
   token: string;
@@ -803,6 +810,55 @@ function purchaseTokenEntries(
         "purchase"
     })
   );
+}
+
+function evidenceTokenEntries(
+  names: string[],
+  existingEntries: CardTokenEntry[]
+): CardTokenEntry[] {
+  const existingNames =
+    new Set(
+      existingEntries.map(
+        entry =>
+          normalizeName(
+            entry.name
+          )
+      )
+    );
+
+  const seen =
+    new Set<string>();
+
+  const result:
+    CardTokenEntry[] = [];
+
+  for (const name of names) {
+    const normalized =
+      normalizeName(name);
+
+    if (
+      !normalized ||
+      existingNames.has(
+        normalized
+      ) ||
+      seen.has(normalized)
+    ) {
+      continue;
+    }
+
+    seen.add(normalized);
+
+    result.push({
+      token:
+        `E${String(
+          result.length + 1
+        ).padStart(3, "0")}`,
+      name,
+      kind: "evidence"
+    });
+  }
+
+  return result;
 }
 
 function tokenizeKnownNames(
@@ -1660,10 +1716,15 @@ function analysisRules(): string {
     "C-Kennungen = Commander.",
     "D-Kennungen = tatsächliche Karten des fertigen Decks.",
     "P-Kennungen = ausschließlich verifizierte optionale Anschaffungskandidaten.",
+    "E-Kennungen = Karten, die ausschließlich in externer TopDeck-/EDHREC-/Archidekt-/Commander-Spellbook-Evidenz vorkommen; sie sind nicht automatisch Deckkarten oder Anschaffungsempfehlungen.",
     "Die vollständige D-Kennungsliste ist autoritativ für die Deckzugehörigkeit und wird niemals gekürzt.",
     "Konkrete Karteneffekte dürfen ausschließlich aus ausdrücklich geliefertem Oracle-Text abgeleitet werden.",
     "P-Kennungen gehören niemals zum fertigen Deck.",
     "Die KI darf P-Kennungen lediglich auswählen. Die sichtbare Beschreibung der optionalen Anschaffungen wird deterministisch von Arcane Decksmith erzeugt.",
+    "TopDeck-Winrates sind beobachtete Turnierkorrelationen und dürfen nicht als kausaler Effekt einer einzelnen Karte formuliert werden.",
+    "EDHREC-Synergy/Inclusion sind aggregierte Community-Nutzungsdaten für Commander und dürfen nicht als Siegquote oder Qualitätsbeweis formuliert werden.",
+    "Archidekt-Häufigkeiten und Strukturwerte stammen aus einer Stichprobe öffentlicher Decklisten und dürfen nicht als Winrate oder repräsentativer Gesamtmarkt behauptet werden.",
+    "Commander-Spellbook-Combos und deren Ergebnisse dürfen nur so beschrieben werden, wie sie in der gelieferten Evidenz stehen.",
     "Die deterministische Kurvenbewertung in den technischen Deckdaten ist autoritativ und darf nicht widersprochen werden."
   ].join("\n");
 }
@@ -1671,7 +1732,8 @@ function analysisRules(): string {
 function authoritativeTokenList(
   commanderEntries: CardTokenEntry[],
   deckEntries: CardTokenEntry[],
-  purchaseEntries: CardTokenEntry[]
+  purchaseEntries: CardTokenEntry[],
+  evidenceEntries: CardTokenEntry[]
 ): string {
   return [
     "AUTORITATIVE KENNUNGSLISTEN",
@@ -1704,6 +1766,18 @@ function authoritativeTokenList(
       purchaseEntries.length >
       0
         ? purchaseEntries
+            .map(
+              entry =>
+                entry.token
+            )
+            .join(", ")
+        : "keine"
+    }`,
+
+    `Externe Evidenzkarten: ${
+      evidenceEntries.length >
+      0
+        ? evidenceEntries
             .map(
               entry =>
                 entry.token
@@ -1773,11 +1847,20 @@ async function createAiRequestContext(
   deck: DeckRecord,
   collection: CardRecord[]
 ): Promise<AiRequestContext> {
-  const purchaseCandidates =
-    await verifiedPurchaseCandidates(
-      deck,
-      collection
-    );
+  const [
+    purchaseCandidates,
+    deckEvidence
+  ] =
+    await Promise.all([
+      verifiedPurchaseCandidates(
+        deck,
+        collection
+      ),
+      getDeckAnalysisEvidence(
+        deck,
+        collection
+      )
+    ]);
 
   const commanderEntries =
     commanderTokenEntries(
@@ -1795,10 +1878,23 @@ async function createAiRequestContext(
       purchaseCandidates
     );
 
+  const evidenceEntries =
+    evidenceTokenEntries(
+      evidenceCardNames(
+        deckEvidence
+      ),
+      [
+        ...commanderEntries,
+        ...deckEntries,
+        ...purchaseEntries
+      ]
+    );
+
   const allEntries = [
     ...commanderEntries,
     ...deckEntries,
-    ...purchaseEntries
+    ...purchaseEntries,
+    ...evidenceEntries
   ];
 
   const overview =
@@ -1808,17 +1904,16 @@ async function createAiRequestContext(
     );
 
   // Die vollständige Deckübersicht und die technischen Daten haben Vorrang.
-  // Zusätzliche Scryfall-Kaufkandidaten und Oracle-Details werden nur mit
-  // dem tatsächlich noch verfügbaren Platz übertragen. Dadurch scheitern
-  // insbesondere vollständige 100-Karten-Commander-Decks nicht mehr nur
-  // wegen des Größenlimits.
-  const coreSections = [
+  // Externe Evidenz bekommt nur den Platz, der nach den autoritativen
+  // Deckdaten noch sicher verfügbar ist.
+  const baseCoreSections = [
     analysisRules(),
     "",
     authoritativeTokenList(
       commanderEntries,
       deckEntries,
-      purchaseEntries
+      purchaseEntries,
+      evidenceEntries
     ),
     "",
     "TECHNISCHE DECKDATEN",
@@ -1837,6 +1932,41 @@ async function createAiRequestContext(
 
   const minimumDetailReserve =
     320;
+
+  const evidenceBudget =
+    Math.max(
+      0,
+      Math.min(
+        EXTERNAL_EVIDENCE_CONTEXT_LIMIT,
+        MAX_ANALYSIS_LENGTH -
+          baseCoreSections.length -
+          overview.length -
+          minimumDetailReserve -
+          450
+      )
+    );
+
+  const externalEvidence =
+    evidenceBudget >= 220
+      ? shorten(
+          tokenizeKnownNames(
+            formatDeckEvidenceForAi(
+              deckEvidence
+            ),
+            allEntries
+          ),
+          evidenceBudget
+        )
+      : [
+          "VERIFIZIERTE EXTERNE DECK-EVIDENZ",
+          "Externe Details wurden wegen des Größenlimits gekürzt."
+        ].join("\n");
+
+  const coreSections = [
+    baseCoreSections,
+    "",
+    externalEvidence
+  ].join("\n");
 
   const purchaseBudget =
     Math.max(

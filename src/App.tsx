@@ -86,6 +86,9 @@ import {
   generateAiDeckExplanation,
   generateDeckExplanation
 } from "./ai";
+import {
+  getBuildDeckEvidence
+} from "./deckIntelligence";
 import type {
   CardFinish,
   CardRecord,
@@ -774,6 +777,76 @@ function localDeckAnalysis(
   return analysis;
 }
 
+function deckForAiAnalysis(
+  deck: DeckRecord,
+  pool: CardRecord[]
+): DeckRecord {
+  const commanderCards =
+    deck.format === "commander"
+      ? deck.commanderIds
+          .map(id =>
+            pool.find(card =>
+              card.id === id
+            )
+          )
+          .filter(
+            (card): card is CardRecord =>
+              Boolean(card)
+          )
+      : [];
+
+  const detectedColors =
+    deck.format === "commander"
+      ? commanderCards.length > 0
+        ? commanderColorIdentity(
+            commanderCards
+          )
+        : deck.colors
+      : Array.from(
+          new Set(
+            deck.cards.flatMap(
+              deckCard =>
+                pool.find(
+                  card =>
+                    card.id ===
+                    deckCard.id
+                )?.colorIdentity ??
+                []
+            )
+          )
+        );
+
+  return {
+    ...deck,
+    cards: deck.cards.map(
+      deckCard => {
+        const source =
+          pool.find(
+            card =>
+              card.id ===
+              deckCard.id
+          );
+
+        if (!source) {
+          return deckCard;
+        }
+
+        const detectedRole =
+          roleOf(source);
+
+        return {
+          ...deckCard,
+          role: detectedRole,
+          reason:
+            `Für die KI-Analyse automatisch als „${detectedRole}“ erkannt.`
+        };
+      }
+    ),
+    colors: detectedColors,
+    updatedAt: Date.now()
+  };
+}
+
 function parseCollectorNumbers(
   input: string
 ): string[] {
@@ -1454,7 +1527,6 @@ for (
                   <Builder
                     pool={collection}
                     onSave={persistDeck}
-                    demoMode={demoMode}
                   />
                 )
                 : (
@@ -1642,7 +1714,39 @@ for (
       <footer>
         Scryfall-Daten & Bilder werden direkt von
         Scryfall geladen. Keine Kaufentscheidung
-        aufgrund von Preisen.
+        aufgrund von Preisen. Turnierdaten: {" "}
+        <a
+          href="https://topdeck.gg"
+          target="_blank"
+          rel="noreferrer"
+        >
+          TopDeck.gg
+        </a>
+        . Commander-Communitydaten: {" "}
+        <a
+          href="https://edhrec.com"
+          target="_blank"
+          rel="noreferrer"
+        >
+          EDHREC
+        </a>
+        {" / "}
+        <a
+          href="https://archidekt.com"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Archidekt
+        </a>
+        . Combo-Daten: {" "}
+        <a
+          href="https://commanderspellbook.com"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Commander Spellbook
+        </a>
+        .
       </footer>
     </div>
   );
@@ -5143,14 +5247,12 @@ function TuningSlider({
 
 function Builder({
   pool,
-  onSave,
-  demoMode
+  onSave
 }: {
   pool: CardRecord[];
   onSave: (
     d: DeckRecord
   ) => Promise<void>;
-  demoMode: boolean;
 }) {
   const [
     format,
@@ -5216,14 +5318,8 @@ function Builder({
     >(null);
 
   const [
-    analysisText,
-    setAnalysisText
-  ] =
-    useState("");
-
-  const [
-    aiBusy,
-    setAiBusy
+    buildBusy,
+    setBuildBusy
   ] =
     useState(false);
 
@@ -5491,7 +5587,6 @@ function Builder({
   const resetDeckSelection =
     () => {
       setResult(null);
-      setAnalysisText("");
       setLockedCards([]);
       setExcludedCardIds([]);
     };
@@ -5547,31 +5642,71 @@ function Builder({
       resetDeckSelection();
     };
 
-  const build = () => {
-    const deck =
-      buildDeck(pool, {
-        name,
-        format,
-        colors:
-          activeColors,
-        commanders:
-          format ===
-          "commander"
-            ? selectedCommanders
-            : undefined,
-        targetManaValue:
-          target,
-        minManaValue:
-          min,
-        maxManaValue:
-          max,
-        tuning,
-        lockedCards,
-        excludedCardIds
-      });
+  const build = async () => {
+    if (buildBusy) {
+      return;
+    }
 
-    setResult(deck);
-    setAnalysisText("");
+    setBuildBusy(true);
+
+    const baseOptions = {
+      name,
+      format,
+      colors:
+        activeColors,
+      commanders:
+        format ===
+        "commander"
+          ? selectedCommanders
+          : undefined,
+      targetManaValue:
+        target,
+      minManaValue:
+        min,
+      maxManaValue:
+        max,
+      tuning,
+      lockedCards,
+      excludedCardIds
+    };
+
+    try {
+      // First pass stays fully deterministic and gives Commander Spellbook
+      // a concrete deck to inspect for complete / almost-complete combos.
+      const preliminaryDeck =
+        buildDeck(
+          pool,
+          baseOptions
+        );
+
+      const evidence =
+        await getBuildDeckEvidence({
+          format,
+          commanders:
+            format ===
+            "commander"
+              ? selectedCommanders
+              : [],
+          preliminaryDeck,
+          pool
+        });
+
+      const optimizedDeck =
+        buildDeck(
+          pool,
+          {
+            ...baseOptions,
+            intelligence:
+              evidence.buildSignals
+          }
+        );
+
+      setResult(
+        optimizedDeck
+      );
+    } finally {
+      setBuildBusy(false);
+    }
   };
 
   const toggleLocked =
@@ -5642,56 +5777,6 @@ function Builder({
       );
     };
 
-  const explain =
-    async () => {
-      if (
-        !result ||
-        result.cards.length ===
-          0
-      ) {
-        return;
-      }
-
-      setAiBusy(true);
-      setAnalysisText("");
-
-      try {
-        const text =
-          await generateAiDeckExplanation(
-            result
-          );
-
-        setAnalysisText(
-          text
-        );
-      } catch (error) {
-        console.error(
-          "KI-Analyse fehlgeschlagen:",
-          error
-        );
-
-        const fallback =
-          generateDeckExplanation(
-            result
-          );
-
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : "Unbekannter Fehler bei der KI-Analyse.";
-
-        setAnalysisText(
-          fallback +
-          "\n\n---\n\n" +
-          "### ⚠️ Generative KI nicht verfügbar\n\n" +
-          errorMessage +
-          "\n\nDie lokale Deckanalyse wird deshalb als Fallback angezeigt."
-        );
-      } finally {
-        setAiBusy(false);
-      }
-    };
-
   const resultHasCards =
     (
       result?.cards.reduce(
@@ -5707,6 +5792,7 @@ function Builder({
     ) > 0;
 
   const builderDisabled =
+    buildBusy ||
     pool.length === 0 ||
     (
       format ===
@@ -6491,14 +6577,18 @@ function Builder({
 
           <button
             className="primary full"
-            onClick={build}
+            onClick={() =>
+              void build()
+            }
             disabled={
               builderDisabled
             }
           >
-            {result
-              ? "Deck neu optimieren"
-              : "Deck erstellen"}
+            {buildBusy
+              ? "Deck wird datenbasiert optimiert…"
+              : result
+                ? "Deck neu optimieren"
+                : "Deck erstellen"}
           </button>
 
           {result &&
@@ -6568,12 +6658,16 @@ function Builder({
 
                 <button
                   className="secondary"
-                  onClick={build}
+                  onClick={() =>
+                    void build()
+                  }
                   disabled={
                     builderDisabled
                   }
                 >
-                  Deck neu optimieren
+                  {buildBusy
+                    ? "Optimierung läuft…"
+                    : "Deck neu optimieren"}
                 </button>
               </div>
 
@@ -6841,39 +6935,7 @@ function Builder({
                   Export
                 </button>
 
-                <button
-                  className="secondary"
-                  onClick={explain}
-                  disabled={
-                    aiBusy ||
-                    demoMode ||
-                    !resultHasCards
-                  }
-                  title={
-                    demoMode
-                      ? "Die generative KI benötigt eine Firebase-Anmeldung."
-                      : !resultHasCards
-                        ? "Für ein leeres Deck ist keine Analyse sinnvoll."
-                        : undefined
-                  }
-                >
-                  {aiBusy
-                    ? "KI analysiert…"
-                    : "Deck analysieren"}
-                </button>
               </div>
-
-              {analysisText && (
-                <div className="ai-box analysis-box markdown-content">
-                  <ReactMarkdown
-                    remarkPlugins={[
-                      remarkGfm
-                    ]}
-                  >
-                    {analysisText}
-                  </ReactMarkdown>
-                </div>
-              )}
             </div>
           )
           : (
@@ -6926,6 +6988,22 @@ function Decks({
       DeckRecord |
       null
     >(null);
+
+  const [
+    analysisByDeckId,
+    setAnalysisByDeckId
+  ] =
+    useState<
+      Record<string, string>
+    >({});
+
+  const [
+    aiBusyDeckId,
+    setAiBusyDeckId
+  ] =
+    useState<string | null>(
+      null
+    );
 
   const [
     showBulkDeck,
@@ -7690,6 +7768,81 @@ function Decks({
         );
       } finally {
         setBulkDeckBusy(false);
+      }
+    };
+
+  const analyzeSavedDeck =
+    async (
+      deck: DeckRecord
+    ) => {
+      if (
+        demoMode ||
+        deck.cards.length === 0 ||
+        aiBusyDeckId
+      ) {
+        return;
+      }
+
+      setAiBusyDeckId(
+        deck.id
+      );
+
+      setAnalysisByDeckId(
+        current => ({
+          ...current,
+          [deck.id]: ""
+        })
+      );
+
+      const deckForAnalysis =
+        deckForAiAnalysis(
+          deck,
+          pool
+        );
+
+      try {
+        const text =
+          await generateAiDeckExplanation(
+            deckForAnalysis
+          );
+
+        setAnalysisByDeckId(
+          current => ({
+            ...current,
+            [deck.id]: text
+          })
+        );
+      } catch (error) {
+        console.error(
+          "KI-Analyse fehlgeschlagen:",
+          error
+        );
+
+        const fallback =
+          generateDeckExplanation(
+            deckForAnalysis
+          );
+
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "Unbekannter Fehler bei der KI-Analyse.";
+
+        setAnalysisByDeckId(
+          current => ({
+            ...current,
+            [deck.id]:
+              fallback +
+              "\n\n---\n\n" +
+              "### ⚠️ Generative KI nicht verfügbar\n\n" +
+              errorMessage +
+              "\n\nDie lokale Deckanalyse wird deshalb als Fallback angezeigt."
+          })
+        );
+      } finally {
+        setAiBusyDeckId(
+          null
+        );
       }
     };
 
@@ -8537,6 +8690,34 @@ function Decks({
 
         <div className="row">
           <button
+            className="secondary"
+            onClick={() =>
+              void analyzeSavedDeck(
+                d
+              )
+            }
+            disabled={
+              Boolean(
+                aiBusyDeckId
+              ) ||
+              demoMode ||
+              d.cards.length === 0
+            }
+            title={
+              demoMode
+                ? "Die generative KI benötigt eine Firebase-Anmeldung."
+                : d.cards.length === 0
+                  ? "Für ein leeres Deck ist keine Analyse sinnvoll."
+                  : undefined
+            }
+          >
+            {aiBusyDeckId ===
+            d.id
+              ? "KI analysiert…"
+              : "KI analysieren"}
+          </button>
+
+          <button
             className="primary"
             onClick={()=>setEditing(d)}
           >
@@ -8582,6 +8763,22 @@ function Decks({
             Löschen
           </button>
         </div>
+
+        {analysisByDeckId[
+          d.id
+        ] && (
+          <div className="ai-box analysis-box markdown-content">
+            <ReactMarkdown
+              remarkPlugins={[
+                remarkGfm
+              ]}
+            >
+              {analysisByDeckId[
+                d.id
+              ]}
+            </ReactMarkdown>
+          </div>
+        )}
       </article>
     );
   })}
@@ -8908,15 +9105,8 @@ function DeckEditor({
 
   const canAnalyze =
     !demoMode &&
-    !hasBlockingError &&
     d.cards.length >
-      0 &&
-    (
-      d.format !==
-        "commander" ||
-      selectedCommanders.length >
-        0
-    );
+      0;
 
   const analyzeManualDeck =
     async () => {
@@ -8927,57 +9117,13 @@ function DeckEditor({
       setAiBusy(true);
       setAnalysisText("");
 
+      const deckForAnalysis =
+        deckForAiAnalysis(
+          d,
+          pool
+        );
+
       try {
-        const deckForAnalysis:
-          DeckRecord = {
-            ...d,
-
-            cards:
-              d.cards.map(
-                deckCard => {
-                  const source =
-                    pool.find(
-                      card =>
-                        card.id ===
-                        deckCard.id
-                    );
-
-                  if (!source) {
-                    return deckCard;
-                  }
-
-                  const detectedRole =
-                    roleOf(
-                      source
-                    );
-
-                  return {
-                    ...deckCard,
-                    role:
-                      detectedRole,
-                    reason:
-                      `Für die KI-Analyse automatisch als „${detectedRole}“ erkannt.`
-                  };
-                }
-              ),
-
-           colors:
-  d.format === "commander"
-    ? commanderColors
-    : Array.from(
-        new Set(
-          d.cards.flatMap(deckCard =>
-            pool.find(
-              card => card.id === deckCard.id
-            )?.colorIdentity ?? []
-          )
-        )
-      ),
-
-            updatedAt:
-              Date.now()
-          };
-
         const text =
           await generateAiDeckExplanation(
             deckForAnalysis
@@ -8994,7 +9140,7 @@ function DeckEditor({
 
         const fallback =
           generateDeckExplanation(
-            d
+            deckForAnalysis
           );
 
         const errorMessage =
@@ -9309,17 +9455,10 @@ function DeckEditor({
             title={
               demoMode
                 ? "Die generative KI benötigt eine Firebase-Anmeldung."
-                : hasBlockingError
-                  ? "Behebe zuerst die Regelverstöße im Deck."
-                  : d.cards.length ===
-                      0
-                    ? "Für ein leeres Deck ist keine Analyse sinnvoll."
-                    : d.format ===
-                        "commander" &&
-                      selectedCommanders.length ===
-                        0
-                      ? "Wähle zuerst einen Commander."
-                      : undefined
+                : d.cards.length ===
+                    0
+                  ? "Für ein leeres Deck ist keine Analyse sinnvoll."
+                  : undefined
             }
           >
             {aiBusy

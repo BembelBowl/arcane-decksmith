@@ -51,6 +51,38 @@ export interface LockedDeckCard {
   count: number;
 }
 
+export interface DeckBuildCardSignal {
+  /** Tournament-performance signal from -1 (weak) to +1 (strong). */
+  performance?: number;
+  /** Commander-specific tournament signal from -1 to +1 when enough samples exist. */
+  commanderPerformance?: number;
+  /** Commander Spellbook synergy / combo signal from 0 to 1. */
+  combo?: number;
+  /** EDHREC commander-specific inclusion/synergy signal from -1 to +1. */
+  edhrec?: number;
+  /** Archidekt commander/format co-occurrence signal from 0 to 1. */
+  archidekt?: number;
+  sampleDecks?: number;
+  sampleGames?: number;
+}
+
+export interface DeckBuildStructureSignal {
+  /** Community-observed land count. Applied conservatively (max ±2 Commander / ±1 Standard). */
+  lands?: number;
+  /** Community-observed average nonland mana value. Applied conservatively. */
+  targetManaValue?: number;
+  sampleDecks?: number;
+}
+
+export interface DeckBuildIntelligence {
+  cards: Record<string, DeckBuildCardSignal>;
+  topDeckAvailable?: boolean;
+  spellbookAvailable?: boolean;
+  edhrecAvailable?: boolean;
+  archidektAvailable?: boolean;
+  structure?: DeckBuildStructureSignal;
+}
+
 export interface DeckProfile {
   strategy: DeckStrategy;
   lands: number;
@@ -660,11 +692,162 @@ function baseRoleScore(role: Role) {
   }
 }
 
+function intelligenceSignal(
+  card: CardRecord,
+  intelligence?: DeckBuildIntelligence
+): DeckBuildCardSignal | undefined {
+  if (!intelligence) {
+    return undefined;
+  }
+
+  return intelligence.cards[
+    card.name.toLowerCase()
+  ];
+}
+
+function intelligenceScore(
+  card: CardRecord,
+  format: Format,
+  intelligence?: DeckBuildIntelligence
+) {
+  const signal =
+    intelligenceSignal(
+      card,
+      intelligence
+    );
+
+  if (!signal) {
+    return 0;
+  }
+
+  const genericPerformance =
+    clamp(
+      signal.performance ?? 0,
+      -1,
+      1
+    );
+
+  const commanderPerformance =
+    format === "commander"
+      ? clamp(
+          signal.commanderPerformance ?? 0,
+          -1,
+          1
+        )
+      : 0;
+
+  const combo =
+    format === "commander"
+      ? clamp(
+          signal.combo ?? 0,
+          0,
+          1
+        )
+      : 0;
+
+  const edhrec =
+    format === "commander"
+      ? clamp(
+          signal.edhrec ?? 0,
+          -1,
+          1
+        )
+      : 0;
+
+  const archidekt =
+    clamp(
+      signal.archidekt ?? 0,
+      0,
+      1
+    );
+
+  // External evidence is intentionally capped so collection legality,
+  // role coverage and mana curve remain the primary constraints. TopDeck
+  // answers "what performs", Spellbook "what combos", EDHREC "what is
+  // commander-specific" and Archidekt "how comparable decks are built".
+  return clamp(
+    genericPerformance * 4 +
+      commanderPerformance * 5 +
+      combo * 8 +
+      edhrec * 5 +
+      archidekt * 3,
+    -8,
+    14
+  );
+}
+
+function intelligenceAdjustedProfile(
+  profile: DeckProfile,
+  format: Format,
+  intelligence?: DeckBuildIntelligence
+): DeckProfile {
+  const structure = intelligence?.structure;
+
+  if (!structure) {
+    return profile;
+  }
+
+  const confidence = clamp(
+    (structure.sampleDecks ?? 0) /
+      (format === "commander" ? 10 : 14),
+    0,
+    1
+  );
+
+  let lands = profile.lands;
+  if (
+    typeof structure.lands === "number" &&
+    Number.isFinite(structure.lands)
+  ) {
+    const maxShift =
+      format === "commander" ? 2 : 1;
+    const desiredShift = clamp(
+      structure.lands - profile.lands,
+      -maxShift,
+      maxShift
+    );
+    lands = Math.round(
+      profile.lands + desiredShift * confidence
+    );
+  }
+
+  let targetManaValue =
+    profile.targetManaValue;
+  if (
+    typeof structure.targetManaValue === "number" &&
+    Number.isFinite(structure.targetManaValue)
+  ) {
+    const desiredShift = clamp(
+      structure.targetManaValue -
+        profile.targetManaValue,
+      -0.4,
+      0.4
+    );
+    targetManaValue = clamp(
+      profile.targetManaValue +
+        desiredShift * confidence,
+      1.5,
+      6
+    );
+  }
+
+  return {
+    ...profile,
+    lands: clamp(
+      lands,
+      format === "commander" ? 30 : 20,
+      format === "commander" ? 42 : 28
+    ),
+    targetManaValue
+  };
+}
+
 function cardScore(
   card: CardRecord,
   format: Format,
   profile: DeckProfile,
-  commanders: CardRecord[]
+  commanders: CardRecord[],
+  intelligence?: DeckBuildIntelligence
 ) {
   const role = roleOf(card);
 
@@ -704,12 +887,20 @@ function cardScore(
     score += 1;
   }
 
+  score += intelligenceScore(
+    card,
+    format,
+    intelligence
+  );
+
   return score;
 }
 
 function landScore(
   card: CardRecord,
-  colors: string[]
+  colors: string[],
+  format?: Format,
+  intelligence?: DeckBuildIntelligence
 ) {
   const text = cardText(card);
   let score = 0;
@@ -754,6 +945,14 @@ function landScore(
     )
   ) {
     score += 1;
+  }
+
+  if (format) {
+    score += intelligenceScore(
+      card,
+      format,
+      intelligence
+    ) * 0.65;
   }
 
   return score;
@@ -1029,6 +1228,7 @@ export interface BuildOptions {
   tuning?: DeckTuning;
   lockedCards?: LockedDeckCard[];
   excludedCardIds?: string[];
+  intelligence?: DeckBuildIntelligence;
 }
 
 export function buildDeck(
@@ -1055,10 +1255,14 @@ export function buildDeck(
       : options.colors;
 
   const profile =
-    deckProfileFor(
+    intelligenceAdjustedProfile(
+      deckProfileFor(
+        options.format,
+        options.targetManaValue,
+        options.tuning
+      ),
       options.format,
-      options.targetManaValue,
-      options.tuning
+      options.intelligence
     );
 
   const colorEligible =
@@ -1239,11 +1443,15 @@ export function buildDeck(
         (a, b) =>
           landScore(
             b,
-            colors
+            colors,
+            options.format,
+            options.intelligence
           ) -
             landScore(
               a,
-              colors
+              colors,
+              options.format,
+              options.intelligence
             ) ||
           Number(
             a.isBasicLand
@@ -1364,7 +1572,9 @@ export function buildDeck(
         card,
         landScore(
           card,
-          colors
+          colors,
+          options.format,
+          options.intelligence
         ) >= 5
           ? "Mana-Basis: bevorzugt wegen Farbfixing oder zusätzlichem Landnutzen."
           : "Mana-Basis: für die Ziel-Landquote ausgewählt.",
@@ -1386,7 +1596,8 @@ export function buildDeck(
               card,
               options.format,
               profile,
-              commanders
+              commanders,
+              options.intelligence
             )
         })
       );
@@ -1595,10 +1806,19 @@ export function buildDeck(
         commanders
       );
 
+    const externalSignal =
+      intelligenceScore(
+        item.card,
+        options.format,
+        options.intelligence
+      );
+
     const reason =
-      synergy > 0
-        ? "Gesamtoptimierung: gute Bewertung aus Rolle, Mana-Kurve und erkennbarer Commander-/Strategie-Synergie."
-        : "Gesamtoptimierung: gute Bewertung aus Rolle, Mana-Kurve und gewählter Deckstrategie.";
+      externalSignal >= 2
+        ? "Gesamtoptimierung: starke Bewertung aus Rolle, Mana-Kurve, Strategie sowie verifizierten Turnier-/Combo-Signalen."
+        : synergy > 0
+          ? "Gesamtoptimierung: gute Bewertung aus Rolle, Mana-Kurve und erkennbarer Commander-/Strategie-Synergie."
+          : "Gesamtoptimierung: gute Bewertung aus Rolle, Mana-Kurve und gewählter Deckstrategie.";
 
     add(
       item.card,
