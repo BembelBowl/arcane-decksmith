@@ -11,7 +11,7 @@ import {
 } from "./deckIntelligence";
 
 const AI_WORKER_URL =
-  "https://arcane-decksmith-ai.benjamin-ambros.workers.dev";
+  "https://arcane-decksmith-ai.arcane-decksmith-api.workers.dev";
 
 const MAX_ANALYSIS_LENGTH = 10500;
 const EMPTY_RESPONSE_RETRIES = 1;

@@ -1,3 +1,4 @@
+import { auth } from "./firebase";
 import type {
   CardRecord,
   DeckRecord,
@@ -8,8 +9,7 @@ import type {
 } from "./deckBuilder";
 
 const INTELLIGENCE_WORKER_URL =
-  import.meta.env.VITE_DECK_INTELLIGENCE_URL?.trim() ??
-  "";
+  "https://arcane-decksmith-ai.arcane-decksmith-api.workers.dev/deck-intelligence";
 
 const REQUEST_TIMEOUT_MS = 12000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -401,7 +401,19 @@ async function fetchEvidence(
     return cached.value;
   }
 
-  if (!INTELLIGENCE_WORKER_URL) {
+  const user =
+    auth?.currentUser;
+
+  if (!user) {
+    return emptyEvidence();
+  }
+
+  let idToken: string;
+
+  try {
+    idToken =
+      await user.getIdToken();
+  } catch {
     return emptyEvidence();
   }
 
@@ -423,7 +435,9 @@ async function fetchEvidence(
           method: "POST",
           headers: {
             "Content-Type":
-              "application/json"
+              "application/json",
+            Authorization:
+              `Bearer ${idToken}`
           },
           body:
             JSON.stringify({
