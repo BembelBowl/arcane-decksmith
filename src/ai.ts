@@ -719,7 +719,8 @@ function tokenFor(
   prefix:
     | "C"
     | "D"
-    | "P",
+    | "P"
+    | "E",
   index: number
 ): string {
   return `[[${prefix}${String(index + 1).padStart(3, "0")}]]`;
@@ -848,11 +849,11 @@ function evidenceTokenEntries(
 
     seen.add(normalized);
 
-    result.push({
-      token:
-        `E${String(
-          result.length + 1
-        ).padStart(3, "0")}`,
+  result.push({
+  token: tokenFor(
+    "E",
+    result.length
+  ),
       name,
       kind: "evidence"
     });
