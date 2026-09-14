@@ -1,0 +1,11 @@
+name = "arcane-decksmith-intelligence"
+main = "deck-intelligence-worker.js"
+compatibility_date = "2026-09-14"
+
+[vars]
+TOPDECK_LOOKBACK_DAYS = "120"
+TOPDECK_MIN_PARTICIPANTS = "12"
+ARCHIDEKT_SAMPLE_DECKS = "6"
+
+[observability]
+enabled = true
