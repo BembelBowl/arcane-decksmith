@@ -496,6 +496,284 @@ function commanderBracketEstimate(
   };
 }
 
+
+type LocalDeckAnalysis = {
+  total: number;
+  mainDeck: number;
+  lands: number;
+  creatures: number;
+  artifacts: number;
+  enchantments: number;
+  instants: number;
+  sorceries: number;
+  planeswalkers: number;
+  averageManaValue: number;
+  ramp: number;
+  cardAdvantage: number;
+  interaction: number;
+  protection: number;
+  boardwipes: number;
+  tutors: number;
+  recursion: number;
+  finishers: number;
+  warnings: string[];
+};
+
+function localDeckAnalysis(
+  deck: DeckRecord,
+  pool: CardRecord[]
+): LocalDeckAnalysis {
+  const stats =
+    deckStats(deck);
+
+  const typeCounts = {
+    creatures: 0,
+    artifacts: 0,
+    enchantments: 0,
+    instants: 0,
+    sorceries: 0,
+    planeswalkers: 0
+  };
+
+  const roleCounts:
+    Record<string, number> = {};
+
+  for (
+    const deckCard
+    of deck.cards
+  ) {
+    const source =
+      pool.find(
+        card =>
+          card.id ===
+          deckCard.id
+      );
+
+    const typeLine =
+      source?.typeLine ??
+      deckCard.typeLine ??
+      "";
+
+    if (/\bCreature\b/i.test(typeLine)) {
+      typeCounts.creatures += deckCard.count;
+    }
+    if (/\bArtifact\b/i.test(typeLine)) {
+      typeCounts.artifacts += deckCard.count;
+    }
+    if (/\bEnchantment\b/i.test(typeLine)) {
+      typeCounts.enchantments += deckCard.count;
+    }
+    if (/\bInstant\b/i.test(typeLine)) {
+      typeCounts.instants += deckCard.count;
+    }
+    if (/\bSorcery\b/i.test(typeLine)) {
+      typeCounts.sorceries += deckCard.count;
+    }
+    if (/\bPlaneswalker\b/i.test(typeLine)) {
+      typeCounts.planeswalkers += deckCard.count;
+    }
+
+    const role =
+      deckCard.role &&
+      deckCard.role !==
+        "Manuell"
+        ? deckCard.role
+        : source
+          ? roleOf(source)
+          : "Sonstiges";
+
+    roleCounts[role] =
+      (roleCounts[role] ?? 0) +
+      deckCard.count;
+  }
+
+  const byRole =
+    (names: string[]) =>
+      names.reduce(
+        (sum, name) =>
+          sum +
+          (roleCounts[name] ?? 0),
+        0
+      );
+
+  const analysis:
+    LocalDeckAnalysis = {
+      total: stats.total,
+      mainDeck:
+        deck.cards.reduce(
+          (sum, card) =>
+            sum + card.count,
+          0
+        ),
+      lands: stats.lands,
+      creatures:
+        typeCounts.creatures,
+      artifacts:
+        typeCounts.artifacts,
+      enchantments:
+        typeCounts.enchantments,
+      instants:
+        typeCounts.instants,
+      sorceries:
+        typeCounts.sorceries,
+      planeswalkers:
+        typeCounts.planeswalkers,
+      averageManaValue:
+        stats.averageManaValue,
+      ramp:
+        byRole(["Ramp"]),
+      cardAdvantage:
+        byRole([
+          "Card Advantage"
+        ]),
+      interaction:
+        byRole([
+          "Interaction"
+        ]),
+      protection:
+        byRole([
+          "Protection"
+        ]),
+      boardwipes:
+        byRole([
+          "Boardwipe"
+        ]),
+      tutors:
+        byRole([
+          "Tutor"
+        ]),
+      recursion:
+        byRole([
+          "Recursion"
+        ]),
+      finishers:
+        byRole([
+          "Finisher"
+        ]),
+      warnings: []
+    };
+
+  if (
+    deck.format ===
+    "commander"
+  ) {
+    if (analysis.total !== 100) {
+      analysis.warnings.push(
+        `Commander-Deckgröße: ${analysis.total}/100 Karten.`
+      );
+    }
+
+    if (analysis.lands < 34) {
+      analysis.warnings.push(
+        `Mit ${analysis.lands} Ländern ist die Manabasis für viele Commander-Decks eher knapp.`
+      );
+    } else if (
+      analysis.lands > 40
+    ) {
+      analysis.warnings.push(
+        `Mit ${analysis.lands} Ländern liegt die Manabasis über dem üblichen Bereich vieler Commander-Decks.`
+      );
+    }
+
+    if (analysis.ramp < 8) {
+      analysis.warnings.push(
+        `Nur ${analysis.ramp} Ramp-Karten erkannt. Als grobe Heuristik sind häufig etwa 8–12 sinnvoll.`
+      );
+    }
+
+    if (
+      analysis.cardAdvantage < 8
+    ) {
+      analysis.warnings.push(
+        `Nur ${analysis.cardAdvantage} Karten für Card Advantage erkannt.`
+      );
+    }
+
+    if (
+      analysis.interaction < 8
+    ) {
+      analysis.warnings.push(
+        `Nur ${analysis.interaction} Interaktionskarten erkannt.`
+      );
+    }
+
+    if (
+      analysis.boardwipes < 2
+    ) {
+      analysis.warnings.push(
+        `Nur ${analysis.boardwipes} Boardwipe-Karten erkannt.`
+      );
+    }
+
+    if (
+      analysis.averageManaValue >
+      3.6
+    ) {
+      analysis.warnings.push(
+        `Der durchschnittliche Mana Value von ${analysis.averageManaValue} ist relativ hoch.`
+      );
+    }
+  } else {
+    if (analysis.total < 60) {
+      analysis.warnings.push(
+        `Standard-Deckgröße: ${analysis.total}/60 Karten.`
+      );
+    }
+
+    const landRatio =
+      analysis.mainDeck > 0
+        ? analysis.lands /
+          analysis.mainDeck
+        : 0;
+
+    if (
+      analysis.mainDeck >= 50 &&
+      landRatio < 0.33
+    ) {
+      analysis.warnings.push(
+        `Der Länderanteil liegt bei nur ${Math.round(landRatio * 100)} %.`
+      );
+    }
+
+    if (
+      analysis.mainDeck >= 50 &&
+      landRatio > 0.47
+    ) {
+      analysis.warnings.push(
+        `Der Länderanteil liegt bei ${Math.round(landRatio * 100)} % und damit relativ hoch.`
+      );
+    }
+
+    if (
+      analysis.interaction < 4 &&
+      analysis.mainDeck >= 50
+    ) {
+      analysis.warnings.push(
+        `Nur ${analysis.interaction} Interaktionskarten erkannt.`
+      );
+    }
+
+    if (
+      analysis.averageManaValue >
+      3.5
+    ) {
+      analysis.warnings.push(
+        `Der durchschnittliche Mana Value von ${analysis.averageManaValue} ist für viele Standard-Decks relativ hoch.`
+      );
+    }
+  }
+
+  if (
+    analysis.warnings.length === 0
+  ) {
+    analysis.warnings.push(
+      "Die lokale Heuristik erkennt aktuell keine auffälligen Strukturprobleme."
+    );
+  }
+
+  return analysis;
+}
+
 function parseCollectorNumbers(
   input: string
 ): string[] {
@@ -3347,6 +3625,133 @@ function Collection({
       new Set()
     );
 
+  const [
+    setCatalog,
+    setSetCatalog
+  ] =
+    useState<
+      ScryfallSet[]
+    >([]);
+
+  useEffect(() => {
+    let active = true;
+
+    void getSets()
+      .then(sets => {
+        if (active) {
+          setSetCatalog(sets);
+        }
+      })
+      .catch(error => {
+        console.error(
+          "Set-Fortschritt konnte nicht geladen werden:",
+          error
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const setCompletion =
+    useMemo(() => {
+      const bySet =
+        new Map<
+          string,
+          Set<string>
+        >();
+
+      for (
+        const card
+        of cards
+      ) {
+        const key =
+          card.set.toLowerCase();
+
+        if (!bySet.has(key)) {
+          bySet.set(
+            key,
+            new Set()
+          );
+        }
+
+        bySet
+          .get(key)!
+          .add(
+            card.collectorNumber
+              .toLowerCase()
+          );
+      }
+
+      return Array.from(
+        bySet.entries()
+      )
+        .map(
+          (
+            [
+              setCode,
+              collectorNumbers
+            ]
+          ) => {
+            const info =
+              setCatalog.find(
+                set =>
+                  set.code
+                    .toLowerCase() ===
+                  setCode
+              );
+
+            const total =
+              info?.card_count ?? 0;
+
+            const owned =
+              collectorNumbers.size;
+
+            return {
+              code:
+                setCode.toUpperCase(),
+              name:
+                info?.name ??
+                cards.find(
+                  card =>
+                    card.set
+                      .toLowerCase() ===
+                    setCode
+                )?.setName ??
+                setCode.toUpperCase(),
+              owned,
+              total,
+              percent:
+                total > 0
+                  ? Math.min(
+                      100,
+                      Math.round(
+                        owned /
+                        total *
+                        100
+                      )
+                    )
+                  : 0
+            };
+          }
+        )
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(
+              b.name,
+              "de",
+              {
+                sensitivity:
+                  "base"
+              }
+            )
+        );
+    }, [
+      cards,
+      setCatalog
+    ]);
+
   const filtered =
     useMemo(
       () =>
@@ -4207,6 +4612,48 @@ function Collection({
           </div>
         </div>
      </details>
+
+      <details className="panel">
+        <summary className="collection-stats-toggle">
+          Set-Fortschritt
+        </summary>
+
+        <p className="muted">
+          Fortschritt anhand unterschiedlicher Collector Numbers in deiner Sammlung im Verhältnis zur von Scryfall gemeldeten Set-Größe.
+        </p>
+
+        {setCompletion.length === 0
+          ? (
+            <div className="muted">
+              Noch keine Sets in der Sammlung.
+            </div>
+          )
+          : (
+            <div className="deck-list">
+              {setCompletion.map(
+                set => (
+                  <div key={set.code}>
+                    <span>
+                      <strong>
+                        {set.name}
+                      </strong>
+                      {" "}
+                      <span className="muted">
+                        ({set.code})
+                      </span>
+                    </span>
+
+                    <span>
+                      {set.total > 0
+                        ? `${set.owned} / ${set.total} · ${set.percent} %`
+                        : `${set.owned} gesammelt`}
+                    </span>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+      </details>
 
       <div className="toolbar">
         <input
@@ -6480,6 +6927,158 @@ function Decks({
       null
     >(null);
 
+  const deckOverlapAnalysis =
+    useMemo(() => {
+      const ownedByName =
+        new Map<
+          string,
+          number
+        >();
+
+      for (
+        const card
+        of pool
+      ) {
+        const key =
+          card.name.toLowerCase();
+
+        ownedByName.set(
+          key,
+          (
+            ownedByName.get(key) ??
+            0
+          ) +
+          card.count
+        );
+      }
+
+      const usage =
+        new Map<
+          string,
+          {
+            name: string;
+            demand: number;
+            decks: Set<string>;
+          }
+        >();
+
+      const addUsage = (
+        name: string,
+        count: number,
+        deckName: string
+      ) => {
+        const key =
+          name.toLowerCase();
+
+        const current =
+          usage.get(key) ?? {
+            name,
+            demand: 0,
+            decks:
+              new Set<string>()
+          };
+
+        current.demand += count;
+        current.decks.add(
+          deckName
+        );
+
+        usage.set(
+          key,
+          current
+        );
+      };
+
+      for (
+        const deck
+        of decks
+      ) {
+        for (
+          const card
+          of deck.cards
+        ) {
+          addUsage(
+            card.name,
+            card.count,
+            deck.name
+          );
+        }
+
+        if (
+          deck.format ===
+          "commander"
+        ) {
+          for (
+            const id
+            of deck.commanderIds
+          ) {
+            const commander =
+              pool.find(
+                card =>
+                  card.id === id
+              );
+
+            if (commander) {
+              addUsage(
+                commander.name,
+                1,
+                deck.name
+              );
+            }
+          }
+        }
+      }
+
+      return Array.from(
+        usage.entries()
+      )
+        .filter(
+          (
+            [
+              ,
+              entry
+            ]
+          ) =>
+            entry.decks.size > 1
+        )
+        .map(
+          (
+            [
+              key,
+              entry
+            ]
+          ) => {
+            const owned =
+              ownedByName.get(key) ??
+              0;
+
+            return {
+              ...entry,
+              owned,
+              shortage:
+                Math.max(
+                  0,
+                  entry.demand -
+                  owned
+                )
+            };
+          }
+        )
+        .sort(
+          (a, b) =>
+            b.shortage -
+              a.shortage ||
+            b.decks.size -
+              a.decks.size ||
+            a.name.localeCompare(
+              b.name
+            )
+        );
+    }, [
+      decks,
+      pool
+    ]);
+
   const [
     showBulkDeck,
     setShowBulkDeck
@@ -7296,6 +7895,48 @@ function Decks({
         </div>
       </div>
 
+
+      {deckOverlapAnalysis.length > 0 && (
+        <details className="panel">
+          <summary className="collection-stats-toggle">
+            Deck-Überschneidungen · {deckOverlapAnalysis.length} Karten
+          </summary>
+
+          <p className="muted">
+            Karten, die gleichzeitig in mehreren gespeicherten Decks benötigt werden. Reicht dein Bestand nicht für alle Decks gleichzeitig, wird die Fehlmenge angezeigt.
+          </p>
+
+          <div className="deck-list">
+            {deckOverlapAnalysis
+              .slice(0, 40)
+              .map(entry => (
+                <div key={entry.name}>
+                  <span>
+                    <strong>
+                      {entry.name}
+                    </strong>
+                    <br />
+                    <small className="muted">
+                      {Array.from(
+                        entry.decks
+                      ).join(" · ")}
+                    </small>
+                  </span>
+
+                  <span>
+                    benötigt {entry.demand}
+                    {" · "}
+                    vorhanden {entry.owned}
+                    {entry.shortage > 0
+                      ? ` · fehlen ${entry.shortage}`
+                      : ""}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </details>
+      )}
+
       {showBulkDeck && (
         <div className="panel">
           <h3>
@@ -7303,7 +7944,7 @@ function Decks({
           </h3>
 
           <p className="muted">
-            Wähle Format und Set und gib anschließend nur die Collector Numbers ein. Doppelte Nummern zählen als mehrere Exemplare. Karten, die noch nicht oder nicht in ausreichender Anzahl in deiner Sammlung sind, werden beim Speichern automatisch zur Sammlung hinzugefügt. Das Deck wird außerdem gegen die Formatregeln geprüft.
+            Wähle Format und Set und gib anschließend nur die Collector Numbers ein. Doppelte Nummern zählen als mehrere Exemplare. Alle Karten des Hauptdecks werden beim Speichern zusätzlich zur Sammlung hinzugefügt. Der Commander muss bereits in der Sammlung vorhanden sein und wird nicht erneut hinzugefügt. Das Deck wird außerdem gegen die Formatregeln geprüft.
           </p>
 
           <div className="two">
@@ -7803,6 +8444,12 @@ function Decks({
         pool
       );
 
+    const localAnalysis =
+      localDeckAnalysis(
+        d,
+        pool
+      );
+
     return (
       <article
         className="panel saved-deck-card"
@@ -8038,12 +8685,77 @@ function Decks({
           </div>
         </div>
 
+        <details>
+          <summary>
+            Lokale Deckanalyse
+          </summary>
+
+          <div className="stats">
+            <div>
+              <strong>{localAnalysis.lands}</strong>
+              <span>Länder</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.creatures}</strong>
+              <span>Kreaturen</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.ramp}</strong>
+              <span>Ramp</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.cardAdvantage}</strong>
+              <span>Card Advantage</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.interaction}</strong>
+              <span>Interaction</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.averageManaValue}</strong>
+              <span>Ø Mana Value</span>
+            </div>
+          </div>
+
+          <div className="deck-list">
+            {localAnalysis.warnings.map(
+              warning => (
+                <div key={warning}>
+                  <span>{warning}</span>
+                </div>
+              )
+            )}
+          </div>
+        </details>
+
         <div className="row">
           <button
             className="primary"
             onClick={()=>setEditing(d)}
           >
             Bearbeiten
+          </button>
+
+          <button
+            className="secondary"
+            onClick={() => {
+              const now =
+                Date.now();
+
+              void onSave({
+                ...d,
+                id:
+                  crypto.randomUUID(),
+                name:
+                  `${d.name} – Kopie`,
+                createdAt:
+                  now,
+                updatedAt:
+                  now
+              });
+            }}
+          >
+            Duplizieren
           </button>
 
           <button
@@ -8215,6 +8927,12 @@ function DeckEditor({
 
   const bracketEstimate =
     commanderBracketEstimate(
+      d,
+      pool
+    );
+
+  const localAnalysis =
+    localDeckAnalysis(
       d,
       pool
     );
@@ -9099,6 +9817,138 @@ function DeckEditor({
               {60 - totalCards} Karten bis zur Mindestgröße.
             </div>
           )}
+
+        <div className="ai-box">
+          <strong>
+            Lokale Deckanalyse
+          </strong>
+
+          <div className="muted">
+            Regelbasierte Heuristik ohne generative KI. Die Werte sind Hinweise und keine verbindlichen Deckbau-Regeln.
+          </div>
+
+          <div className="stats">
+            <div>
+              <strong>{localAnalysis.lands}</strong>
+              <span>Länder</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.creatures}</strong>
+              <span>Kreaturen</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.ramp}</strong>
+              <span>Ramp</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.cardAdvantage}</strong>
+              <span>Card Advantage</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.interaction}</strong>
+              <span>Interaction</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.boardwipes}</strong>
+              <span>Boardwipes</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.tutors}</strong>
+              <span>Tutoren</span>
+            </div>
+            <div>
+              <strong>{localAnalysis.averageManaValue}</strong>
+              <span>Ø Mana Value</span>
+            </div>
+          </div>
+
+          <div className="deck-list">
+            {localAnalysis.warnings.map(
+              warning => (
+                <div key={warning}>
+                  <span>{warning}</span>
+                </div>
+              )
+            )}
+          </div>
+        </div>
+
+        {d.format === "commander" &&
+          bracketEstimate && (
+          <div className="ai-box">
+            <strong>
+              Commander-Check
+            </strong>
+
+            <div className="stats">
+              <div>
+                <strong>{totalCards}/100</strong>
+                <span>Deckgröße</span>
+              </div>
+              <div>
+                <strong>{selectedCommanders.length}</strong>
+                <span>Commander</span>
+              </div>
+              <div>
+                <strong>{bracketEstimate.gameChangers}</strong>
+                <span>Game Changer</span>
+              </div>
+              <div>
+                <strong>{bracketEstimate.tutorCards}</strong>
+                <span>Tutoren</span>
+              </div>
+              <div>
+                <strong>{bracketEstimate.extraTurnCards}</strong>
+                <span>Extra Turns</span>
+              </div>
+              <div>
+                <strong>{bracketEstimate.massLandDenialCards}</strong>
+                <span>Landverwehrung</span>
+              </div>
+            </div>
+
+            <div className="deck-list">
+              <div>
+                <span>Farbidentität</span>
+                <strong>
+                  {commanderColors.length > 0
+                    ? commanderColors
+                        .map(
+                          color =>
+                            COLOR_NAMES[color] ??
+                            color
+                        )
+                        .join(", ")
+                    : "Farblos"}
+                </strong>
+              </div>
+              <div>
+                <span>
+                  Format-/Farbverstöße
+                </span>
+                <strong>
+                  {illegalCards.length}
+                </strong>
+              </div>
+              <div>
+                <span>
+                  Kopier-/Bestandsverstöße
+                </span>
+                <strong>
+                  {copyViolationNames.length}
+                </strong>
+              </div>
+              <div>
+                <span>
+                  Bracket-Schätzung
+                </span>
+                <strong>
+                  {bracketEstimate.label}
+                </strong>
+              </div>
+            </div>
+          </div>
+        )}
 
         {d.format ===
           "commander" &&
