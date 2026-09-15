@@ -4170,3 +4170,92 @@ footer {
   .manual-card-pool-panel .manual-filter-footer { grid-column: auto; }
   .manual-card-pool-panel .add-list { max-height: none; }
 }
+
+
+/* D1 UX hotfix 2 — kompakterer manueller Builder */
+.manual-settings-panel {
+  margin-bottom: 12px;
+}
+
+.manual-settings-summary {
+  padding: 13px 17px;
+}
+
+.manual-settings-content {
+  padding: 14px 16px 16px;
+}
+
+.manual-editor-grid {
+  gap: 14px;
+}
+
+.manual-card-pool-panel .manual-filter-panel {
+  gap: 10px 14px;
+  padding: 10px 12px;
+}
+
+.manual-card-pool-panel .manual-filter-group {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.manual-card-pool-panel .manual-filter-group legend {
+  margin-bottom: 2px;
+}
+
+.manual-card-pool-panel .manual-filter-checks {
+  gap: 7px;
+}
+
+.manual-card-pool-panel .manual-filter-checks label {
+  min-height: 34px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.manual-card-pool-panel .manual-filter-panel > label:not(.manual-filter-search) {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.manual-card-pool-panel .add-list {
+  max-height: 58vh;
+}
+
+@media (min-width: 1100px) {
+  .manual-card-pool-panel .manual-filter-panel {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.15fr) minmax(210px, 0.75fr);
+    align-items: start;
+  }
+
+  .manual-card-pool-panel .manual-filter-search {
+    grid-column: 1 / -1;
+  }
+
+  .manual-card-pool-panel .manual-filter-panel > label:not(.manual-filter-search) {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .manual-card-pool-panel .manual-filter-footer {
+    grid-column: 3;
+    align-self: end;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 1099px) {
+  .manual-card-pool-panel .manual-filter-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .manual-card-pool-panel .manual-filter-search,
+  .manual-card-pool-panel .manual-filter-footer,
+  .manual-card-pool-panel .manual-filter-panel > label:not(.manual-filter-search) {
+    grid-column: 1 / -1;
+  }
+}
