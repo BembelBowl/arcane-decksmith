@@ -5190,7 +5190,7 @@ function DeckEditor({
         </div>
       </div>
 
-      <details className="panel manual-settings-panel" open>
+      <details className="panel manual-settings-panel">
         <summary className="manual-settings-summary">
           <span>
             <strong>Deck-Einstellungen</strong>
@@ -5628,8 +5628,8 @@ function DeckEditor({
         </div>
       </details>
 
-      <div className="editor-grid">
-        <div className="panel">
+      <div className="editor-grid manual-editor-grid">
+        <div className="panel manual-deck-panel">
           <h3>
             {d.format ===
             "commander"
@@ -5819,128 +5819,15 @@ function DeckEditor({
           })}
         </div>
 
-        <div className="panel">
-          <h3>
-            Karten hinzufügen
-          </h3>
-
-          <style>{`
-            .manual-card-preview{
-              margin-bottom:14px;
-              padding:12px;
-              border:1px solid rgba(214,173,88,.24);
-              border-radius:12px;
-              background:rgba(6,13,24,.72);
-            }
-
-            .manual-card-preview-grid{
-              display:grid;
-              grid-template-columns:120px minmax(0,1fr);
-              gap:14px;
-              align-items:start;
-            }
-
-            .manual-card-preview img{
-              width:100%;
-              border-radius:9px;
-              display:block;
-            }
-
-            .manual-card-preview h4{
-              margin:0 0 5px;
-            }
-
-            .manual-card-preview-oracle{
-              white-space:pre-wrap;
-              font-size:12px;
-              line-height:1.45;
-            }
-
-            .manual-add-row{
-              display:grid;
-              grid-template-columns:minmax(0,1fr) auto;
-              gap:8px;
-              align-items:center;
-            }
-
-            .manual-card-preview-trigger{
-              display:block;
-              width:100%;
-              padding:7px 4px;
-              border:0;
-              background:none;
-              color:inherit;
-              text-align:left;
-              cursor:pointer;
-            }
-
-            .manual-card-preview-trigger:hover,
-            .manual-card-preview-trigger:focus{
-              color:var(--gold-bright);
-              outline:none;
-            }
-
-            @media (max-width:650px){
-              .manual-card-preview-grid{
-                grid-template-columns:90px minmax(0,1fr);
-              }
-            }
-          `}</style>
-
-          {previewCard && (
-            <div className="manual-card-preview">
-              <div className="manual-card-preview-grid">
-                <div>
-                  {(previewCard.imageUri ||
-                    previewCard.imageUris?.normal ||
-                    previewCard.imageUris?.large ||
-                    previewCard.imageUris?.small) && (
-                    <img
-                      src={
-                        previewCard.imageUri ??
-                        previewCard.imageUris?.normal ??
-                        previewCard.imageUris?.large ??
-                        previewCard.imageUris?.small
-                      }
-                      alt={previewCard.name}
-                    />
-                  )}
-                </div>
-
-                <div>
-                  <h4>
-                    {previewCard.name}
-                  </h4>
-
-                  <div className="meta">
-                    {previewCard.manaCost ?? "—"} · MV{" "}
-                    {previewCard.manaValue}
-                  </div>
-
-                  <p>
-                    {previewCard.typeLine}
-                  </p>
-
-                  {previewCard.oracleText && (
-                    <p className="manual-card-preview-oracle">
-                      {previewCard.oracleText}
-                    </p>
-                  )}
-
-                  <button
-                    className="secondary"
-                    onClick={() =>
-                      setPreviewCardId(
-                        null
-                      )
-                    }
-                  >
-                    Vorschau schließen
-                  </button>
-                </div>
-              </div>
+        <div className="panel manual-card-pool-panel">
+          <div className="manual-panel-heading">
+            <div>
+              <h3>Karten hinzufügen</h3>
+              <p className="muted">Klicke auf einen Kartennamen für die vollständige Kartenansicht.</p>
             </div>
-          )}
+          </div>
+
+
 
           {d.format ===
             "commander" &&
@@ -6102,15 +5989,7 @@ function DeckEditor({
                             <button
                               type="button"
                               className="manual-card-preview-trigger"
-                              onClick={() =>
-                                setPreviewCardId(
-                                  current =>
-                                    current ===
-                                    card.id
-                                      ? null
-                                      : card.id
-                                )
-                              }
+                              onClick={() => setPreviewCardId(card.id)}
                               title="Karte anzeigen"
                             >
                               <span>
@@ -6158,6 +6037,13 @@ function DeckEditor({
             )}
         </div>
       </div>
+
+      {previewCard && (
+        <CardDetailsModal
+          card={previewCard}
+          onClose={() => setPreviewCardId(null)}
+        />
+      )}
 
       {analysisText && (
         <div className="ai-box analysis-box markdown-content">

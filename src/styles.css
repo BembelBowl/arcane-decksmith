@@ -2591,12 +2591,15 @@ footer {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   min-width: 0;
-  padding: 6px 7px;
+  margin: 0;
+  padding: 7px 8px;
   color: #d2ddea;
   border-radius: 7px;
   cursor: pointer;
   font-size: 0.84rem;
+  line-height: 1.25;
 }
 
 .collection-filter-options label:hover {
@@ -2604,7 +2607,12 @@ footer {
 }
 
 .collection-filter-options input[type="checkbox"] {
-  flex: none;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
   accent-color: var(--gold);
 }
 
@@ -2625,7 +2633,8 @@ footer {
 }
 
 .collection-mv-options {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(84px, 1fr));
+  min-width: 210px;
 }
 
 .collection-filter-result {
@@ -4088,4 +4097,76 @@ footer {
   .strategy-choice-grid {
     grid-template-columns: 1fr;
   }
+}
+
+
+/* D1 UX hotfix — manueller Deckeditor */
+.manual-editor-grid {
+  grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.1fr);
+  align-items: start;
+}
+
+.manual-deck-panel,
+.manual-card-pool-panel {
+  min-width: 0;
+}
+
+.manual-deck-panel > h3 {
+  margin-top: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(113, 138, 167, 0.16);
+}
+
+.manual-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(113, 138, 167, 0.16);
+}
+
+.manual-panel-heading h3,
+.manual-panel-heading p { margin: 0; }
+.manual-panel-heading p { margin-top: 4px; font-size: 11px; }
+
+.manual-card-pool-panel .manual-filter-panel {
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr);
+  align-items: start;
+}
+
+.manual-card-pool-panel .manual-filter-search,
+.manual-card-pool-panel .manual-filter-footer { grid-column: 1 / -1; }
+
+.manual-card-pool-panel .manual-filter-group { min-width: 0; }
+
+.manual-card-pool-panel .add-list {
+  max-height: 62vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.manual-card-preview-trigger span {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.manual-settings-summary::after {
+  content: "▾";
+  color: var(--muted);
+  font-size: 12px;
+  transition: transform 160ms ease;
+}
+
+.manual-settings-panel[open] .manual-settings-summary::after { transform: rotate(180deg); }
+
+@media (max-width: 980px) {
+  .manual-editor-grid { grid-template-columns: 1fr; }
+  .manual-card-pool-panel .manual-filter-panel { grid-template-columns: 1fr; }
+  .manual-card-pool-panel .manual-filter-search,
+  .manual-card-pool-panel .manual-filter-footer { grid-column: auto; }
+  .manual-card-pool-panel .add-list { max-height: none; }
 }
