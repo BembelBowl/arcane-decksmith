@@ -104,6 +104,7 @@ import HomePage from "./pages/HomePage";
 import CollectionPage from "./pages/CollectionPage";
 import DeckLibrary from "./components/DeckLibrary";
 import DeckBoard from "./components/DeckBoard";
+import ManualCardPoolBoard from "./components/ManualCardPoolBoard";
 import CardDetailsModal from "./components/CardDetailsModal";
 import { useAppNavigation } from "./navigation";
 
@@ -5823,24 +5824,29 @@ function DeckEditor({
           <div className="manual-panel-heading">
             <div>
               <h3>Karten hinzufügen</h3>
-              <p className="muted">Klicke auf einen Kartennamen für die vollständige Kartenansicht.</p>
+              <p className="muted">Die legalen Karten deiner Sammlung sind nach Kartentyp gruppiert. Klick auf eine Karte öffnet die Detailansicht.</p>
             </div>
           </div>
 
+          {d.format === "commander" && selectedCommanders.length === 0 ? (
+            <p className="muted">Wähle zuerst einen Commander.</p>
+          ) : (
+            <>
+              <details className="manual-filter-details">
+                <summary className="manual-filter-summary">
+                  <span>
+                    <strong>Filter</strong>
+                    <small>
+                      {manualFilteredPool.length} von {legalPool.length} legalen Karten
+                      {(manualSearch || manualColors.length > 0 || manualTypes.length > 0 || manualSet)
+                        ? " · Filter aktiv"
+                        : ""}
+                    </small>
+                  </span>
+                  <span className="manual-filter-summary-toggle">Ein-/ausklappen</span>
+                </summary>
 
-
-          {d.format ===
-            "commander" &&
-          selectedCommanders.length ===
-            0
-            ? (
-              <p className="muted">
-                Wähle zuerst einen Commander.
-              </p>
-            )
-            : (
-              <>
-                <div className="manual-filter-panel">
+                <div className="manual-filter-panel manual-filter-panel-full">
                   <label className="manual-filter-search">
                     <span>Suche</span>
                     <input
@@ -5873,7 +5879,7 @@ function DeckEditor({
                     </div>
                   </fieldset>
 
-                  <fieldset className="manual-filter-group">
+                  <fieldset className="manual-filter-group manual-filter-type-group">
                     <legend>Kartentyp</legend>
                     <div className="manual-filter-checks manual-filter-types">
                       {[
@@ -5898,8 +5904,8 @@ function DeckEditor({
                     </div>
                   </fieldset>
 
-                  <label>
-                    Set
+                  <label className="manual-filter-set">
+                    <span>Set</span>
                     <select value={manualSet} onChange={e => setManualSet(e.target.value)}>
                       <option value="">Alle Sets</option>
                       {manualSetOptions.map(([code, label]) => (
@@ -5934,107 +5940,41 @@ function DeckEditor({
                     </button>
                   </div>
                 </div>
+              </details>
 
-                <div className="add-list">
-                  {manualFilteredPool
-                    .slice(
-                      0,
-                      200
-                    )
-                    .map(
-                      card => {
-                        const current =
-                          all.find(
-                            item =>
-                              item.id ===
-                              card.id
-                          )
-                            ?.count ??
-                          0;
+              {manualFilteredPool.length > 0 ? (
+                <ManualCardPoolBoard
+                  cards={manualFilteredPool.slice(0, 200)}
+                  onCardClick={card => setPreviewCardId(card.id)}
+                  onAdd={card => {
+                    add(card);
+                    setAnalysisText("");
+                  }}
+                  statusForCard={card => {
+                    const current = all.find(item => item.id === card.id)?.count ?? 0;
+                    const currentByName = deckCountByName[card.name.toLowerCase()] ?? 0;
+                    const ruleLimit = deckCopyLimit(card, d.format);
+                    const ruleLimitLabel = Number.isFinite(ruleLimit) ? String(ruleLimit) : "∞";
+                    const commanderFull = d.format === "commander" && mainDeckCount >= commanderMainTarget;
 
-                        const currentByName =
-                          deckCountByName[
-                            card.name.toLowerCase()
-                          ] ??
-                          0;
-
-                        const ruleLimit =
-                          deckCopyLimit(
-                            card,
-                            d.format
-                          );
-
-                        const ruleLimitLabel =
-                          Number.isFinite(
-                            ruleLimit
-                          )
-                            ? String(
-                                ruleLimit
-                              )
-                            : "beliebig";
-
-                        const commanderFull =
-                          d.format ===
-                            "commander" &&
-                          mainDeckCount >=
-                            commanderMainTarget;
-
-                        return (
-                          <div
-                            className="manual-add-row"
-                            key={
-                              card.id
-                            }
-                          >
-                            <button
-                              type="button"
-                              className="manual-card-preview-trigger"
-                              onClick={() => setPreviewCardId(card.id)}
-                              title="Karte anzeigen"
-                            >
-                              <span>
-                                {card.name}
-
-                                <small className="muted">
-                                  {" "}(
-                                  {currentByName}
-                                  /
-                                  {ruleLimitLabel}
-                                  )
-                                </small>
-                              </span>
-                            </button>
-
-                            <button
-                              disabled={
-                                current >=
-                                  card.count ||
-                                currentByName >=
-                                  ruleLimit ||
-                                commanderFull
-                              }
-                              onClick={() => {
-                                add(card);
-                                setAnalysisText(
-                                  ""
-                                );
-                              }}
-                            >
-                              +1
-                            </button>
-                          </div>
-                        );
-                      }
-                    )}
+                    return {
+                      current,
+                      currentByName,
+                      ruleLimitLabel,
+                      disabled:
+                        current >= card.count ||
+                        currentByName >= ruleLimit ||
+                        commanderFull
+                    };
+                  }}
+                />
+              ) : (
+                <div className="notice">
+                  Für die aktuellen Filter sind keine legalen Karten aus deiner Sammlung verfügbar.
                 </div>
-
-                {manualFilteredPool.length === 0 && (
-                  <div className="notice">
-                    Für die aktuellen Filter sind keine legalen Karten aus deiner Sammlung verfügbar.
-                  </div>
-                )}
-              </>
-            )}
+              )}
+            </>
+          )}
         </div>
       </div>
 
