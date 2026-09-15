@@ -2967,26 +2967,6 @@ function SearchCard({
   );
 }
 
-type HelpDotProps = {
-  text: string;
-};
-
-function HelpDot({
-  text
-}: HelpDotProps) {
-  return (
-    <span
-      className="help-dot"
-      title={text}
-      aria-label={text}
-      role="img"
-      tabIndex={0}
-    >
-      ?
-    </span>
-  );
-}
-
 type TuningSliderProps = {
   label: string;
   value: number;
@@ -3024,9 +3004,6 @@ function TuningSlider({
           {label}
         </span>
 
-        <HelpDot
-          text={help}
-        />
 
         <strong>
           {valueText}
