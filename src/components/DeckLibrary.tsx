@@ -6,14 +6,10 @@ type DeckLibraryProps = {
   onOpenDeck: (deckId: string) => void;
 };
 
-const COLOR_SYMBOL_LABELS: Record<string, string> = {
-  W: "W",
-  U: "U",
-  B: "B",
-  R: "R",
-  G: "G",
-  C: "C"
-};
+
+function colorSymbolUrl(color: string): string {
+  return `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(color.toUpperCase())}.svg`;
+}
 
 function cardImage(card: CardRecord | undefined): string | undefined {
   return (
@@ -32,7 +28,7 @@ function deckArtwork(deck: DeckRecord, pool: CardRecord[]): string | undefined {
 
   for (const deckCard of deck.cards) {
     const source = pool.find(card => card.id === deckCard.id);
-    if (source && !/Land/i.test(source.typeLine ?? deckCard.typeLine ?? "")) {
+    if (source && !/\bLand\b/i.test(source.typeLine ?? deckCard.typeLine ?? "")) {
       const image = cardImage(source);
       if (image) return image;
     }
@@ -125,9 +121,21 @@ export default function DeckLibrary({ decks, pool, onOpenDeck }: DeckLibraryProp
                     {colors.length > 0 && (
                       <span className="deck-library-colors" aria-label="Farbidentität">
                         {colors.map(color => (
-                          <i key={color} className={`mana-symbol mana-symbol-${color.toLowerCase()}`}>
-                            {COLOR_SYMBOL_LABELS[color] ?? color}
-                          </i>
+                          <img
+                            key={color}
+                            src={colorSymbolUrl(color)}
+                            alt={color}
+                            title={color}
+                            width={20}
+                            height={20}
+                            loading="lazy"
+                            style={{
+                              display: "block",
+                              width: 20,
+                              height: 20,
+                              filter: "drop-shadow(0 1px 1px rgba(0,0,0,.35))"
+                            }}
+                          />
                         ))}
                       </span>
                     )}
