@@ -8,6 +8,10 @@ type DeckBoardProps = {
   excludedIds?: ReadonlySet<string>;
   onToggleLocked?: (card: DeckCard) => void;
   onToggleExcluded?: (card: DeckCard) => void;
+  onIncrement?: (card: DeckCard) => void;
+  onDecrement?: (card: DeckCard) => void;
+  canIncrement?: (card: DeckCard) => boolean;
+  noteForCard?: (card: DeckCard) => string | undefined;
 };
 
 type BoardEntry = {
@@ -56,10 +60,14 @@ export default function DeckBoard({
   lockedIds,
   excludedIds,
   onToggleLocked,
-  onToggleExcluded
+  onToggleExcluded,
+  onIncrement,
+  onDecrement,
+  canIncrement,
+  noteForCard
 }: DeckBoardProps) {
   const entries: BoardEntry[] = [];
-  const hasActions = Boolean(onToggleLocked || onToggleExcluded);
+  const hasActions = Boolean(onToggleLocked || onToggleExcluded || onIncrement || onDecrement);
 
   if (deck.format === "commander") {
     deck.commanderIds.forEach((id, index) => {
@@ -154,11 +162,35 @@ export default function DeckBoard({
                           </small>
                           {locked && <em>🔒 Behalten</em>}
                           {excluded && <em>🚫 Ausschließen</em>}
+                          {!entry.commander && entry.deckCard && noteForCard?.(entry.deckCard) && (
+                            <em className="deck-board-warning">⚠ {noteForCard(entry.deckCard)}</em>
+                          )}
                         </span>
                       </button>
 
                       {!entry.commander && entry.deckCard && hasActions && (
                         <div className="deck-board-card-actions">
+                          {onDecrement && (
+                            <button
+                              type="button"
+                              className="ghost"
+                              onClick={() => onDecrement(entry.deckCard as DeckCard)}
+                            >
+                              −1
+                            </button>
+                          )}
+
+                          {onIncrement && (
+                            <button
+                              type="button"
+                              className="ghost"
+                              disabled={canIncrement ? !canIncrement(entry.deckCard as DeckCard) : false}
+                              onClick={() => onIncrement(entry.deckCard as DeckCard)}
+                            >
+                              +1
+                            </button>
+                          )}
+
                           {onToggleLocked && (
                             <button
                               type="button"
