@@ -82,6 +82,82 @@ function statsText(card: ScryfallCard | null): string | null {
   return null;
 }
 
+type ManaToken =
+  | {
+      type: "symbol";
+      raw: string;
+      key: string;
+      svgUri: string;
+    }
+  | {
+      type: "separator";
+      key: string;
+      label: string;
+    };
+
+type PrintingEntry = {
+  id: string;
+  label: string;
+  priceText: string;
+  href: string;
+  isCurrent: boolean;
+};
+
+function manaFilename(symbol: string): string {
+  const normalized = symbol
+    .toUpperCase()
+    .replace(/∞/g, "INFINITY")
+    .replace(/½/g, "HALF")
+    .replace(/[^A-Z0-9]/g, "");
+
+  return normalized;
+}
+
+function parseManaTokens(cost: string): ManaToken[] {
+  if (!cost.trim()) {
+    return [];
+  }
+
+  const tokens: ManaToken[] = [];
+  const pattern = /\{([^}]+)\}|(\/\/)/g;
+
+  for (const match of cost.matchAll(pattern)) {
+    if (match[1]) {
+      const raw = match[1].trim();
+      const filename = manaFilename(raw);
+
+      if (filename) {
+        tokens.push({
+          type: "symbol",
+          raw,
+          key: `symbol-${raw}-${match.index ?? 0}`,
+          svgUri: `https://svgs.scryfall.io/card-symbols/${filename}.svg`
+        });
+      }
+      continue;
+    }
+
+    if (match[2]) {
+      tokens.push({
+        type: "separator",
+        key: `separator-${match.index ?? 0}`,
+        label: "//"
+      });
+    }
+  }
+
+  return tokens;
+}
+
+function euroTextFromString(value: string | null | undefined): string {
+  if (!value) {
+    return "—";
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? formatEuro(parsed) : "—";
+}
+
 type CardDetailsModalProps = {
   card: CardRecord;
   onClose: () => void;
@@ -169,6 +245,43 @@ export default function CardDetailsModal({
     : card.typeLine ?? "";
   const image = details ? imageFor(details) : card.imageUri;
   const statistics = statsText(details);
+  const manaCostValue = manaText(details, card.manaCost);
+  const manaTokens = useMemo(
+    () => parseManaTokens(manaCostValue),
+    [manaCostValue]
+  );
+
+  const printingEntries = useMemo<PrintingEntry[]>(() => {
+    const currentEntry: PrintingEntry = {
+      id: details?.id ?? card.id,
+      label: `${details?.set_name ?? card.setName ?? card.set.toUpperCase()} #${details?.collector_number ?? card.collectorNumber}`,
+      priceText: details
+        ? euroTextFromString(details.prices?.eur)
+        : formatEuro(card.priceEur),
+      href: details?.scryfall_uri ?? scryfallUrl(card.id),
+      isCurrent: true
+    };
+
+    const rest = printings
+      .filter(printing => printing.id !== currentEntry.id)
+      .map(printing => ({
+        id: printing.id,
+        label: `${printing.set_name ?? printing.set.toUpperCase()} #${printing.collector_number}`,
+        priceText: euroTextFromString(printing.prices?.eur),
+        href: printing.scryfall_uri ?? scryfallUrl(printing.id),
+        isCurrent: false
+      }));
+
+    return [currentEntry, ...rest];
+  }, [
+    card.collectorNumber,
+    card.id,
+    card.priceEur,
+    card.set,
+    card.setName,
+    details,
+    printings
+  ]);
 
   const changeFinishCount = (finish: CardFinish, delta: number) => {
     if (!onChange) return;
@@ -190,7 +303,6 @@ export default function CardDetailsModal({
     });
   };
 
-  const visiblePrintings = printings.slice(0, 8);
 
   return (
     <div
@@ -229,10 +341,30 @@ export default function CardDetailsModal({
           <header className="card-modal-card-header">
             <div>
               <h2 id="card-modal-title">{card.name}</h2>
-              {manaText(details, card.manaCost) && (
-                <div className="card-modal-mana">
-                  {manaText(details, card.manaCost)}
-                </div>
+              {manaCostValue && (
+                manaTokens.length > 0 ? (
+                  <div className="card-modal-mana-symbols" aria-label={manaCostValue}>
+                    {manaTokens.map(token =>
+                      token.type === "symbol" ? (
+                        <img
+                          key={token.key}
+                          className="card-modal-mana-symbol"
+                          src={token.svgUri}
+                          alt={`{${token.raw}}`}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span key={token.key} className="card-modal-mana-separator">
+                          {token.label}
+                        </span>
+                      )
+                    )}
+                  </div>
+                ) : (
+                  <div className="card-modal-mana">
+                    {manaCostValue}
+                  </div>
+                )
               )}
             </div>
           </header>
@@ -330,33 +462,36 @@ export default function CardDetailsModal({
           <section className="card-modal-side-section">
             <h3>Drucke</h3>
 
-            {loadingPrintings ? (
-              <p className="muted">Drucke werden geladen…</p>
-            ) : visiblePrintings.length > 0 ? (
-              <div className="card-modal-printings">
-                {visiblePrintings.map(printing => (
+            {printingEntries.length > 0 ? (
+              <div className="card-modal-printings" role="list">
+                {printingEntries.map(printing => (
                   <a
                     key={printing.id}
-                    href={printing.scryfall_uri ?? scryfallUrl(printing.id)}
+                    href={printing.href}
                     target="_blank"
                     rel="noreferrer"
+                    className={printing.isCurrent ? "is-current-printing" : undefined}
+                    role="listitem"
+                    aria-label={`${printing.label}${printing.isCurrent ? ", aktueller Druck" : ""}`}
                   >
-                    <span>
-                      {printing.set_name ?? printing.set.toUpperCase()} #{printing.collector_number}
+                    <span className="card-modal-printing-main">
+                      <span>{printing.label}</span>
+                      {printing.isCurrent && (
+                        <small>Aktueller Druck</small>
+                      )}
                     </span>
-                    <span>
-                      {printing.prices?.eur
-                        ? `${Number(printing.prices.eur).toLocaleString("de-DE", {
-                            style: "currency",
-                            currency: "EUR"
-                          })}`
-                        : "—"}
-                    </span>
+                    <span>{printing.priceText}</span>
                   </a>
                 ))}
               </div>
             ) : (
-              <p className="muted">Keine weiteren Druckinformationen verfügbar.</p>
+              <p className="muted">Keine Druckinformationen verfügbar.</p>
+            )}
+
+            {loadingPrintings && (
+              <p className="muted card-modal-printings-hint">
+                Weitere Drucke werden geladen…
+              </p>
             )}
 
             <a
