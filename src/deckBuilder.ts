@@ -29,7 +29,19 @@ export type DeckStrategy =
   | "value"
   | "synergy"
   | "creatures"
-  | "spells";
+  | "spells"
+  | "midrange"
+  | "combo"
+  | "tokens"
+  | "aristocrats"
+  | "voltron"
+  | "spellslinger"
+  | "reanimator"
+  | "lands"
+  | "stax"
+  | "typal"
+  | "artifacts"
+  | "enchantress";
 
 export interface DeckTuning {
   strategy?: DeckStrategy;
@@ -627,6 +639,143 @@ function strategyScore(
     }
   }
 
+
+  if (strategy === "midrange") {
+    if (isCreature(card) && card.manaValue >= 2 && card.manaValue <= 5) {
+      score += 3;
+    }
+
+    if (
+      role === "Card Advantage" ||
+      role === "Interaction" ||
+      role === "Value"
+    ) {
+      score += 3;
+    }
+  }
+
+  if (strategy === "combo") {
+    if (role === "Synergie" || role === "Tutor") {
+      score += 5;
+    }
+
+    if (/untap|copy|sacrifice|whenever|you may cast|without paying/.test(text)) {
+      score += 2;
+    }
+  }
+
+  if (strategy === "tokens") {
+    if (/create .* token|tokens? you control|populate/.test(text)) {
+      score += 6;
+    }
+
+    if (role === "Synergie" || role === "Finisher") {
+      score += 2;
+    }
+  }
+
+  if (strategy === "aristocrats") {
+    if (/sacrifice|dies|when .* dies|whenever .* dies|leaves the battlefield/.test(text)) {
+      score += 6;
+    }
+
+    if (role === "Recursion" || role === "Synergie") {
+      score += 3;
+    }
+  }
+
+  if (strategy === "voltron") {
+    if (/equip|equipped|aura|enchanted|commander you control/.test(text)) {
+      score += 6;
+    }
+
+    if (role === "Protection" || role === "Synergie") {
+      score += 3;
+    }
+  }
+
+  if (strategy === "spellslinger") {
+    if (isInstantOrSorcery(card)) {
+      score += 5;
+    }
+
+    if (/instant or sorcery|magecraft|whenever you cast|copy target spell/.test(text)) {
+      score += 4;
+    }
+
+    if (role === "Card Advantage" || role === "Interaction") {
+      score += 2;
+    }
+  }
+
+  if (strategy === "reanimator") {
+    if (role === "Recursion") {
+      score += 6;
+    }
+
+    if (/graveyard|return target .* from your graveyard|discard/.test(text)) {
+      score += 3;
+    }
+  }
+
+  if (strategy === "lands") {
+    if (isLand(card)) {
+      score += 4;
+    }
+
+    if (/landfall|land enters|play an additional land|lands? you control/.test(text)) {
+      score += 5;
+    }
+
+    if (role === "Ramp") {
+      score += 2;
+    }
+  }
+
+  if (strategy === "stax") {
+    if (/can't|cannot|costs? .* more|enters the battlefield tapped|only once|each opponent/.test(text)) {
+      score += 5;
+    }
+
+    if (role === "Interaction" || role === "Protection") {
+      score += 2;
+    }
+  }
+
+  if (strategy === "typal") {
+    if (isCreature(card)) {
+      score += 4;
+    }
+
+    if (/creatures? you control|choose a creature type|of the chosen type|kindred/.test(text)) {
+      score += 5;
+    }
+  }
+
+  if (strategy === "artifacts") {
+    if (/\bArtifact\b/i.test(card.typeLine ?? "")) {
+      score += 6;
+    }
+
+    if (/artifact/.test(text)) {
+      score += 3;
+    }
+  }
+
+  if (strategy === "enchantress") {
+    if (/\bEnchantment\b/i.test(card.typeLine ?? "")) {
+      score += 6;
+    }
+
+    if (/enchantment|aura|enchanted/.test(text)) {
+      score += 3;
+    }
+
+    if (role === "Card Advantage") {
+      score += 2;
+    }
+  }
+
   if (aggressionWeight > 0) {
     if (isCreature(card)) {
       score += aggressionWeight;
@@ -1112,6 +1261,85 @@ export function deckProfileFor(
 
     base.synergy +=
       commander ? 2 : 1;
+  }
+
+
+  if (strategy === "midrange") {
+    base.draw += commander ? 1 : 0;
+    base.interaction += commander ? 1 : 0;
+    base.synergy += commander ? 2 : 1;
+    base.finishers += 1;
+  }
+
+  if (strategy === "combo") {
+    base.draw += commander ? 2 : 1;
+    base.tutors += commander ? 2 : 1;
+    base.synergy += commander ? 5 : 3;
+    base.protection += 1;
+  }
+
+  if (strategy === "tokens") {
+    base.synergy += commander ? 5 : 3;
+    base.finishers += commander ? 2 : 1;
+    base.draw += 1;
+  }
+
+  if (strategy === "aristocrats") {
+    base.synergy += commander ? 5 : 3;
+    base.recursion += commander ? 3 : 1;
+    base.draw += commander ? 1 : 0;
+  }
+
+  if (strategy === "voltron") {
+    base.protection += commander ? 4 : 2;
+    base.synergy += commander ? 4 : 2;
+    base.interaction += 1;
+    base.finishers += 1;
+  }
+
+  if (strategy === "spellslinger") {
+    base.draw += commander ? 3 : 2;
+    base.interaction += commander ? 3 : 2;
+    base.synergy += commander ? 4 : 2;
+  }
+
+  if (strategy === "reanimator") {
+    base.recursion += commander ? 5 : 3;
+    base.draw += 1;
+    base.synergy += commander ? 3 : 2;
+    base.tutors += commander ? 1 : 0;
+  }
+
+  if (strategy === "lands") {
+    lands += commander ? 3 : 1;
+    base.ramp += commander ? 2 : 1;
+    base.draw += 1;
+    base.synergy += commander ? 4 : 2;
+  }
+
+  if (strategy === "stax") {
+    base.interaction += commander ? 3 : 2;
+    base.protection += 1;
+    base.draw += 1;
+    base.synergy += commander ? 2 : 1;
+  }
+
+  if (strategy === "typal") {
+    base.synergy += commander ? 5 : 3;
+    base.draw += 1;
+    base.finishers += commander ? 2 : 1;
+  }
+
+  if (strategy === "artifacts") {
+    base.ramp += commander ? 2 : 1;
+    base.synergy += commander ? 5 : 3;
+    base.draw += 1;
+  }
+
+  if (strategy === "enchantress") {
+    base.draw += commander ? 3 : 2;
+    base.protection += 1;
+    base.synergy += commander ? 5 : 3;
   }
 
   const adjust = (

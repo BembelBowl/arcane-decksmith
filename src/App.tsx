@@ -3061,1718 +3061,1028 @@ function TuningSlider({
           {highLabel}
         </span>
       </div>
+
+      <p className="tuning-help">
+        {help}
+      </p>
     </div>
   );
 }
+
+
+type BuilderStepId =
+  | "name"
+  | "format"
+  | "commander"
+  | "strategy"
+  | "mana"
+  | "tuning";
+
+type StrategyOption = {
+  id: DeckStrategy;
+  label: string;
+  description: string;
+};
+
+const STANDARD_STRATEGIES: StrategyOption[] = [
+  {
+    id: "balanced",
+    label: "Ausgewogen",
+    description: "Verteilt Bedrohungen, Antworten, Kartenvorteil und Synergien möglichst gleichmäßig."
+  },
+  {
+    id: "aggressive",
+    label: "Aggressiv",
+    description: "Priorisiert günstige Bedrohungen und frühen Druck, um das Spiel schnell zu entscheiden."
+  },
+  {
+    id: "control",
+    label: "Kontrolle",
+    description: "Spielt reaktiver, priorisiert Antworten und Kartenvorteil und gewinnt eher im späteren Spiel."
+  },
+  {
+    id: "value",
+    label: "Value",
+    description: "Priorisiert wiederholbaren Kartenvorteil, Recursion und Karten mit langfristigem Mehrwert."
+  },
+  {
+    id: "synergy",
+    label: "Synergie",
+    description: "Bevorzugt Karten, die besonders gut miteinander funktionieren, auch wenn sie einzeln weniger effizient sind."
+  },
+  {
+    id: "creatures",
+    label: "Creature-Fokus",
+    description: "Gewichtet Kreaturen deutlich höher und baut stärker über Boardpräsenz und Combat auf."
+  },
+  {
+    id: "spells",
+    label: "Spell-Fokus",
+    description: "Bevorzugt Instants und Sorceries sowie Karten, die diese unterstützen."
+  }
+];
+
+const COMMANDER_STRATEGIES: StrategyOption[] = [
+  {
+    id: "aggressive",
+    label: "Aggro",
+    description: "Erzeugt früh Druck mit günstigen Bedrohungen und versucht das Spiel schnell zu schließen."
+  },
+  {
+    id: "midrange",
+    label: "Midrange",
+    description: "Verbindet effiziente Bedrohungen, Value und Interaktion und bleibt in mehreren Spielphasen flexibel."
+  },
+  {
+    id: "control",
+    label: "Control",
+    description: "Hält gegnerische Pläne mit Interaktion und Boardwipes klein und gewinnt über langfristigen Kartenvorteil."
+  },
+  {
+    id: "combo",
+    label: "Combo",
+    description: "Priorisiert zusammengehörige Engines, Tutoren und geschützte Linien, die das Spiel direkt oder nahezu direkt entscheiden können."
+  },
+  {
+    id: "tokens",
+    label: "Tokens",
+    description: "Erzeugt viele Spielsteine und nutzt Karten, die Token vervielfachen, verstärken oder in Ressourcen umwandeln."
+  },
+  {
+    id: "aristocrats",
+    label: "Aristocrats",
+    description: "Nutzt Opfer-, Sterbe- und Wiederholungs-Effekte, um aus eigenen Permanents wiederholt Value zu erzeugen."
+  },
+  {
+    id: "voltron",
+    label: "Voltron",
+    description: "Konzentriert Ressourcen auf den Commander oder eine zentrale Kreatur, meist über Equipment, Auren und Schutz."
+  },
+  {
+    id: "spellslinger",
+    label: "Spellslinger",
+    description: "Baut um viele Instants und Sorceries sowie Effekte, die vom Wirken oder Kopieren von Zaubern profitieren."
+  },
+  {
+    id: "reanimator",
+    label: "Reanimator",
+    description: "Nutzt den Friedhof als Ressource und bringt wichtige Karten gezielt zurück ins Spiel."
+  },
+  {
+    id: "lands",
+    label: "Lands",
+    description: "Nutzt Länder, zusätzliche Landdrops und Landfall-ähnliche Effekte als zentrale Engine."
+  },
+  {
+    id: "stax",
+    label: "Stax",
+    description: "Bremst gegnerische Ressourcen und Aktionen mit Einschränkungen und asymmetrischen Regeln."
+  },
+  {
+    id: "typal",
+    label: "Typal / Kindred",
+    description: "Baut gezielt um einen Kreaturentyp und maximiert gemeinsame Typ-Synergien und Lords."
+  },
+  {
+    id: "artifacts",
+    label: "Artifacts",
+    description: "Nutzt Artefakte als zentrale Ressource für Ramp, Synergien, Engines und Win Conditions."
+  },
+  {
+    id: "enchantress",
+    label: "Enchantress",
+    description: "Baut um Verzauberungen, Auren und Trigger, die aus dem Ausspielen von Enchantments Kartenvorteil erzeugen."
+  }
+];
+
+function strategyOptionsFor(format: Format): StrategyOption[] {
+  return format === "commander" ? COMMANDER_STRATEGIES : STANDARD_STRATEGIES;
+}
+
+function strategyOptionFor(format: Format, strategy: DeckStrategy): StrategyOption {
+  return (
+    strategyOptionsFor(format).find(option => option.id === strategy) ??
+    strategyOptionsFor(format)[0]
+  );
+}
+
+function recommendStrategy(
+  format: Format,
+  tuning: DeckTuning,
+  current: DeckStrategy
+): DeckStrategy {
+  const aggression = tuning.aggression ?? 0;
+  const interaction = tuning.interaction ?? 0;
+  const boardwipes = tuning.boardwipes ?? 0;
+  const draw = tuning.draw ?? 0;
+  const recursion = tuning.recursion ?? 0;
+  const synergy = tuning.synergy ?? 0;
+  const commanderSynergy = tuning.commanderSynergy ?? 0;
+  const protection = tuning.protection ?? 0;
+  const ramp = tuning.ramp ?? 0;
+
+  if (format === "standard") {
+    if (aggression >= 2) return "aggressive";
+    if (interaction >= 2 || boardwipes >= 2) return "control";
+    if (draw >= 2 || recursion >= 2) return "value";
+    if (synergy >= 2) return "synergy";
+    return current;
+  }
+
+  if (aggression >= 2) return "aggressive";
+  if (commanderSynergy >= 2 && protection >= 1) return "voltron";
+  if (recursion >= 2 && synergy >= 1) return "reanimator";
+  if (interaction >= 2 && boardwipes >= 1) return "control";
+  if (synergy >= 2 && draw >= 1) return "combo";
+  if (ramp >= 2 && draw >= 1) return "midrange";
+
+  return current;
+}
+
 
 function Builder({
   pool,
   onSave
 }: {
   pool: CardRecord[];
-  onSave: (
-    d: DeckRecord
-  ) => Promise<void>;
+  onSave: (d: DeckRecord) => Promise<void>;
 }) {
-  const [
-    format,
-    setFormat
-  ] =
-    useState<Format>(
-      "commander"
-    );
+  const [format, setFormat] = useState<Format>("commander");
+  const [colors, setColors] = useState<string[]>([...COLORS]);
+  const [commanderId, setCommanderId] = useState("");
+  const [secondCommanderId, setSecondCommanderId] = useState("");
+  const [target, setTarget] = useState(3);
+  const [min, setMin] = useState(0);
+  const [max, setMax] = useState(15);
+  const [name, setName] = useState("Neues Deck");
+  const [result, setResult] = useState<DeckRecord | null>(null);
+  const [buildBusy, setBuildBusy] = useState(false);
+  const [strategy, setStrategy] = useState<DeckStrategy>("midrange");
+  const [wizardIndex, setWizardIndex] = useState(0);
+  const [showResultTuning, setShowResultTuning] = useState(false);
+  const [selectedCard, setSelectedCard] = useState<CardRecord | null>(null);
 
-  const [
-    colors,
-    setColors
-  ] =
-    useState<string[]>(
-      [...COLORS]
-    );
+  const [landsTune, setLandsTune] = useState(0);
+  const [rampTune, setRampTune] = useState(0);
+  const [drawTune, setDrawTune] = useState(0);
+  const [interactionTune, setInteractionTune] = useState(0);
+  const [boardwipeTune, setBoardwipeTune] = useState(0);
+  const [protectionTune, setProtectionTune] = useState(0);
+  const [recursionTune, setRecursionTune] = useState(0);
+  const [synergyTune, setSynergyTune] = useState(0);
+  const [curveTune, setCurveTune] = useState(0);
+  const [commanderSynergyTune, setCommanderSynergyTune] = useState(0);
+  const [aggressionTune, setAggressionTune] = useState(0);
+  const [lockedCards, setLockedCards] = useState<LockedDeckCard[]>([]);
+  const [excludedCardIds, setExcludedCardIds] = useState<string[]>([]);
 
-  const [
-    commanderId,
-    setCommanderId
-  ] =
-    useState("");
+  const commanders = useMemo(() => commanderCandidates(pool), [pool]);
 
-  const [
-    secondCommanderId,
-    setSecondCommanderId
-  ] =
-    useState("");
+  const primaryCommander = useMemo(
+    () => commanders.find(card => card.id === commanderId),
+    [commanders, commanderId]
+  );
 
-  const [
-    target,
-    setTarget
-  ] =
-    useState(3);
+  const secondCommanderOptions = useMemo(
+    () => (primaryCommander ? commanderPairCandidates(pool, primaryCommander) : []),
+    [pool, primaryCommander]
+  );
 
-  const [
-    min,
-    setMin
-  ] =
-    useState(0);
+  const secondCommander = useMemo(
+    () => secondCommanderOptions.find(card => card.id === secondCommanderId),
+    [secondCommanderOptions, secondCommanderId]
+  );
 
-  const [
-    max,
-    setMax
-  ] =
-    useState(15);
-
-  const [
-    name,
-    setName
-  ] =
-    useState(
-      "Neues Deck"
-    );
-
-  const [
-    result,
-    setResult
-  ] =
-    useState<
-      DeckRecord |
-      null
-    >(null);
-
-  const [
-    buildBusy,
-    setBuildBusy
-  ] =
-    useState(false);
-
-  const [
-    strategy,
-    setStrategy
-  ] =
-    useState<DeckStrategy>(
-      "balanced"
-    );
-
-  const [
-    landsTune,
-    setLandsTune
-  ] =
-    useState(0);
-
-  const [
-    rampTune,
-    setRampTune
-  ] =
-    useState(0);
-
-  const [
-    drawTune,
-    setDrawTune
-  ] =
-    useState(0);
-
-  const [
-    interactionTune,
-    setInteractionTune
-  ] =
-    useState(0);
-
-  const [
-    boardwipeTune,
-    setBoardwipeTune
-  ] =
-    useState(0);
-
-  const [
-    protectionTune,
-    setProtectionTune
-  ] =
-    useState(0);
-
-  const [
-    recursionTune,
-    setRecursionTune
-  ] =
-    useState(0);
-
-  const [
-    synergyTune,
-    setSynergyTune
-  ] =
-    useState(0);
-
-  const [
-    curveTune,
-    setCurveTune
-  ] =
-    useState(0);
-
-  const [
-    commanderSynergyTune,
-    setCommanderSynergyTune
-  ] =
-    useState(0);
-
-  const [
-    aggressionTune,
-    setAggressionTune
-  ] =
-    useState(0);
-
-  const [
-    lockedCards,
-    setLockedCards
-  ] =
-    useState<
-      LockedDeckCard[]
-    >([]);
-
-  const [
-    excludedCardIds,
-    setExcludedCardIds
-  ] =
-    useState<string[]>(
-      []
-    );
-
-  const commanders =
-    useMemo(
-      () =>
-        commanderCandidates(
-          pool
-        ),
-      [pool]
-    );
-
-  const primaryCommander =
-    useMemo(
-      () =>
-        commanders.find(
-          card =>
-            card.id ===
-            commanderId
-        ),
-      [
-        commanders,
-        commanderId
-      ]
-    );
-
-  const secondCommanderOptions =
-    useMemo(
-      () =>
-        primaryCommander
-          ? commanderPairCandidates(
-              pool,
-              primaryCommander
-            )
-          : [],
-      [
-        pool,
-        primaryCommander
-      ]
-    );
-
-  const secondCommander =
-    useMemo(
-      () =>
-        secondCommanderOptions.find(
-          card =>
-            card.id ===
-            secondCommanderId
-        ),
-      [
-        secondCommanderOptions,
-        secondCommanderId
-      ]
-    );
-
-  const selectedCommanders =
-    useMemo(
-      () =>
-        [
-          primaryCommander,
-          secondCommander
-        ].filter(
-          (
-            card
-          ): card is CardRecord =>
-            Boolean(card)
-        ),
-      [
-        primaryCommander,
-        secondCommander
-      ]
-    );
+  const selectedCommanders = useMemo(
+    () =>
+      [primaryCommander, secondCommander].filter(
+        (card): card is CardRecord => Boolean(card)
+      ),
+    [primaryCommander, secondCommander]
+  );
 
   const activeColors =
-    format === "commander"
-      ? commanderColorIdentity(
-          selectedCommanders
-        )
-      : colors;
+    format === "commander" ? commanderColorIdentity(selectedCommanders) : colors;
 
-  const tuning =
-    useMemo<DeckTuning>(
-      () => ({
-        strategy,
-        lands: landsTune,
-        ramp: rampTune,
-        draw: drawTune,
-        interaction:
-          interactionTune,
-        boardwipes:
-          boardwipeTune,
-        protection:
-          protectionTune,
-        recursion:
-          recursionTune,
-        synergy:
-          synergyTune,
-        curve:
-          curveTune,
-        commanderSynergy:
-          commanderSynergyTune,
-        aggression:
-          aggressionTune
-      }),
-      [
-        strategy,
-        landsTune,
-        rampTune,
-        drawTune,
-        interactionTune,
-        boardwipeTune,
-        protectionTune,
-        recursionTune,
-        synergyTune,
-        curveTune,
-        commanderSynergyTune,
-        aggressionTune
-      ]
-    );
+  const tuning = useMemo<DeckTuning>(
+    () => ({
+      strategy,
+      lands: landsTune,
+      ramp: rampTune,
+      draw: drawTune,
+      interaction: interactionTune,
+      boardwipes: boardwipeTune,
+      protection: protectionTune,
+      recursion: recursionTune,
+      synergy: synergyTune,
+      curve: curveTune,
+      commanderSynergy: commanderSynergyTune,
+      aggression: aggressionTune
+    }),
+    [
+      strategy,
+      landsTune,
+      rampTune,
+      drawTune,
+      interactionTune,
+      boardwipeTune,
+      protectionTune,
+      recursionTune,
+      synergyTune,
+      curveTune,
+      commanderSynergyTune,
+      aggressionTune
+    ]
+  );
 
-  const profile =
-    useMemo(
-      () =>
-        deckProfileFor(
-          format,
-          target,
-          tuning
-        ),
-      [
-        format,
-        target,
-        tuning
-      ]
-    );
+  const profile = useMemo(
+    () => deckProfileFor(format, target, tuning),
+    [format, target, tuning]
+  );
 
-  const lockedIds =
-    useMemo(
-      () =>
-        new Set(
-          lockedCards.map(
-            card =>
-              card.id
-          )
-        ),
-      [lockedCards]
-    );
+  const lockedIds = useMemo(
+    () => new Set(lockedCards.map(card => card.id)),
+    [lockedCards]
+  );
 
-  const excludedIds =
-    useMemo(
-      () =>
-        new Set(
-          excludedCardIds
-        ),
-      [excludedCardIds]
-    );
+  const excludedIds = useMemo(
+    () => new Set(excludedCardIds),
+    [excludedCardIds]
+  );
+
+  const wizardSteps = useMemo<Array<{ id: BuilderStepId; label: string; hint: string }>>(
+    () => [
+      {
+        id: "name",
+        label: "Name",
+        hint: "Gib deinem Deck einen Namen. Er kann später jederzeit geändert werden."
+      },
+      {
+        id: "format",
+        label: "Format",
+        hint: "Wähle das Format. Bei Standard legst du hier zusätzlich die gewünschten Deckfarben fest."
+      },
+      ...(format === "commander"
+        ? [
+            {
+              id: "commander" as BuilderStepId,
+              label: "Commander",
+              hint: "Der Commander bestimmt Farbidentität und einen wichtigen Teil der Synergie-Bewertung."
+            }
+          ]
+        : []),
+      {
+        id: "strategy",
+        label: "Strategie",
+        hint: "Die Strategie legt fest, welche Karten und Rollen der Builder stärker priorisiert."
+      },
+      {
+        id: "mana",
+        label: "Mana Value",
+        hint: "Lege Zielbereich und Schwerpunkt der Mana-Kurve fest. Minimum und Maximum sind harte Grenzen für Nichtland-Karten."
+      },
+      {
+        id: "tuning",
+        label: "Feinabstimmung",
+        hint: "Passe Rollen und Spielstil an. Diese Werte kannst du nach dem ersten Build erneut verändern."
+      }
+    ],
+    [format]
+  );
+
+  const currentStep = wizardSteps[Math.min(wizardIndex, wizardSteps.length - 1)];
+  const strategyOptions = strategyOptionsFor(format);
+  const selectedStrategy = strategyOptionFor(format, strategy);
+  const suggestedStrategy = useMemo(
+    () => recommendStrategy(format, tuning, strategy),
+    [format, tuning, strategy]
+  );
+  const suggestedStrategyOption = strategyOptionFor(format, suggestedStrategy);
 
   useEffect(() => {
     if (
       secondCommanderId &&
-      !secondCommanderOptions.some(
-        card =>
-          card.id ===
-          secondCommanderId
-      )
+      !secondCommanderOptions.some(card => card.id === secondCommanderId)
     ) {
-      setSecondCommanderId(
-        ""
-      );
+      setSecondCommanderId("");
     }
-  }, [
-    secondCommanderId,
-    secondCommanderOptions
-  ]);
+  }, [secondCommanderId, secondCommanderOptions]);
 
-  const resetDeckSelection =
-    () => {
-      setResult(null);
-      setLockedCards([]);
-      setExcludedCardIds([]);
-    };
-
-  const changeFormat =
-    (next: Format) => {
-      setFormat(next);
-      resetDeckSelection();
-
-      if (
-        next ===
-        "standard"
-      ) {
-        setCommanderId("");
-        setSecondCommanderId(
-          ""
-        );
-      }
-    };
-
-  const chooseCommander =
-    (id: string) => {
-      setCommanderId(id);
-      setSecondCommanderId(
-        ""
-      );
-      resetDeckSelection();
-    };
-
-  const chooseSecondCommander =
-    (id: string) => {
-      setSecondCommanderId(
-        id
-      );
-      resetDeckSelection();
-    };
-
-  const toggleStandardColor =
-    (color: string) => {
-      setColors(current =>
-        current.includes(color)
-          ? current.filter(
-              value =>
-                value !==
-                color
-            )
-          : [
-              ...current,
-              color
-            ]
-      );
-
-      resetDeckSelection();
-    };
-
-  const build = async () => {
-    if (buildBusy) {
-      return;
+  useEffect(() => {
+    if (!strategyOptions.some(option => option.id === strategy)) {
+      setStrategy(format === "commander" ? "midrange" : "balanced");
     }
+  }, [format, strategy, strategyOptions]);
+
+  const resetDeckSelection = () => {
+    setResult(null);
+    setLockedCards([]);
+    setExcludedCardIds([]);
+    setShowResultTuning(false);
+  };
+
+  const changeFormat = (next: Format) => {
+    setFormat(next);
+    resetDeckSelection();
+
+    if (next === "standard") {
+      setCommanderId("");
+      setSecondCommanderId("");
+      setStrategy("balanced");
+    } else {
+      setStrategy("midrange");
+    }
+  };
+
+  const chooseCommander = (id: string) => {
+    setCommanderId(id);
+    setSecondCommanderId("");
+    resetDeckSelection();
+  };
+
+  const chooseSecondCommander = (id: string) => {
+    setSecondCommanderId(id);
+    resetDeckSelection();
+  };
+
+  const toggleStandardColor = (color: string) => {
+    setColors(current =>
+      current.includes(color)
+        ? current.filter(value => value !== color)
+        : [...current, color]
+    );
+    resetDeckSelection();
+  };
+
+  const build = async (strategyOverride?: DeckStrategy) => {
+    if (buildBusy) return;
 
     setBuildBusy(true);
 
+    const effectiveTuning: DeckTuning = {
+      ...tuning,
+      strategy: strategyOverride ?? strategy
+    };
+
     const baseOptions = {
-      name,
+      name: name.trim() || "Neues Deck",
       format,
-      colors:
-        activeColors,
-      commanders:
-        format ===
-        "commander"
-          ? selectedCommanders
-          : undefined,
-      targetManaValue:
-        target,
-      minManaValue:
-        min,
-      maxManaValue:
-        max,
-      tuning,
+      colors: activeColors,
+      commanders: format === "commander" ? selectedCommanders : undefined,
+      targetManaValue: target,
+      minManaValue: min,
+      maxManaValue: max,
+      tuning: effectiveTuning,
       lockedCards,
       excludedCardIds
     };
 
     try {
-      // First pass stays fully deterministic and gives Commander Spellbook
-      // a concrete deck to inspect for complete / almost-complete combos.
-      const preliminaryDeck =
-        buildDeck(
-          pool,
-          baseOptions
-        );
+      const preliminaryDeck = buildDeck(pool, baseOptions);
 
-      const evidence =
-        await getBuildDeckEvidence({
-          format,
-          commanders:
-            format ===
-            "commander"
-              ? selectedCommanders
-              : [],
-          preliminaryDeck,
-          pool
-        });
+      const evidence = await getBuildDeckEvidence({
+        format,
+        commanders: format === "commander" ? selectedCommanders : [],
+        preliminaryDeck,
+        pool
+      });
 
-      const optimizedDeck =
-        buildDeck(
-          pool,
-          {
-            ...baseOptions,
-            intelligence:
-              evidence.buildSignals
-          }
-        );
+      const optimizedDeck = buildDeck(pool, {
+        ...baseOptions,
+        intelligence: evidence.buildSignals
+      });
 
-      setResult(
-        optimizedDeck
-      );
+      setResult(optimizedDeck);
+      setShowResultTuning(false);
     } finally {
       setBuildBusy(false);
     }
   };
 
-  const toggleLocked =
-    (
-      card:
-        DeckRecord["cards"][number]
-    ) => {
-      setExcludedCardIds(
-        current =>
-          current.filter(
-            id =>
-              id !==
-              card.id
-          )
-      );
+  const toggleLocked = (card: DeckRecord["cards"][number]) => {
+    setExcludedCardIds(current => current.filter(id => id !== card.id));
+    setLockedCards(current =>
+      current.some(item => item.id === card.id)
+        ? current.filter(item => item.id !== card.id)
+        : [...current, { id: card.id, count: card.count }]
+    );
+  };
 
-      setLockedCards(
-        current =>
-          current.some(
-            item =>
-              item.id ===
-              card.id
-          )
-            ? current.filter(
-                item =>
-                  item.id !==
-                  card.id
-              )
-            : [
-                ...current,
-                {
-                  id: card.id,
-                  count:
-                    card.count
-                }
-              ]
-      );
-    };
-
-  const toggleExcluded =
-    (
-      card:
-        DeckRecord["cards"][number]
-    ) => {
-      setLockedCards(
-        current =>
-          current.filter(
-            item =>
-              item.id !==
-              card.id
-          )
-      );
-
-      setExcludedCardIds(
-        current =>
-          current.includes(
-            card.id
-          )
-            ? current.filter(
-                id =>
-                  id !==
-                  card.id
-              )
-            : [
-                ...current,
-                card.id
-              ]
-      );
-    };
+  const toggleExcluded = (card: DeckRecord["cards"][number]) => {
+    setLockedCards(current => current.filter(item => item.id !== card.id));
+    setExcludedCardIds(current =>
+      current.includes(card.id)
+        ? current.filter(id => id !== card.id)
+        : [...current, card.id]
+    );
+  };
 
   const resultHasCards =
-    (
-      result?.cards.reduce(
-        (
-          sum,
-          card
-        ) =>
-          sum +
-          card.count,
-        0
-      ) ??
-      0
-    ) > 0;
+    (result?.cards.reduce((sum, card) => sum + card.count, 0) ?? 0) > 0;
 
   const builderDisabled =
     buildBusy ||
     pool.length === 0 ||
-    (
-      format ===
-      "commander"
-        ? selectedCommanders.length ===
-          0
-        : colors.length ===
-          0
-    ) ||
+    (format === "commander"
+      ? selectedCommanders.length === 0
+      : colors.length === 0) ||
     min > max;
 
+  const canContinue = (() => {
+    if (!currentStep) return false;
+    if (currentStep.id === "name") return name.trim().length > 0;
+    if (currentStep.id === "format") {
+      return format === "commander" || colors.length > 0;
+    }
+    if (currentStep.id === "commander") return selectedCommanders.length > 0;
+    if (currentStep.id === "mana") return min <= max;
+    return true;
+  })();
+
+  const nextStep = () => {
+    setWizardIndex(index => Math.min(index + 1, wizardSteps.length - 1));
+  };
+
+  const previousStep = () => {
+    setWizardIndex(index => Math.max(0, index - 1));
+  };
+
+  const renderTuningPanel = () => (
+    <div className="tuning-section builder-tuning-panel">
+      <div className="tuning-heading">
+        <h3>Deck feinabstimmen</h3>
+        <p className="muted">
+          Jeder Regler verändert die Zielgewichte des Builders. Die Erklärung unter dem Regler beschreibt die praktische Auswirkung.
+        </p>
+      </div>
+
+      <TuningSlider
+        label="Länder"
+        value={landsTune}
+        onChange={setLandsTune}
+        help="Mehr Länder erhöhen die Chance auf konstante Landdrops. Weniger Länder schaffen Platz für Nichtländer, erhöhen aber das Risiko von Mana-Problemen."
+      />
+      <TuningSlider
+        label="Ramp"
+        value={rampTune}
+        onChange={setRampTune}
+        help="Mehr Ramp priorisiert Mana-Beschleunigung. Das hilft besonders bei höheren Mana-Kurven und teuren Commandern."
+      />
+      <TuningSlider
+        label="Card Draw"
+        value={drawTune}
+        onChange={setDrawTune}
+        help="Mehr Card Draw erhöht die Zielmenge an Kartennachschub und langfristigem Kartenvorteil."
+      />
+      <TuningSlider
+        label="Interaktion"
+        value={interactionTune}
+        onChange={setInteractionTune}
+        help="Mehr Interaktion erhöht die Zielmenge direkter Antworten wie Removal, Counter oder anderer gegnerischer Unterbrechung."
+      />
+      <TuningSlider
+        label="Boardwipes"
+        value={boardwipeTune}
+        onChange={setBoardwipeTune}
+        help="Mehr Boardwipes priorisiert breite Antworten auf mehrere Permanents oder Kreaturen."
+      />
+      <TuningSlider
+        label="Schutz"
+        value={protectionTune}
+        onChange={setProtectionTune}
+        help="Mehr Schutz priorisiert Karten, die Commander, Engines oder andere wichtige Permanents absichern."
+      />
+      <TuningSlider
+        label="Recursion"
+        value={recursionTune}
+        onChange={setRecursionTune}
+        help="Mehr Recursion priorisiert Karten, die Ressourcen aus dem Friedhof erneut nutzbar machen."
+      />
+      <TuningSlider
+        label="Synergie"
+        value={synergyTune}
+        onChange={setSynergyTune}
+        help="Mehr Synergie bevorzugt Karten, die eng mit Commander, Strategie und anderen Karten zusammenarbeiten."
+      />
+      <TuningSlider
+        label="Mana-Kurve"
+        value={curveTune}
+        onChange={setCurveTune}
+        help="Niedriger verschiebt die Auswahl in günstigere Mana Values, höher erlaubt mehr teure Karten rund um dein Ziel."
+        lowLabel="Niedriger"
+        highLabel="Höher"
+      />
+
+      {format === "commander" && (
+        <TuningSlider
+          label="Commander-Synergie"
+          value={commanderSynergyTune}
+          onChange={setCommanderSynergyTune}
+          help="Mehr Commander-Synergie gewichtet Karten stärker, deren erkannte Themen direkt zum Oracle-Text des Commanders passen."
+          lowLabel="Locker"
+          highLabel="Stärker"
+        />
+      )}
+
+      <TuningSlider
+        label="Spielstil"
+        value={aggressionTune}
+        onChange={setAggressionTune}
+        help="Verschiebt die Auswahl zwischen defensiv-reaktiv und aggressiv. Sehr starke Änderungen können dazu führen, dass eine andere Grundstrategie besser passt."
+        lowLabel="Defensiver"
+        highLabel="Aggressiver"
+      />
+
+      <div className="profile-preview">
+        <strong>Aktuelle Zielwerte</strong>
+        <span>Länder {profile.lands}</span>
+        <span>Ramp {profile.ramp}</span>
+        <span>Draw {profile.draw}</span>
+        <span>Interaktion {profile.interaction}</span>
+        <span>Boardwipes {profile.boardwipes}</span>
+        <span>Schutz {profile.protection}</span>
+        <span>Recursion {profile.recursion}</span>
+        <span>Synergie {profile.synergy}</span>
+        <span>Ziel-MV {profile.targetManaValue.toFixed(1)}</span>
+      </div>
+    </div>
+  );
+
+  if (result) {
+    const stats = deckStats(result);
+    const strategyChanged = suggestedStrategy !== strategy;
+
+    return (
+      <section className="automatic-builder-result">
+        <div className="pagehead">
+          <div>
+            <h2>{result.name}</h2>
+            <p className="muted">
+              Das Deck wurde mit deinen Vorgaben, deiner Sammlung und den verfügbaren Intelligence-Signalen erstellt.
+            </p>
+          </div>
+        </div>
+
+        <div className="builder-result-toolbar panel">
+          <div className="builder-result-summary">
+            <span><strong>{stats.total}</strong> Karten</span>
+            <span><strong>{stats.lands}</strong> Länder</span>
+            <span><strong>{stats.averageManaValue}</strong> Ø MV</span>
+            <span><strong>{selectedStrategy.label}</strong> Strategie</span>
+            <span><strong>{lockedCards.length}</strong> fixiert</span>
+            <span><strong>{excludedCardIds.length}</strong> ausgeschlossen</span>
+          </div>
+
+          <div className="builder-result-actions">
+            <button
+              className="primary"
+              type="button"
+              onClick={() => void build()}
+              disabled={builderDisabled}
+            >
+              {buildBusy ? "Deck wird neu erzeugt…" : "Mit gleichen Vorgaben neu erzeugen"}
+            </button>
+
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => setShowResultTuning(value => !value)}
+            >
+              {showResultTuning ? "Feinabstimmung schließen" : "Feinabstimmung anpassen"}
+            </button>
+
+            <button
+              className="ghost"
+              type="button"
+              onClick={() => {
+                setResult(null);
+                setWizardIndex(0);
+                setShowResultTuning(false);
+              }}
+            >
+              Alle Vorgaben ändern
+            </button>
+          </div>
+        </div>
+
+        {showResultTuning && (
+          <div className="panel result-tuning-panel">
+            {renderTuningPanel()}
+
+            <div className={`strategy-fit ${strategyChanged ? "strategy-fit-warning" : "strategy-fit-ok"}`}>
+              {strategyChanged ? (
+                <>
+                  <strong>Strategie prüfen</strong>
+                  <p>
+                    Mit der aktuellen Feinabstimmung wirkt das Profil inzwischen eher wie
+                    {" "}<b>{suggestedStrategyOption.label}</b> als wie {selectedStrategy.label}.
+                    Das ist eine Empfehlung, keine automatische Änderung.
+                  </p>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => {
+                      setStrategy(suggestedStrategy);
+                      void build(suggestedStrategy);
+                    }}
+                    disabled={buildBusy}
+                  >
+                    {suggestedStrategyOption.label} übernehmen und neu erzeugen
+                  </button>
+                </>
+              ) : (
+                <>
+                  <strong>Strategie passt weiterhin</strong>
+                  <p>
+                    Die aktuelle Feinabstimmung ist weiterhin mit {selectedStrategy.label} vereinbar.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <button
+              className="primary"
+              type="button"
+              onClick={() => void build()}
+              disabled={builderDisabled}
+            >
+              {buildBusy ? "Optimierung läuft…" : "Mit Feinabstimmung neu erzeugen"}
+            </button>
+          </div>
+        )}
+
+        <div className="panel builder-board-panel">
+          <div className="builder-board-intro">
+            <div>
+              <h3>Deckliste</h3>
+              <p className="muted">
+                Karten sind nach Typ gruppiert. Ein Klick auf die Karte öffnet die Detailansicht.
+                „Behalten“ fixiert sie für den nächsten Build, „Ausschließen“ verbietet sie beim nächsten Build.
+              </p>
+            </div>
+          </div>
+
+          <DeckBoard
+            deck={result}
+            pool={pool}
+            onCardClick={setSelectedCard}
+            lockedIds={lockedIds}
+            excludedIds={excludedIds}
+            onToggleLocked={toggleLocked}
+            onToggleExcluded={toggleExcluded}
+          />
+
+          {!resultHasCards && (
+            <div className="notice">
+              Es wurden keine passenden Karten für das Hauptdeck gefunden. Speichern und Export sind deaktiviert.
+            </div>
+          )}
+
+          <div className="row builder-final-actions">
+            <button
+              className="primary"
+              onClick={() => onSave(result)}
+              disabled={!resultHasCards}
+            >
+              Deck speichern
+            </button>
+
+            <button
+              className="secondary"
+              onClick={() =>
+                download(`${result.name}.txt`, deckText(result, pool))
+              }
+              disabled={!resultHasCards}
+            >
+              Export
+            </button>
+          </div>
+        </div>
+
+        {selectedCard && (
+          <CardDetailsModal
+            card={selectedCard}
+            onClose={() => setSelectedCard(null)}
+          />
+        )}
+      </section>
+    );
+  }
+
   return (
-    <section>
-      <style>{`
-        .builder-controls h3 {
-          margin-top: 0;
-        }
-
-        .label-with-help {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
-          flex-wrap: wrap;
-        }
-
-        .help-dot {
-          display: inline-grid;
-          place-items: center;
-          width: 18px;
-          height: 18px;
-          flex: 0 0 18px;
-          border: 1px solid rgba(85, 215, 229, 0.42);
-          border-radius: 50%;
-          background: rgba(85, 215, 229, 0.08);
-          color: #55d7e5;
-          font-size: 12px;
-          font-weight: 800;
-          line-height: 1;
-          cursor: help;
-          user-select: none;
-        }
-
-        .help-dot:hover,
-        .help-dot:focus {
-          border-color: rgba(214, 173, 88, 0.7);
-          color: var(--gold-bright);
-          outline: none;
-          box-shadow: 0 0 0 3px rgba(214, 173, 88, 0.08);
-        }
-
-        .tuning-section {
-          margin: 20px 0;
-          padding: 16px;
-          border: 1px solid rgba(214, 173, 88, 0.18);
-          border-radius: 12px;
-          background: rgba(6, 13, 24, 0.48);
-        }
-
-        .tuning-heading h3 {
-          margin: 0 0 5px;
-        }
-
-        .tuning-heading p {
-          margin: 0 0 15px;
-          font-size: 12px;
-        }
-
-        .tuning-control {
-          padding: 11px 0;
-          border-top: 1px solid rgba(113, 138, 167, 0.12);
-        }
-
-        .tuning-control:first-of-type {
-          border-top: 0;
-        }
-
-        .tuning-control-head {
-          display: grid;
-          grid-template-columns: auto 18px 1fr;
-          align-items: center;
-          gap: 7px;
-          margin-bottom: 5px;
-          color: var(--text-soft);
-        }
-
-        .tuning-control-head strong {
-          justify-self: end;
-          color: var(--gold-bright);
-          font-size: 12px;
-          font-weight: 700;
-        }
-
-        .tuning-control input[type="range"] {
-          width: 100%;
-          margin: 4px 0 2px;
-        }
-
-        .tuning-scale {
-          display: flex;
-          justify-content: space-between;
-          gap: 8px;
-          color: var(--muted);
-          font-size: 10px;
-        }
-
-        .profile-preview {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 6px;
-          margin-top: 14px;
-          padding-top: 13px;
-          border-top: 1px solid rgba(214, 173, 88, 0.18);
-        }
-
-        .profile-preview strong {
-          width: 100%;
-          margin-bottom: 2px;
-          color: var(--gold-bright);
-          font-size: 12px;
-        }
-
-        .profile-preview span,
-        .selection-status span {
-          padding: 5px 8px;
-          border: 1px solid rgba(85, 215, 229, 0.16);
-          border-radius: 999px;
-          background: rgba(85, 215, 229, 0.05);
-          color: #c8d9e5;
-          font-size: 11px;
-        }
-
-        .selection-status {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 7px;
-          margin-top: 10px;
-        }
-
-        .result-heading {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 16px;
-          margin-bottom: 10px;
-        }
-
-        .result-heading h3 {
-          margin: 0 0 5px;
-        }
-
-        .result-heading p {
-          margin: 0;
-          max-width: 700px;
-          font-size: 12px;
-        }
-
-        .optimizable-deck-list .deck-list-row {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          gap: 12px;
-          align-items: center;
-        }
-
-        .optimizable-deck-list .deck-list-row.locked {
-          border-color: rgba(214, 173, 88, 0.34);
-          background: rgba(214, 173, 88, 0.055);
-        }
-
-        .optimizable-deck-list .deck-list-row.excluded {
-          border-color: rgba(239, 99, 99, 0.28);
-          background: rgba(239, 99, 99, 0.045);
-        }
-
-          .collection-stats-toggle{
-          cursor:pointer;
-          font-size:1.1rem;
-          font-weight:700;
-          margin-bottom:18px;
-          user-select:none;
-        }
-        
-        .collection-stats:not([open]) .collection-stats-toggle{
-          margin-bottom:0;
-        }
-        
-        .collection-stats-toggle::marker{
-          color:var(--gold-bright);
-        }
-
-        .deck-list-info {
-          min-width: 0;
-        }
-
-        .deck-list-info > span,
-        .deck-list-info > small {
-          display: block;
-        }
-
-        .deck-card-actions {
-          display: flex;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-          gap: 6px;
-        }
-
-        .deck-card-actions button {
-          padding: 6px 8px;
-          font-size: 11px;
-          white-space: nowrap;
-        }
-
-        .deck-card-actions .active-action {
-          border-color: rgba(214, 173, 88, 0.4);
-        }
-
-        .card-state {
-          margin-top: 4px;
-          font-size: 10px;
-        }
-
-        .locked-state {
-          color: var(--gold-bright) !important;
-        }
-
-        .excluded-state {
-          color: #f2a7a7 !important;
-        }
-
-        @media (max-width: 850px) {
-          .result-heading {
-            flex-direction: column;
-          }
-
-          .optimizable-deck-list .deck-list-row {
-            grid-template-columns: 1fr;
-          }
-
-          .deck-card-actions {
-            justify-content: flex-start;
-          }
-        }
-      `}</style>
-
+    <section className="automatic-builder-wizard">
       <div className="pagehead">
         <div>
-          <h2>
-            Deck automatisch bauen
-          </h2>
-
+          <h2>Deck automatisch bauen</h2>
           <p className="muted">
-            Der Optimierer baut das Deck direkt aus deiner Sammlung und berücksichtigt Strategie, Rollen, Mana-Kurve und Commander-Synergien bereits bei der Auswahl.
+            Der Builder führt dich Schritt für Schritt durch die wichtigsten Entscheidungen und erstellt das Deck erst am Ende.
           </p>
         </div>
       </div>
 
-      <div className="builder-grid">
-        <div className="panel builder-controls">
-          <h3>
-            Grundaufbau
-          </h3>
-
-          <label>
-            Name
-
-            <input
-              value={name}
-              onChange={e =>
-                setName(
-                  e.target.value
-                )
-              }
-            />
-          </label>
-
-          <label>
-            Format
-
-            <select
-              value={format}
-              onChange={e =>
-                changeFormat(
-                  e.target
-                    .value as Format
-                )
-              }
-            >
-              <option value="commander">
-                Commander
-              </option>
-
-              <option value="standard">
-                Standard
-              </option>
-            </select>
-          </label>
-
-          {format ===
-          "standard"
-            ? (
-              <label>
-                Deckfarben
-
-                <div className="color-pills">
-                  {COLORS.map(
-                    color => (
-                      <button
-                        key={
-                          color
-                        }
-                        type="button"
-                        className={
-                          colors.includes(
-                            color
-                          )
-                            ? "color active"
-                            : "color"
-                        }
-                        onClick={() =>
-                          toggleStandardColor(
-                            color
-                          )
-                        }
-                      >
-                        {color}
-
-                        <span>
-                          {
-                            COLOR_NAMES[
-                              color
-                            ]
-                          }
-                        </span>
-                      </button>
-                    )
-                  )}
-                </div>
-
-                <small className="muted">
-                  Die Farbauswahl ist hier ein Filter für den automatischen Builder. Sie ist keine zusätzliche Standard-Legalitätsregel.
-                </small>
-              </label>
-            )
-            : (
-              <>
-                <label>
-                  Commander
-
-                  <select
-                    value={
-                      commanderId
-                    }
-                    onChange={e =>
-                      chooseCommander(
-                        e.target
-                          .value
-                      )
-                    }
-                  >
-                    <option value="">
-                      — Commander wählen —
-                    </option>
-
-                    {commanders.map(
-                      card => (
-                        <option
-                          key={
-                            card.id
-                          }
-                          value={
-                            card.id
-                          }
-                        >
-                          {
-                            card.name
-                          }
-                        </option>
-                      )
-                    )}
-                  </select>
-                </label>
-
-                {primaryCommander &&
-                  secondCommanderOptions.length >
-                    0 && (
-                    <label>
-                      Zweiter Commander (optional)
-
-                      <select
-                        value={
-                          secondCommanderId
-                        }
-                        onChange={e =>
-                          chooseSecondCommander(
-                            e.target
-                              .value
-                          )
-                        }
-                      >
-                        <option value="">
-                          — kein zweiter Commander —
-                        </option>
-
-                        {secondCommanderOptions.map(
-                          card => (
-                            <option
-                              key={
-                                card.id
-                              }
-                              value={
-                                card.id
-                              }
-                            >
-                              {
-                                card.name
-                              }
-                            </option>
-                          )
-                        )}
-                      </select>
-
-                      <small className="muted">
-                        Unterstützt werden Partner, Partner with, Friends forever, Doctor&apos;s Companion und Background.
-                      </small>
-                    </label>
-                  )}
-
-                {primaryCommander && (
-                  <div className="ai-box">
-                    <strong>
-                      Farbidentität automatisch:
-                    </strong>{" "}
-
-                    {activeColors.length
-                      ? activeColors
-                          .map(
-                            color =>
-                              COLOR_NAMES[
-                                color
-                              ] ??
-                              color
-                          )
-                          .join(
-                            ", "
-                          )
-                      : "Farblos"}
-
-                    {secondCommander && (
-                      <>
-                        <br />
-
-                        <span>
-                          Zwei Commander:{" "}
-                          {
-                            primaryCommander.name
-                          }{" "}
-                          +{" "}
-                          {
-                            secondCommander.name
-                          }
-                        </span>
-                      </>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-
-          <label>
-            <span className="label-with-help">
-              Strategie
-
-              <HelpDot text="Bestimmt die grundsätzliche Gewichtung des Builders. Ausgewogen verteilt Rollen breit; Aggressiv priorisiert frühe Bedrohungen; Kontrolle priorisiert Antworten; Value priorisiert Kartenvorteil und Wiederverwendung; Synergie priorisiert zusammenwirkende Karten; Creature- bzw. Spell-Fokus bevorzugen die jeweilige Kartenart." />
-            </span>
-
-            <select
-              value={strategy}
-              onChange={e =>
-                setStrategy(
-                  e.target
-                    .value as DeckStrategy
-                )
-              }
-            >
-              <option value="balanced">
-                Ausgewogen
-              </option>
-
-              <option value="aggressive">
-                Aggressiv
-              </option>
-
-              <option value="control">
-                Kontrolle
-              </option>
-
-              <option value="value">
-                Value
-              </option>
-
-              <option value="synergy">
-                Synergie
-              </option>
-
-              <option value="creatures">
-                Creature-Fokus
-              </option>
-
-              <option value="spells">
-                Spell-Fokus
-              </option>
-            </select>
-          </label>
-
-          <label>
-            <span className="label-with-help">
-              Ziel-Mana Value:{" "}
-              <strong>
-                {target.toFixed(1)}
-              </strong>
-
-              <HelpDot text="Der Ziel-Mana-Value ist der Mittelpunkt, um den der Builder die Kosten der Nichtland-Karten bevorzugt verteilt. Er ist kein hartes Maximum; Minimum und Maximum darunter bleiben die harten Grenzen." />
-            </span>
-
-            <input
-              type="range"
-              min="0"
-              max="15"
-              step="0.1"
-              value={target}
-              onChange={e =>
-                setTarget(
-                  Number(
-                    e.target.value
-                  )
-                )
-              }
-            />
-          </label>
-
-          <label>
-            <span className="label-with-help">
-              Minimum Mana Value:{" "}
-              <strong>
-                {min.toFixed(1)}
-              </strong>
-
-              <HelpDot text="Harte Untergrenze für Nichtland-Karten, die der automatische Builder verwenden darf. Länder sind davon nicht betroffen." />
-            </span>
-
-            <input
-              type="range"
-              min="0"
-              max="15"
-              step="0.5"
-              value={min}
-              onChange={e =>
-                setMin(
-                  Number(
-                    e.target.value
-                  )
-                )
-              }
-            />
-          </label>
-
-          <label>
-            <span className="label-with-help">
-              Maximum Mana Value:{" "}
-              <strong>
-                {max.toFixed(1)}
-              </strong>
-
-              <HelpDot text="Harte Obergrenze für Nichtland-Karten, die der automatische Builder verwenden darf. Damit kannst du sehr teure Karten bewusst aus dem automatischen Vorschlag heraushalten." />
-            </span>
-
-            <input
-              type="range"
-              min="0"
-              max="15"
-              step="0.5"
-              value={max}
-              onChange={e =>
-                setMax(
-                  Number(
-                    e.target.value
-                  )
-                )
-              }
-            />
-          </label>
-
-          {min > max && (
-            <div className="error">
-              Minimum Mana Value darf nicht größer als Maximum Mana Value sein.
-            </div>
-          )}
-
-          <div className="tuning-section">
-            <div className="tuning-heading">
-              <div>
-                <h3>
-                  Deck feinabstimmen
-                </h3>
-
-                <p className="muted">
-                  Diese Einstellungen können auch nach dem ersten Zusammenbau geändert werden. Danach einfach neu optimieren.
-                </p>
-              </div>
-            </div>
-
-            <TuningSlider
-              label="Länder"
-              value={landsTune}
-              onChange={setLandsTune}
-              help="Verschiebt die Zielzahl der Länder. Mehr Länder erhöhen die Wahrscheinlichkeit, Landdrops zu treffen; weniger Länder schaffen mehr Platz für Nichtland-Karten, erhöhen aber das Risiko von Mana-Problemen."
-            />
-
-            <TuningSlider
-              label="Ramp"
-              value={rampTune}
-              onChange={setRampTune}
-              help="Bestimmt, wie stark der Builder Mana-Beschleunigung priorisiert. Mehr Ramp hilft besonders bei höheren Mana-Kurven und teuren Commandern."
-            />
-
-            <TuningSlider
-              label="Card Draw"
-              value={drawTune}
-              onChange={setDrawTune}
-              help="Bestimmt die Zielmenge an Kartennachschub und Kartenvorteil. Mehr Card Draw verbessert die Chance, auch in längeren Spielen ausreichend Optionen zu haben."
-            />
-
-            <TuningSlider
-              label="Interaktion"
-              value={
-                interactionTune
-              }
-              onChange={
-                setInteractionTune
-              }
-              help="Bestimmt die Zielmenge direkter Antworten wie Removal, Counter oder andere Interaktion mit gegnerischen Karten."
-            />
-
-            <TuningSlider
-              label="Boardwipes"
-              value={
-                boardwipeTune
-              }
-              onChange={
-                setBoardwipeTune
-              }
-              help="Bestimmt, wie stark der Builder breite Antworten priorisiert, die mehrere oder alle Kreaturen beziehungsweise Permanents betreffen."
-            />
-
-            <TuningSlider
-              label="Schutz"
-              value={
-                protectionTune
-              }
-              onChange={
-                setProtectionTune
-              }
-              help="Bestimmt die Zielmenge an Karten, die wichtige Permanents, Kreaturen oder die eigene Strategie schützen können."
-            />
-
-            <TuningSlider
-              label="Recursion"
-              value={
-                recursionTune
-              }
-              onChange={
-                setRecursionTune
-              }
-              help="Bestimmt, wie stark Karten priorisiert werden, die Ressourcen aus dem Friedhof wieder nutzbar machen."
-            />
-
-            <TuningSlider
-              label="Synergie"
-              value={
-                synergyTune
-              }
-              onChange={
-                setSynergyTune
-              }
-              help="Bestimmt, wie stark zusammenwirkende Karten und erkannte Deck- beziehungsweise Commander-Themen gegenüber allgemein starken Einzelkarten gewichtet werden."
-            />
-
-            <TuningSlider
-              label="Mana-Kurve"
-              value={
-                curveTune
-              }
-              onChange={
-                setCurveTune
-              }
-              help="Verschiebt den bevorzugten Kostenbereich des Decks relativ zum Ziel-Mana-Value. Niedriger bevorzugt günstigere Karten, höher erlaubt mehr teure Karten."
-              lowLabel="Niedriger"
-              highLabel="Höher"
-            />
-
-            {format ===
-              "commander" && (
-              <TuningSlider
-                label="Commander-Synergie"
-                value={
-                  commanderSynergyTune
-                }
-                onChange={
-                  setCommanderSynergyTune
-                }
-                help="Steuert, wie stark der Builder Karten bevorzugt, deren erkennbare Themen mit dem Oracle-Text des Commanders beziehungsweise der Commander zusammenpassen."
-                lowLabel="Locker"
-                highLabel="Stärker"
-              />
-            )}
-
-            <TuningSlider
-              label="Spielstil"
-              value={
-                aggressionTune
-              }
-              onChange={
-                setAggressionTune
-              }
-              help="Verschiebt die Auswahl zwischen defensiverem, reaktivem Spiel und aggressiverem Druck. Dieser Regler ergänzt die gewählte Grundstrategie, ersetzt sie aber nicht."
-              lowLabel="Defensiver"
-              highLabel="Aggressiver"
-            />
-
-            <div className="profile-preview">
-              <strong>
-                Aktuelle Zielwerte
-              </strong>
-
-              <span>
-                Länder{" "}
-                {profile.lands}
-              </span>
-
-              <span>
-                Ramp{" "}
-                {profile.ramp}
-              </span>
-
-              <span>
-                Draw{" "}
-                {profile.draw}
-              </span>
-
-              <span>
-                Interaktion{" "}
-                {profile.interaction}
-              </span>
-
-              <span>
-                Boardwipes{" "}
-                {profile.boardwipes}
-              </span>
-
-              <span>
-                Schutz{" "}
-                {profile.protection}
-              </span>
-
-              <span>
-                Recursion{" "}
-                {profile.recursion}
-              </span>
-
-              <span>
-                Synergie{" "}
-                {profile.synergy}
-              </span>
-
-              <span>
-                Ziel-MV{" "}
-                {profile.targetManaValue.toFixed(
-                  1
-                )}
-              </span>
-            </div>
-          </div>
-
-          <button
-            className="primary full"
-            onClick={() =>
-              void build()
-            }
-            disabled={
-              builderDisabled
+      <ol className="builder-wizard-progress" aria-label="Schritte des automatischen Deckbaus">
+        {wizardSteps.map((step, index) => (
+          <li
+            key={step.id}
+            className={
+              index === wizardIndex
+                ? "active"
+                : index < wizardIndex
+                  ? "done"
+                  : ""
             }
           >
-            {buildBusy
-              ? "Deck wird datenbasiert optimiert…"
-              : result
-                ? "Deck neu optimieren"
-                : "Deck erstellen"}
-          </button>
+            <span>{index + 1}</span>
+            <strong>{step.label}</strong>
+          </li>
+        ))}
+      </ol>
 
-          {result &&
-            (
-              lockedCards.length >
-                0 ||
-              excludedCardIds.length >
-                0
-            ) && (
-              <div className="selection-status">
-                <span>
-                  🔒 Fixiert:{" "}
-                  {
-                    lockedCards.length
-                  }
-                </span>
+      <div className="panel builder-wizard-card">
+        <header className="builder-step-head">
+          <div>
+            <span className="eyebrow">
+              Schritt {wizardIndex + 1} von {wizardSteps.length}
+            </span>
+            <h3>{currentStep?.label}</h3>
+            <p>{currentStep?.hint}</p>
+          </div>
+        </header>
 
-                <span>
-                  🚫 Ausgeschlossen:{" "}
-                  {
-                    excludedCardIds.length
-                  }
-                </span>
+        {currentStep?.id === "name" && (
+          <div className="builder-step-content">
+            <label>
+              Deckname
+              <input
+                autoFocus
+                value={name}
+                onChange={event => setName(event.target.value)}
+                placeholder="z. B. Cloud Equipment"
+              />
+            </label>
+            <p className="builder-choice-explanation">
+              Der Name beeinflusst die Kartenauswahl nicht. Er dient nur zur Wiedererkennung in deiner Deckbibliothek.
+            </p>
+          </div>
+        )}
+
+        {currentStep?.id === "format" && (
+          <div className="builder-step-content">
+            <div className="strategy-choice-grid format-choice-grid">
+              <button
+                type="button"
+                className={format === "commander" ? "strategy-choice active" : "strategy-choice"}
+                onClick={() => changeFormat("commander")}
+              >
+                <strong>Commander</strong>
+                <span>100 Karten inklusive Commander, Singleton-Regeln und Farbidentität.</span>
+              </button>
+              <button
+                type="button"
+                className={format === "standard" ? "strategy-choice active" : "strategy-choice"}
+                onClick={() => changeFormat("standard")}
+              >
+                <strong>Standard</strong>
+                <span>60-Karten-Constructed-Deck mit Standard-Legalität und normalen Copy-Limits.</span>
+              </button>
+            </div>
+
+            {format === "standard" && (
+              <div className="builder-substep">
+                <h4>Deckfarben</h4>
+                <p className="muted">
+                  Die Farbauswahl ist ein Builder-Filter. Sie ersetzt keine Format-Legalitätsprüfung.
+                </p>
+                <div className="color-pills">
+                  {COLORS.map(color => (
+                    <button
+                      key={color}
+                      type="button"
+                      className={colors.includes(color) ? "color active" : "color"}
+                      onClick={() => toggleStandardColor(color)}
+                    >
+                      {color}
+                      <span>{COLOR_NAMES[color]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {currentStep?.id === "commander" && (
+          <div className="builder-step-content">
+            <label>
+              Commander
+              <select
+                value={commanderId}
+                onChange={event => chooseCommander(event.target.value)}
+              >
+                <option value="">— Commander wählen —</option>
+                {commanders.map(card => (
+                  <option key={card.id} value={card.id}>
+                    {card.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {primaryCommander && secondCommanderOptions.length > 0 && (
+              <label>
+                Zweiter Commander (optional)
+                <select
+                  value={secondCommanderId}
+                  onChange={event => chooseSecondCommander(event.target.value)}
+                >
+                  <option value="">— kein zweiter Commander —</option>
+                  {secondCommanderOptions.map(card => (
+                    <option key={card.id} value={card.id}>
+                      {card.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {primaryCommander && (
+              <div className="builder-choice-explanation">
+                <strong>Farbidentität:</strong>{" "}
+                {activeColors.length
+                  ? activeColors.map(color => COLOR_NAMES[color] ?? color).join(", ")
+                  : "Farblos"}
+                <br />
+                Der automatische Builder verwendet ausschließlich Karten, die zur Commander-Farbidentität und den Commander-Regeln passen.
               </div>
             )}
 
-          {pool.length === 0 && (
-            <div className="notice">
-              Deine Sammlung ist leer. Füge zuerst Karten über die Kartensuche hinzu.
-            </div>
-          )}
-
-          {format ===
-            "commander" &&
-            pool.length > 0 &&
-            commanders.length ===
-              0 && (
+            {commanders.length === 0 && (
               <div className="notice">
                 In deiner Sammlung wurde aktuell kein Commander-Kandidat gefunden.
               </div>
             )}
+          </div>
+        )}
 
-          {format ===
-            "commander" &&
-            commanders.length >
-              0 &&
-            !primaryCommander && (
-              <div className="notice">
-                Wähle zuerst einen Commander. Seine Farbidentität wird automatisch für den Deckbau verwendet.
+        {currentStep?.id === "strategy" && (
+          <div className="builder-step-content">
+            <div className="strategy-choice-grid">
+              {strategyOptions.map(option => (
+                <button
+                  type="button"
+                  key={option.id}
+                  className={strategy === option.id ? "strategy-choice active" : "strategy-choice"}
+                  onClick={() => setStrategy(option.id)}
+                >
+                  <strong>{option.label}</strong>
+                </button>
+              ))}
+            </div>
+
+            <div className="builder-choice-explanation strategy-description">
+              <strong>{selectedStrategy.label}</strong>
+              <p>{selectedStrategy.description}</p>
+            </div>
+          </div>
+        )}
+
+        {currentStep?.id === "mana" && (
+          <div className="builder-step-content mana-step-grid">
+            <label>
+              Ziel-Mana Value: <strong>{target.toFixed(1)}</strong>
+              <input
+                type="range"
+                min="0"
+                max="15"
+                step="0.1"
+                value={target}
+                onChange={event => setTarget(Number(event.target.value))}
+              />
+              <small>
+                Schwerpunkt der Nichtland-Karten. Das ist kein hartes Maximum.
+              </small>
+            </label>
+
+            <label>
+              Minimum Mana Value: <strong>{min.toFixed(1)}</strong>
+              <input
+                type="range"
+                min="0"
+                max="15"
+                step="0.5"
+                value={min}
+                onChange={event => setMin(Number(event.target.value))}
+              />
+              <small>
+                Harte Untergrenze für Nichtland-Karten.
+              </small>
+            </label>
+
+            <label>
+              Maximum Mana Value: <strong>{max.toFixed(1)}</strong>
+              <input
+                type="range"
+                min="0"
+                max="15"
+                step="0.5"
+                value={max}
+                onChange={event => setMax(Number(event.target.value))}
+              />
+              <small>
+                Harte Obergrenze für Nichtland-Karten.
+              </small>
+            </label>
+
+            {min > max && (
+              <div className="error">
+                Minimum Mana Value darf nicht größer als Maximum Mana Value sein.
               </div>
             )}
-        </div>
+          </div>
+        )}
 
-        {result
-          ? (
-            <div className="panel">
-              <div className="result-heading">
-                <div>
-                  <h3>
-                    {result.name}
-                  </h3>
+        {currentStep?.id === "tuning" && (
+          <div className="builder-step-content">
+            {renderTuningPanel()}
+          </div>
+        )}
 
-                  <p className="muted">
-                    Passe links die Regler an, fixiere gewünschte Karten oder schließe Karten aus und klicke anschließend auf „Deck neu optimieren“.
-                  </p>
-                </div>
+        <footer className="builder-wizard-nav">
+          <button
+            className="secondary"
+            type="button"
+            onClick={previousStep}
+            disabled={wizardIndex === 0 || buildBusy}
+          >
+            ← Zurück
+          </button>
 
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void build()
-                  }
-                  disabled={
-                    builderDisabled
-                  }
-                >
-                  {buildBusy
-                    ? "Optimierung läuft…"
-                    : "Deck neu optimieren"}
-                </button>
-              </div>
-
-              <div className="stats">
-                <div>
-                  <strong>
-                    {
-                      deckStats(
-                        result
-                      ).total
-                    }
-                  </strong>
-
-                  <span>
-                    Karten gesamt
-                  </span>
-                </div>
-
-                <div>
-                  <strong>
-                    {
-                      deckStats(
-                        result
-                      ).lands
-                    }
-                  </strong>
-
-                  <span>
-                    Länder
-                  </span>
-                </div>
-
-                <div>
-                  <strong>
-                    {
-                      deckStats(
-                        result
-                      ).nonland
-                    }
-                  </strong>
-
-                  <span>
-                    Nichtländer
-                  </span>
-                </div>
-
-                <div>
-                  <strong>
-                    {
-                      deckStats(
-                        result
-                      ).averageManaValue
-                    }
-                  </strong>
-
-                  <span>
-                    Ø Mana Value
-                  </span>
-                </div>
-              </div>
-
-              <p>
-                {result.notes}
-              </p>
-
-              {result.format ===
-                "commander" &&
-                result.commanderIds.length >
-                  0 && (
-                  <div className="commander-card">
-                    <strong>
-                      Commander
-                    </strong>
-
-                    {result.commanderIds.map(
-                      id => {
-                        const commander =
-                          pool.find(
-                            card =>
-                              card.id ===
-                              id
-                          );
-
-                        return commander
-                          ? (
-                            <span
-                              key={
-                                id
-                              }
-                            >
-                              {
-                                commander.name
-                              }
-                            </span>
-                          )
-                          : null;
-                      }
-                    )}
-                  </div>
-                )}
-
-              <div className="role-list">
-                {Object.entries(
-                  deckStats(
-                    result
-                  ).roleCounts
-                ).map(
-                  ([
-                    role,
-                    count
-                  ]) => (
-                    <span
-                      key={
-                        role
-                      }
-                    >
-                      {role}:{" "}
-                      {count}
-                    </span>
-                  )
-                )}
-              </div>
-
-              <div className="deck-list optimizable-deck-list">
-                {result.cards.map(
-                  card => {
-                    const locked =
-                      lockedIds.has(
-                        card.id
-                      );
-
-                    const excluded =
-                      excludedIds.has(
-                        card.id
-                      );
-
-                    return (
-                      <div
-                        key={
-                          card.id
-                        }
-                        className={
-                          excluded
-                            ? "deck-list-row excluded"
-                            : locked
-                              ? "deck-list-row locked"
-                              : "deck-list-row"
-                        }
-                      >
-                        <div className="deck-list-info">
-                          <span>
-                            <b>
-                              {
-                                card.count
-                              }
-                              ×
-                            </b>{" "}
-                            {
-                              card.name
-                            }
-                          </span>
-
-                          <small>
-                            {
-                              card.role
-                            }
-                            {" · "}
-                            {
-                              card.reason
-                            }
-                          </small>
-
-                          {locked && (
-                            <small className="card-state locked-state">
-                              🔒 Wird bei der nächsten Optimierung beibehalten.
-                            </small>
-                          )}
-
-                          {excluded && (
-                            <small className="card-state excluded-state">
-                              🚫 Wird bei der nächsten Optimierung nicht mehr verwendet.
-                            </small>
-                          )}
-                        </div>
-
-                        <div className="deck-card-actions">
-                          <button
-                            type="button"
-                            className={
-                              locked
-                                ? "secondary active-action"
-                                : "ghost"
-                            }
-                            onClick={() =>
-                              toggleLocked(
-                                card
-                              )
-                            }
-                            title="Diese Karte beim erneuten Optimieren im Deck behalten."
-                          >
-                            {locked
-                              ? "🔓 Freigeben"
-                              : "🔒 Behalten"}
-                          </button>
-
-                          <button
-                            type="button"
-                            className={
-                              excluded
-                                ? "danger active-action"
-                                : "ghost"
-                            }
-                            onClick={() =>
-                              toggleExcluded(
-                                card
-                              )
-                            }
-                            title="Diese Karte beim erneuten Optimieren nicht verwenden."
-                          >
-                            {excluded
-                              ? "↩ Wieder zulassen"
-                              : "🚫 Ausschließen"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  }
-                )}
-              </div>
-
-              {!resultHasCards && (
-                <div className="notice">
-                  Es wurden keine passenden Karten für das Hauptdeck gefunden. Speichern, Export und Analyse sind deshalb deaktiviert.
-                </div>
-              )}
-
-              <div className="row">
-                <button
-                  className="primary"
-                  onClick={() =>
-                    onSave(result)
-                  }
-                  disabled={
-                    !resultHasCards
-                  }
-                >
-                  Deck speichern
-                </button>
-
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    download(
-                      `${result.name}.txt`,
-                      deckText(
-                        result,
-                        pool
-                      )
-                    )
-                  }
-                  disabled={
-                    !resultHasCards
-                  }
-                >
-                  Export
-                </button>
-
-              </div>
-            </div>
-          )
-          : (
-            <div className="panel empty">
-              <h3>
-                Vorschau
-              </h3>
-
-              <p>
-                Hier erscheinen Deckgröße, Mana-Kurve, Rollen und Auswahlbegründungen.
-              </p>
-
-              <p className="muted">
-                Nach dem ersten Vorschlag kannst du die Feinabstimmung ändern, einzelne Karten fixieren oder ausschließen und das Deck erneut optimieren.
-              </p>
-            </div>
+          {wizardIndex < wizardSteps.length - 1 ? (
+            <button
+              className="primary"
+              type="button"
+              onClick={nextStep}
+              disabled={!canContinue || buildBusy}
+            >
+              Weiter →
+            </button>
+          ) : (
+            <button
+              className="primary"
+              type="button"
+              onClick={() => void build()}
+              disabled={builderDisabled || !canContinue}
+            >
+              {buildBusy ? "Deck wird datenbasiert erstellt…" : "Deck erstellen"}
+            </button>
           )}
+        </footer>
+
+        {pool.length === 0 && (
+          <div className="notice">
+            Deine Sammlung ist leer. Füge zuerst Karten über die Kartensuche hinzu.
+          </div>
+        )}
       </div>
     </section>
   );
