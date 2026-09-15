@@ -4,6 +4,10 @@ type DeckBoardProps = {
   deck: DeckRecord;
   pool: CardRecord[];
   onCardClick: (card: CardRecord) => void;
+  lockedIds?: ReadonlySet<string>;
+  excludedIds?: ReadonlySet<string>;
+  onToggleLocked?: (card: DeckCard) => void;
+  onToggleExcluded?: (card: DeckCard) => void;
 };
 
 type BoardEntry = {
@@ -45,8 +49,17 @@ function groupFor(typeLine: string | undefined, commander: boolean): (typeof GRO
   return "Sonstiges";
 }
 
-export default function DeckBoard({ deck, pool, onCardClick }: DeckBoardProps) {
+export default function DeckBoard({
+  deck,
+  pool,
+  onCardClick,
+  lockedIds,
+  excludedIds,
+  onToggleLocked,
+  onToggleExcluded
+}: DeckBoardProps) {
   const entries: BoardEntry[] = [];
+  const hasActions = Boolean(onToggleLocked || onToggleExcluded);
 
   if (deck.format === "commander") {
     deck.commanderIds.forEach((id, index) => {
@@ -92,7 +105,7 @@ export default function DeckBoard({ deck, pool, onCardClick }: DeckBoardProps) {
   const visibleGroups = GROUP_ORDER.filter(group => (grouped.get(group)?.length ?? 0) > 0);
 
   return (
-    <div className="deck-board-shell">
+    <div className={`deck-board-shell${hasActions ? " deck-board-shell-editable" : ""}`}>
       <div className="deck-board" role="list" aria-label="Deckkarten nach Kartentyp">
         {visibleGroups.map(group => {
           const cards = grouped.get(group) ?? [];
@@ -108,33 +121,66 @@ export default function DeckBoard({ deck, pool, onCardClick }: DeckBoardProps) {
               <div className="deck-board-stack">
                 {cards.map((entry, index) => {
                   const image = cardImage(entry.source);
+                  const locked = !entry.commander && Boolean(lockedIds?.has(entry.source.id));
+                  const excluded = !entry.commander && Boolean(excludedIds?.has(entry.source.id));
+
                   return (
-                    <button
-                      type="button"
-                      className="deck-board-card"
+                    <article
+                      className={`deck-board-entry${locked ? " is-locked" : ""}${excluded ? " is-excluded" : ""}`}
                       style={{ zIndex: index + 1 }}
                       key={entry.key}
-                      onClick={() => onCardClick(entry.source)}
-                      title={`${entry.source.name} anzeigen`}
                     >
-                      {image && (
-                        <span
-                          className="deck-board-card-art"
-                          style={{ backgroundImage: `url(${image})` }}
-                          aria-hidden="true"
-                        />
+                      <button
+                        type="button"
+                        className="deck-board-card"
+                        onClick={() => onCardClick(entry.source)}
+                        title={`${entry.source.name} anzeigen`}
+                      >
+                        {image && (
+                          <span
+                            className="deck-board-card-art"
+                            style={{ backgroundImage: `url(${image})` }}
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span className="deck-board-card-shade" aria-hidden="true" />
+                        <span className="deck-board-card-copy">
+                          <strong>
+                            {entry.count > 1 ? `${entry.count}× ` : ""}
+                            {entry.source.name}
+                          </strong>
+                          <small>
+                            {entry.commander ? "Commander" : `MV ${entry.source.manaValue ?? 0}`}
+                          </small>
+                          {locked && <em>🔒 Behalten</em>}
+                          {excluded && <em>🚫 Ausschließen</em>}
+                        </span>
+                      </button>
+
+                      {!entry.commander && entry.deckCard && hasActions && (
+                        <div className="deck-board-card-actions">
+                          {onToggleLocked && (
+                            <button
+                              type="button"
+                              className={locked ? "secondary active-action" : "ghost"}
+                              onClick={() => onToggleLocked(entry.deckCard as DeckCard)}
+                            >
+                              {locked ? "Freigeben" : "Behalten"}
+                            </button>
+                          )}
+
+                          {onToggleExcluded && (
+                            <button
+                              type="button"
+                              className={excluded ? "danger active-action" : "ghost"}
+                              onClick={() => onToggleExcluded(entry.deckCard as DeckCard)}
+                            >
+                              {excluded ? "Zulassen" : "Ausschließen"}
+                            </button>
+                          )}
+                        </div>
                       )}
-                      <span className="deck-board-card-shade" aria-hidden="true" />
-                      <span className="deck-board-card-copy">
-                        <strong>
-                          {entry.count > 1 ? `${entry.count}× ` : ""}
-                          {entry.source.name}
-                        </strong>
-                        <small>
-                          {entry.commander ? "Commander" : `MV ${entry.source.manaValue ?? 0}`}
-                        </small>
-                      </span>
-                    </button>
+                    </article>
                   );
                 })}
               </div>
