@@ -92,6 +92,7 @@ import {
 import type {
   CardFinish,
   CardRecord,
+  DeckCard,
   DeckRecord,
   Format,
   GroupBy,
@@ -5785,7 +5786,7 @@ function DeckEditor({
                             <span>
                               <strong>{card.name}</strong>
                               <small className="muted">
-                                {card.setCode ? ` ${card.setCode.toUpperCase()} ·` : ""} MV {card.manaValue ?? 0} · im Deck {currentByName}/{ruleLimitLabel}
+                                {card.set ? ` ${card.set.toUpperCase()} ·` : ""} MV {card.manaValue ?? 0} · im Deck {currentByName}/{ruleLimitLabel}
                               </small>
                             </span>
                           </button>
@@ -5834,14 +5835,14 @@ function DeckEditor({
                     deck={d}
                     pool={pool}
                     onCardClick={card => setPreviewCardId(card.id)}
-                    onIncrement={deckCard => {
+                    onIncrement={(deckCard: DeckCard) => {
                       const source = pool.find(card => card.id === deckCard.id);
                       if (source) {
                         add(source);
                         setAnalysisText("");
                       }
                     }}
-                    onDecrement={deckCard => {
+                    onDecrement={(deckCard: DeckCard) => {
                       setD(current => ({
                         ...current,
                         cards: current.cards
@@ -5854,7 +5855,7 @@ function DeckEditor({
                       }));
                       setAnalysisText("");
                     }}
-                    canIncrement={deckCard => {
+                    canIncrement={(deckCard: DeckCard) => {
                       const source = pool.find(card => card.id === deckCard.id);
                       if (!source) return false;
                       const currentByName = deckCountByName[deckCard.name.toLowerCase()] ?? 0;
@@ -5862,7 +5863,7 @@ function DeckEditor({
                       const commanderFull = d.format === "commander" && mainDeckCount >= commanderMainTarget;
                       return deckCard.count < source.count && currentByName < ruleLimit && !commanderFull;
                     }}
-                    noteForCard={deckCard => {
+                    noteForCard={(deckCard: DeckCard) => {
                       if (illegalCards.some(item => item.id === deckCard.id)) return "Nicht erlaubt";
                       if (copyViolationNames.includes(deckCard.name)) return "Mengenlimit überschritten";
                       return undefined;
