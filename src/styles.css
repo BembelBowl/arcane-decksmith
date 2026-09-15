@@ -4720,3 +4720,44 @@ footer {
 .manual-filter-details:not([open]) .manual-filter-panel {
   display: none;
 }
+
+
+/* D1 UX hotfix 9 — Sammlung als eigenes scrollbares Fenster */
+.manual-collection-pane {
+  overflow: hidden;
+}
+
+.manual-collection-list {
+  /*
+   * Etwa 10 Kartenzeilen gleichzeitig sichtbar.
+   * Der Rest bleibt innerhalb der Sammlung scrollbar, damit das Deck
+   * direkt darunter ohne langes Seitenscrollen erreichbar bleibt.
+   */
+  --manual-card-row-height: 54px;
+  height: calc(var(--manual-card-row-height) * 10);
+  max-height: calc(var(--manual-card-row-height) * 10) !important;
+  min-height: 0;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 8px !important;
+}
+
+.manual-add-row {
+  min-height: var(--manual-card-row-height);
+  box-sizing: border-box;
+}
+
+.manual-collection-list:focus-within {
+  outline: 1px solid rgba(85, 215, 229, 0.18);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .manual-collection-list {
+    --manual-card-row-height: 58px;
+    height: calc(var(--manual-card-row-height) * 8);
+    max-height: calc(var(--manual-card-row-height) * 8) !important;
+  }
+}
