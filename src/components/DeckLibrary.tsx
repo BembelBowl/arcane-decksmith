@@ -6,6 +6,15 @@ type DeckLibraryProps = {
   onOpenDeck: (deckId: string) => void;
 };
 
+const COLOR_SYMBOL_LABELS: Record<string, string> = {
+  W: "W",
+  U: "U",
+  B: "B",
+  R: "R",
+  G: "G",
+  C: "C"
+};
+
 function cardImage(card: CardRecord | undefined): string | undefined {
   return (
     card?.imageUri ??
@@ -23,7 +32,7 @@ function deckArtwork(deck: DeckRecord, pool: CardRecord[]): string | undefined {
 
   for (const deckCard of deck.cards) {
     const source = pool.find(card => card.id === deckCard.id);
-    if (source && !/\bLand\b/i.test(source.typeLine ?? deckCard.typeLine ?? "")) {
+    if (source && !/Land/i.test(source.typeLine ?? deckCard.typeLine ?? "")) {
       const image = cardImage(source);
       if (image) return image;
     }
@@ -43,6 +52,18 @@ function commanderNames(deck: DeckRecord, pool: CardRecord[]): string[] {
   return deck.commanderIds
     .map(id => pool.find(card => card.id === id)?.name)
     .filter((name): name is string => Boolean(name));
+}
+
+function formatLabel(deck: DeckRecord): string {
+  return deck.format === "commander" ? "Commander" : "Standard";
+}
+
+function colorIdentity(deck: DeckRecord): string[] {
+  if (deck.colors.length > 0) {
+    return deck.colors;
+  }
+
+  return deck.format === "commander" ? ["C"] : [];
 }
 
 export default function DeckLibrary({ decks, pool, onOpenDeck }: DeckLibraryProps) {
@@ -69,7 +90,8 @@ export default function DeckLibrary({ decks, pool, onOpenDeck }: DeckLibraryProp
           {decks.map(deck => {
             const art = deckArtwork(deck, pool);
             const commanders = commanderNames(deck, pool);
-            const colors = deck.colors.length > 0 ? deck.colors : undefined;
+            const colors = colorIdentity(deck);
+            const commanderText = commanders.join(" + ");
 
             return (
               <button
@@ -84,28 +106,28 @@ export default function DeckLibrary({ decks, pool, onOpenDeck }: DeckLibraryProp
                   style={art ? { backgroundImage: `url(${art})` } : undefined}
                 >
                   <div className="deck-library-art-shade" />
-                  <div className="deck-library-format-pill">
-                    {deck.format === "commander" ? "Commander" : "Standard"}
-                  </div>
+                  <div className="deck-library-format-pill">{formatLabel(deck)}</div>
                 </div>
 
                 <div className="deck-library-copy">
-                  <div className="deck-library-title-row">
-                    <h3>{deck.name}</h3>
-                    <span>{deckCount(deck)} Karten</span>
+                  <div className="deck-library-copy-main">
+                    <div className="deck-library-title-row">
+                      <h3>{deck.name}</h3>
+                      <span>{deckCount(deck)} Karten</span>
+                    </div>
+
+                    <p className="deck-library-subtitle">{commanderText || formatLabel(deck)}</p>
                   </div>
 
-                  {commanders.length > 0 && (
-                    <p className="deck-library-commander">{commanders.join(" + ")}</p>
-                  )}
-
                   <div className="deck-library-meta">
-                    <span>{deck.format === "commander" ? "Commander" : "Standard"}</span>
+                    <span>{formatLabel(deck)}</span>
                     {typeof deck.score === "number" && <span>Score {deck.score}</span>}
-                    {colors && (
+                    {colors.length > 0 && (
                       <span className="deck-library-colors" aria-label="Farbidentität">
                         {colors.map(color => (
-                          <i key={color}>{color}</i>
+                          <i key={color} className={`mana-symbol mana-symbol-${color.toLowerCase()}`}>
+                            {COLOR_SYMBOL_LABELS[color] ?? color}
+                          </i>
                         ))}
                       </span>
                     )}
