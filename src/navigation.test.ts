@@ -1,31 +1,38 @@
 import { describe, expect, it } from "vitest";
 import {
+  APP_PAGE_HASHES,
+  appLocationFromHash,
   appPageFromHash,
-  appPageHref
+  appPageHref,
+  deckHref
 } from "./navigation";
 
-describe("app navigation", () => {
-  it("maps every top-level page to a stable GitHub-Pages-safe hash URL", () => {
-    expect(appPageHref("home")).toBe("#/");
-    expect(appPageHref("collection")).toBe("#/collection");
-    expect(appPageHref("search")).toBe("#/search");
-    expect(appPageHref("builder")).toBe("#/build");
-    expect(appPageHref("decks")).toBe("#/decks");
+describe("navigation", () => {
+  it("maps every app page to its hash", () => {
+    for (const [page, hash] of Object.entries(APP_PAGE_HASHES)) {
+      expect(appPageHref(page as keyof typeof APP_PAGE_HASHES)).toBe(hash);
+      expect(appPageFromHash(hash)).toBe(page);
+    }
   });
 
-  it("parses supported routes", () => {
-    expect(appPageFromHash("#/collection")).toBe("collection");
-    expect(appPageFromHash("#/search")).toBe("search");
-    expect(appPageFromHash("#/build")).toBe("builder");
-    expect(appPageFromHash("#/decks")).toBe("decks");
-  });
-
-  it("keeps old and empty home URLs compatible", () => {
+  it("recognizes home aliases", () => {
     expect(appPageFromHash("")).toBe("home");
+    expect(appPageFromHash("#")).toBe("home");
     expect(appPageFromHash("#/home")).toBe("home");
   });
 
-  it("rejects unknown routes so the app can fall back to start", () => {
-    expect(appPageFromHash("#/unknown")).toBeNull();
+  it("recognizes deck detail routes", () => {
+    const id = "deck id/with symbols";
+    const hash = deckHref(id);
+    expect(hash).toBe("#/decks/deck%20id%2Fwith%20symbols");
+    expect(appLocationFromHash(hash)).toEqual({
+      page: "decks",
+      deckId: id
+    });
+    expect(appPageFromHash(hash)).toBe("decks");
+  });
+
+  it("rejects unknown routes", () => {
+    expect(appLocationFromHash("#/unknown")).toBeNull();
   });
 });

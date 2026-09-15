@@ -34,12 +34,22 @@ const PAGE_TITLES: Record<AppPage, string> = {
   decks: "Decks · Arcane Decksmith"
 };
 
+export type AppLocation = {
+  page: AppPage;
+  deckId: string | null;
+};
+
 export function appPageHref(page: AppPage): string {
   return APP_PAGE_HASHES[page];
 }
 
-export function appPageFromHash(hash: string): AppPage | null {
-  const normalized = hash.trim().toLowerCase();
+export function deckHref(deckId: string): string {
+  return `#/decks/${encodeURIComponent(deckId)}`;
+}
+
+export function appLocationFromHash(hash: string): AppLocation | null {
+  const raw = hash.trim();
+  const normalized = raw.toLowerCase();
 
   if (
     normalized === "" ||
@@ -47,34 +57,57 @@ export function appPageFromHash(hash: string): AppPage | null {
     normalized === "#/" ||
     normalized === "#/home"
   ) {
-    return "home";
+    return { page: "home", deckId: null };
+  }
+
+  const deckMatch = raw.match(/^#\/decks\/([^/?#]+)\/?$/i);
+  if (deckMatch) {
+    try {
+      return {
+        page: "decks",
+        deckId: decodeURIComponent(deckMatch[1])
+      };
+    } catch {
+      return null;
+    }
   }
 
   const entry = Object.entries(APP_PAGE_HASHES).find(
     ([, value]) => value.toLowerCase() === normalized
   );
 
-  return entry ? (entry[0] as AppPage) : null;
+  return entry
+    ? { page: entry[0] as AppPage, deckId: null }
+    : null;
 }
 
-function currentPage(): AppPage {
+export function appPageFromHash(hash: string): AppPage | null {
+  return appLocationFromHash(hash)?.page ?? null;
+}
+
+function currentLocation(): AppLocation {
   if (typeof window === "undefined") {
-    return "home";
+    return { page: "home", deckId: null };
   }
 
-  return appPageFromHash(window.location.hash) ?? "home";
+  return appLocationFromHash(window.location.hash) ?? {
+    page: "home",
+    deckId: null
+  };
 }
 
 export function useAppNavigation(): {
   page: AppPage;
+  deckId: string | null;
   navigate: (page: AppPage) => void;
+  openDeck: (deckId: string) => void;
 } {
-  const [page, setPage] = useState<AppPage>(currentPage);
+  const [location, setLocation] = useState<AppLocation>(currentLocation);
 
   useEffect(() => {
     const syncFromLocation = () => {
-      const rawHash = window.location.hash.trim().toLowerCase();
-      const parsed = appPageFromHash(rawHash);
+      const rawHash = window.location.hash.trim();
+      const parsed = appLocationFromHash(rawHash);
 
       if (!parsed) {
         window.history.replaceState(
@@ -82,13 +115,14 @@ export function useAppNavigation(): {
           "",
           `${window.location.pathname}${window.location.search}${APP_PAGE_HASHES.home}`
         );
-        setPage("home");
+        setLocation({ page: "home", deckId: null });
         return;
       }
 
       if (
-        parsed === "home" &&
-        rawHash !== APP_PAGE_HASHES.home
+        parsed.page === "home" &&
+        parsed.deckId === null &&
+        rawHash.toLowerCase() !== APP_PAGE_HASHES.home
       ) {
         window.history.replaceState(
           null,
@@ -97,7 +131,7 @@ export function useAppNavigation(): {
         );
       }
 
-      setPage(parsed);
+      setLocation(parsed);
       window.scrollTo({ top: 0, left: 0 });
     };
 
@@ -110,22 +144,35 @@ export function useAppNavigation(): {
   }, []);
 
   useEffect(() => {
-    document.title = PAGE_TITLES[page];
-  }, [page]);
+    document.title = location.deckId
+      ? `Deck · Arcane Decksmith`
+      : PAGE_TITLES[location.page];
+  }, [location]);
 
   const navigate = useCallback((nextPage: AppPage) => {
     const nextHash = APP_PAGE_HASHES[nextPage];
 
     if (window.location.hash === nextHash) {
-      setPage(nextPage);
+      setLocation({ page: nextPage, deckId: null });
       return;
     }
 
     window.location.hash = nextHash;
   }, []);
 
+  const openDeck = useCallback((nextDeckId: string) => {
+    const nextHash = deckHref(nextDeckId);
+    if (window.location.hash === nextHash) {
+      setLocation({ page: "decks", deckId: nextDeckId });
+      return;
+    }
+    window.location.hash = nextHash;
+  }, []);
+
   return {
-    page,
-    navigate
+    page: location.page,
+    deckId: location.deckId,
+    navigate,
+    openDeck
   };
 }

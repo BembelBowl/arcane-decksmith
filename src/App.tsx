@@ -26,7 +26,7 @@ function deckManaCurve(
   }));
 }
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { User } from "firebase/auth";
@@ -102,6 +102,9 @@ import AppHeader from "./components/AppHeader";
 import AppFooter from "./components/AppFooter";
 import HomePage from "./pages/HomePage";
 import CollectionPage from "./pages/CollectionPage";
+import DeckLibrary from "./components/DeckLibrary";
+import DeckBoard from "./components/DeckBoard";
+import CardDetailsModal from "./components/CardDetailsModal";
 import { useAppNavigation } from "./navigation";
 
 const COLORS = ["W", "U", "B", "R", "G"];
@@ -1116,7 +1119,9 @@ function Main({
 
   const {
     page,
-    navigate
+    deckId,
+    navigate,
+    openDeck
   } = useAppNavigation();
 
   const [busy, setBusy] = useState(true);
@@ -1480,8 +1485,9 @@ for (
               )
               : page === "builder"
                 ? (
-                  <Builder
+                  <BuildHub
                     pool={collection}
+                    demoMode={demoMode}
                     onSave={persistDeck}
                   />
                 )
@@ -1489,179 +1495,11 @@ for (
                   <Decks
                     decks={decks}
                     pool={collection}
+                    selectedDeckId={deckId}
+                    onOpenDeck={openDeck}
+                    onCloseDeck={() => navigate("decks")}
                     onDelete={delDeck}
                     onSave={persistDeck}
-                    onBulkSave={async (
-                      deck,
-                      cardUpdates
-                    ) => {
-                      const beforeById =
-                        new Map(
-                          collection.map(
-                            card => [
-                              card.id,
-                              card
-                            ] as const
-                          )
-                        );
-
-                      const writtenIds:
-                        string[] = [];
-
-                      // Firestore lehnt Felder mit dem Wert "undefined" ab.
-                      // Bei Scryfall-Karten können optionale Daten wie Preise,
-                      // Bilder oder Mana-Kosten fehlen. Vor jedem Bulk-Speichern
-                      // entfernen wir deshalb ausschließlich undefined-Felder.
-                      const cleanForFirestore =
-                        <T,>(
-                          value: T
-                        ): T =>
-                          JSON.parse(
-                            JSON.stringify(
-                              value
-                            )
-                          ) as T;
-
-                      const saveCardWithRetry =
-                        async (
-                          card: CardRecord
-                        ) => {
-                          let lastError:
-                            unknown = null;
-
-                          for (
-                            let attempt = 1;
-                            attempt <= 3;
-                            attempt += 1
-                          ) {
-                            try {
-                              await saveCard(
-                                uid,
-                                cleanForFirestore(
-                                  card
-                                )
-                              );
-                              return;
-                            } catch (error) {
-                              lastError =
-                                error;
-
-                              if (
-                                attempt < 3
-                              ) {
-                                await new Promise(
-                                  resolve =>
-                                    setTimeout(
-                                      resolve,
-                                      250 *
-                                        attempt
-                                    )
-                                );
-                              }
-                            }
-                          }
-
-                          throw lastError;
-                        };
-
-                      try {
-                        for (
-                          const card
-                          of cardUpdates
-                        ) {
-                          await saveCardWithRetry(
-                            card
-                          );
-                          writtenIds.push(
-                            card.id
-                          );
-                        }
-
-                        await saveDeck(
-                          uid,
-                          cleanForFirestore(
-                            deck
-                          )
-                        );
-
-                        setCollection(
-                          await loadCollection(
-                            uid
-                          )
-                        );
-                        setDecks(
-                          await loadDecks(
-                            uid
-                          )
-                        );
-
-                        navigate("decks");
-                        setToast(
-                          cardUpdates.length > 0
-                            ? "Deck und Sammlung gespeichert."
-                            : "Deck gespeichert."
-                        );
-
-                        setTimeout(
-                          () =>
-                            setToast(""),
-                          2200
-                        );
-                      } catch (error) {
-                        try {
-                          await removeDeck(
-                            uid,
-                            deck.id
-                          );
-                        } catch {
-                          // Falls das Deck noch nicht geschrieben wurde,
-                          // gibt es hier nichts zu entfernen.
-                        }
-
-                        for (
-                          const id
-                          of [
-                            ...writtenIds
-                          ].reverse()
-                        ) {
-                          const previous =
-                            beforeById.get(
-                              id
-                            );
-
-                          try {
-                            if (previous) {
-                              await saveCard(
-                                uid,
-                                cleanForFirestore(
-                                  previous
-                                )
-                              );
-                            } else {
-                              await removeCard(
-                                uid,
-                                id
-                              );
-                            }
-                          } catch {
-                            // Der ursprüngliche Fehler wird unten weitergegeben.
-                          }
-                        }
-
-                        setCollection(
-                          await loadCollection(
-                            uid
-                          )
-                        );
-                        setDecks(
-                          await loadDecks(
-                            uid
-                          )
-                        );
-
-                        throw error;
-                      }
-                    }}
                     demoMode={demoMode}
                   />
                 )}
@@ -4940,893 +4778,181 @@ function Builder({
   );
 }
 
+
+function BuildHub({
+  pool,
+  demoMode,
+  onSave
+}: {
+  pool: CardRecord[];
+  demoMode: boolean;
+  onSave: (deck: DeckRecord) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<"automatic" | "manual" | null>(null);
+  const [manualDeck, setManualDeck] = useState<DeckRecord | null>(null);
+
+  const startManual = () => {
+    const now = Date.now();
+    setManualDeck({
+      id: crypto.randomUUID(),
+      name: "Neues manuelles Deck",
+      format: "standard",
+      commanderIds: [],
+      cards: [],
+      sideboard: [],
+      colors: [],
+      createdAt: now,
+      updatedAt: now,
+      notes: "Manuell zusammengestelltes Deck."
+    });
+    setMode("manual");
+  };
+
+  if (mode === "automatic") {
+    return (
+      <section>
+        <div className="build-mode-toolbar">
+          <button className="secondary" type="button" onClick={() => setMode(null)}>
+            ← Bauart wechseln
+          </button>
+          <div>
+            <strong>Automatischer Deckbau</strong>
+            <span>Der Optimierer stellt ein Deck aus deiner Sammlung zusammen.</span>
+          </div>
+        </div>
+        <Builder pool={pool} onSave={onSave} />
+      </section>
+    );
+  }
+
+  if (mode === "manual" && manualDeck) {
+    return (
+      <DeckEditor
+        deck={manualDeck}
+        pool={pool}
+        demoMode={demoMode}
+        onBack={() => {
+          setManualDeck(null);
+          setMode(null);
+        }}
+        onSave={async deck => {
+          await onSave(deck);
+          setManualDeck(null);
+          setMode(null);
+        }}
+      />
+    );
+  }
+
+  return (
+    <section className="build-mode-page">
+      <div className="pagehead">
+        <div>
+          <h2>Deck bauen</h2>
+          <p className="muted">
+            Wähle zuerst, ob Arcane Decksmith das Deck automatisch optimieren soll oder ob du jede Karte selbst auswählst.
+          </p>
+        </div>
+      </div>
+
+      <div className="build-mode-grid">
+        <button
+          type="button"
+          className="build-mode-card"
+          onClick={() => setMode("automatic")}
+        >
+          <span className="build-mode-icon">✦</span>
+          <div>
+            <h3>Automatisch bauen</h3>
+            <p>
+              Nutzt Strategie, Rollen, Mana-Kurve, Commander-Synergien und die angebundenen Deck-Intelligence-Daten, um ein Deck aus deiner Sammlung zu erstellen.
+            </p>
+          </div>
+          <strong>Automatischen Builder öffnen →</strong>
+        </button>
+
+        <button
+          type="button"
+          className="build-mode-card"
+          onClick={startManual}
+        >
+          <span className="build-mode-icon">＋</span>
+          <div>
+            <h3>Manuell bauen</h3>
+            <p>
+              Wähle Commander, Format und Karten selbst. Commander-Farbidentität, Legalität, Bestandsmenge und Copy-Limits werden beim Hinzufügen direkt berücksichtigt.
+            </p>
+          </div>
+          <strong>Manuellen Editor öffnen →</strong>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Decks({
   decks,
   pool,
+  selectedDeckId,
+  onOpenDeck,
+  onCloseDeck,
   onDelete,
   onSave,
-  onBulkSave,
   demoMode
 }: {
   decks: DeckRecord[];
   pool: CardRecord[];
-  onDelete: (
-    id: string
-  ) => Promise<void>;
-  onSave: (
-    d: DeckRecord
-  ) => Promise<void>;
-  onBulkSave: (
-    deck: DeckRecord,
-    cards: CardRecord[]
-  ) => Promise<void>;
+  selectedDeckId: string | null;
+  onOpenDeck: (id: string) => void;
+  onCloseDeck: () => void;
+  onDelete: (id: string) => Promise<void>;
+  onSave: (d: DeckRecord) => Promise<void>;
   demoMode: boolean;
 }) {
-  const [
-    editing,
-    setEditing
-  ] =
-    useState<
-      DeckRecord |
-      null
-    >(null);
+  const [editing, setEditing] = useState<DeckRecord | null>(null);
+  const [analysisByDeckId, setAnalysisByDeckId] = useState<Record<string, string>>({});
+  const [aiBusyDeckId, setAiBusyDeckId] = useState<string | null>(null);
+  const [selectedCard, setSelectedCard] = useState<CardRecord | null>(null);
 
-  const [
-    analysisByDeckId,
-    setAnalysisByDeckId
-  ] =
-    useState<
-      Record<string, string>
-    >({});
+  const selectedDeck = selectedDeckId
+    ? decks.find(deck => deck.id === selectedDeckId) ?? null
+    : null;
 
-  const [
-    aiBusyDeckId,
-    setAiBusyDeckId
-  ] =
-    useState<string | null>(
-      null
-    );
-
-  const [
-    showBulkDeck,
-    setShowBulkDeck
-  ] =
-    useState(false);
-
-  const [
-    bulkDeckName,
-    setBulkDeckName
-  ] =
-    useState("Bulk-Deck");
-
-  const [
-    bulkDeckFormat,
-    setBulkDeckFormat
-  ] =
-    useState<Format>(
-      "standard"
-    );
-
-  const [
-    bulkDeckGroups,
-    setBulkDeckGroups
-  ] =
-    useState<
-      Array<{
-        id: string;
-        setCode: string;
-        numbers: string;
-      }>
-    >(() => [
-      {
-        id: crypto.randomUUID(),
-        setCode: "",
-        numbers: ""
-      }
-    ]);
-
-  const [
-    bulkDeckCommanderId,
-    setBulkDeckCommanderId
-  ] =
-    useState("");
-
-  const [
-    bulkDeckSets,
-    setBulkDeckSets
-  ] =
-    useState<ScryfallSet[]>([]);
-
-  const [
-    bulkDeckSetsBusy,
-    setBulkDeckSetsBusy
-  ] =
-    useState(false);
-
-  const [
-    bulkDeckBusy,
-    setBulkDeckBusy
-  ] =
-    useState(false);
-
-  const [
-    bulkDeckPreview,
-    setBulkDeckPreview
-  ] =
-    useState<{
-      deck: DeckRecord;
-      rows: Array<{
-        setCode: string;
-        collectorNumber: string;
-        count: number;
-        name?: string;
-        errors: string[];
-      }>;
-      requestedCards: number;
-      resolvedCards: number;
-      collectionUpdates: CardRecord[];
-      addedCopies: number;
-      errors: string[];
-      warnings: string[];
-    } | null>(null);
-
-  const bulkCommanderOptions =
-    useMemo(
-      () =>
-        commanderCandidates(
-          pool
-        ),
-      [pool]
-    );
-
-  const newManualDeck =
-    () => {
-      const now =
-        Date.now();
-
-      const deck:
-        DeckRecord = {
-          id:
-            crypto.randomUUID(),
-          name:
-            "Neues manuelles Deck",
-          format:
-            "standard",
-          commanderIds: [],
-          cards: [],
-          sideboard: [],
-          colors: [],
-          createdAt: now,
-          updatedAt: now,
-          notes:
-            "Manuell zusammengestelltes Deck."
-        };
-
-      setEditing(deck);
-    };
-
-  const resetBulkDeck = () => {
-    setBulkDeckGroups([
-      {
-        id: crypto.randomUUID(),
-        setCode: "",
-        numbers: ""
-      }
-    ]);
-    setBulkDeckPreview(null);
-  };
-
-  const closeBulkDeck = () => {
-    resetBulkDeck();
-    setShowBulkDeck(false);
-  };
-
-  const ensureBulkDeckSets =
-    async () => {
-      if (
-        bulkDeckSets.length > 0 ||
-        bulkDeckSetsBusy
-      ) {
-        return;
-      }
-
-      setBulkDeckSetsBusy(true);
-
-      try {
-        setBulkDeckSets(
-          await getSets()
-        );
-      } catch (error) {
-        console.error(
-          "Scryfall-Sets konnten nicht geladen werden:",
-          error
-        );
-
-        alert(
-          "Die Set-Liste konnte nicht von Scryfall geladen werden."
-        );
-      } finally {
-        setBulkDeckSetsBusy(false);
-      }
-    };
-
-  const toggleBulkDeck = () => {
-    const next =
-      !showBulkDeck;
-
-    if (next) {
-      void ensureBulkDeckSets();
+  const analyzeSavedDeck = async (deck: DeckRecord) => {
+    if (demoMode || deck.cards.length === 0 || aiBusyDeckId) {
+      return;
     }
 
-    setShowBulkDeck(next);
+    setAiBusyDeckId(deck.id);
+    setAnalysisByDeckId(current => ({ ...current, [deck.id]: "" }));
+
+    const deckForAnalysis = deckForAiAnalysis(deck, pool);
+
+    try {
+      const text = await generateAiDeckExplanation(deckForAnalysis);
+      setAnalysisByDeckId(current => ({ ...current, [deck.id]: text }));
+    } catch (error) {
+      console.error("KI-Analyse fehlgeschlagen:", error);
+
+      const fallback = generateDeckExplanation(deckForAnalysis);
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Unbekannter Fehler bei der KI-Analyse.";
+
+      setAnalysisByDeckId(current => ({
+        ...current,
+        [deck.id]:
+          fallback +
+          "\n\n---\n\n" +
+          "### ⚠️ Generative KI nicht verfügbar\n\n" +
+          errorMessage +
+          "\n\nDie lokale Deckanalyse wird deshalb als Fallback angezeigt."
+      }));
+    } finally {
+      setAiBusyDeckId(null);
+    }
   };
-
-  const previewBulkDeck =
-    async () => {
-      const groups =
-        bulkDeckGroups
-          .map(group => ({
-            ...group,
-            numbers:
-              parseCollectorNumbers(
-                group.numbers
-              )
-          }))
-          .filter(
-            group =>
-              group.setCode &&
-              group.numbers.length > 0
-          );
-
-      if (groups.length === 0) {
-        return;
-      }
-
-      setBulkDeckBusy(true);
-      setBulkDeckPreview(null);
-
-      try {
-        const commander =
-          bulkDeckFormat ===
-            "commander"
-            ? pool.find(
-                card =>
-                  card.id ===
-                  bulkDeckCommanderId
-              )
-            : undefined;
-
-        const commanderColors =
-          commander
-            ? commanderColorIdentity([
-                commander
-              ])
-            : [];
-
-        const rows:
-          Array<{
-            setCode: string;
-            collectorNumber: string;
-            count: number;
-            name?: string;
-            errors: string[];
-          }> = [];
-
-        const errors: string[] = [];
-        const warnings: string[] = [];
-        const mainCards:
-          DeckRecord["cards"] = [];
-        const sourceById =
-          new Map<string, CardRecord>();
-        let resolvedCards = 0;
-
-        const pushError =
-          (message: string) => {
-            if (!errors.includes(message)) {
-              errors.push(message);
-            }
-          };
-
-        if (
-          bulkDeckFormat ===
-            "commander" &&
-          !commander
-        ) {
-          pushError(
-            "Für ein Commander-Deck muss zuerst ein Commander aus deiner Sammlung gewählt werden."
-          );
-        }
-
-        for (const group of groups) {
-          const counts =
-            collectorNumberCounts(
-              group.numbers
-            );
-
-          const lookup =
-            await getCardsBySetAndCollectorNumbers(
-              group.setCode,
-              Array.from(
-                counts.keys()
-              )
-            );
-
-          const byCollectorNumber =
-            new Map(
-              lookup.cards.map(
-                card => [
-                  card.collector_number
-                    .toLowerCase(),
-                  card
-                ] as const
-              )
-            );
-
-          for (
-            const [
-              collectorNumber,
-              count
-            ] of counts
-          ) {
-            const rowErrors: string[] = [];
-            const scryfallCard =
-              byCollectorNumber.get(
-                collectorNumber
-              );
-
-            if (!scryfallCard) {
-              const message =
-                `${group.setCode.toUpperCase()} #${collectorNumber}: in diesem Set nicht gefunden.`;
-              rowErrors.push(message);
-              pushError(message);
-              rows.push({
-                setCode: group.setCode,
-                collectorNumber,
-                count,
-                errors: rowErrors
-              });
-              continue;
-            }
-
-            const ownedSource =
-              pool.find(
-                card =>
-                  card.id ===
-                    scryfallCard.id ||
-                  (
-                    card.oracleId ===
-                      scryfallCard.oracle_id &&
-                    card.set.toLowerCase() ===
-                      scryfallCard.set.toLowerCase() &&
-                    card.collectorNumber.toLowerCase() ===
-                      scryfallCard.collector_number.toLowerCase()
-                  )
-              );
-
-            const finishes =
-              availableFinishes(
-                scryfallCard
-              );
-            const defaultFinish:
-              CardFinish | undefined =
-                finishes.includes(
-                  "nonfoil"
-                )
-                  ? "nonfoil"
-                  : finishes.includes(
-                      "foil"
-                    )
-                    ? "foil"
-                    : undefined;
-
-            if (!defaultFinish) {
-              const message =
-                `${group.setCode.toUpperCase()} #${scryfallCard.collector_number} ${scryfallCard.name}: Scryfall meldet kein unterstütztes Finish.`;
-              rowErrors.push(message);
-              pushError(message);
-              rows.push({
-                setCode: group.setCode,
-                collectorNumber:
-                  scryfallCard.collector_number,
-                count,
-                name: scryfallCard.name,
-                errors: rowErrors
-              });
-              continue;
-            }
-
-            const normalized =
-              normalizeCard(
-                scryfallCard,
-                Math.max(
-                  count,
-                  ownedSource?.count ?? 0
-                ),
-                defaultFinish === "foil"
-              );
-
-            const source: CardRecord =
-              ownedSource
-                ? {
-                    ...ownedSource,
-                    availableFinishes:
-                      normalized.availableFinishes,
-                    priceEur:
-                      normalized.priceEur ??
-                      ownedSource.priceEur,
-                    priceEurFoil:
-                      normalized.priceEurFoil ??
-                      ownedSource.priceEurFoil,
-                    priceUpdatedAt:
-                      normalized.priceUpdatedAt,
-                    gameChanger:
-                      normalized.gameChanger ??
-                      ownedSource.gameChanger
-                  }
-                : normalized;
-
-            sourceById.set(
-              source.id,
-              source
-            );
-
-            if (
-              commander &&
-              source.name.toLowerCase() ===
-                commander.name.toLowerCase()
-            ) {
-              const message =
-                `${source.name}: der gewählte Commander darf nicht zusätzlich im Hauptdeck stehen.`;
-              rowErrors.push(message);
-              pushError(message);
-            }
-
-            const legal =
-              bulkDeckFormat ===
-                "standard"
-                ? cardLegalForDeck(
-                    source,
-                    "standard"
-                  )
-                : commander
-                  ? cardLegalForDeck(
-                      source,
-                      "commander",
-                      commanderColors
-                    )
-                  : true;
-
-            if (!legal) {
-              const message =
-                bulkDeckFormat ===
-                  "commander"
-                  ? `${source.name}: im Commander-Format bzw. mit der Farbidentität des Commanders nicht erlaubt.`
-                  : `${source.name}: im Standard-Format nicht erlaubt.`;
-              rowErrors.push(message);
-              pushError(message);
-            }
-
-            const existing =
-              mainCards.find(
-                card =>
-                  card.id === source.id
-              );
-
-            if (existing) {
-              existing.count += count;
-              existing.available =
-                Math.max(
-                  existing.available,
-                  existing.count,
-                  source.count
-                );
-            } else {
-              mainCards.push({
-                id: source.id,
-                name: source.name,
-                count,
-                manaValue:
-                  source.manaValue,
-                typeLine:
-                  source.typeLine,
-                role: "Bulk",
-                reason:
-                  "Per Set und Collector Number hinzugefügt.",
-                available:
-                  Math.max(
-                    source.count,
-                    count
-                  )
-              });
-            }
-
-            resolvedCards += count;
-            rows.push({
-              setCode: group.setCode,
-              collectorNumber:
-                scryfallCard.collector_number,
-              count,
-              name: source.name,
-              errors: rowErrors
-            });
-          }
-        }
-
-        const totalByName =
-          mainCards.reduce<
-            Record<string, number>
-          >(
-            (result, card) => {
-              const key =
-                card.name.toLowerCase();
-              result[key] =
-                (result[key] ?? 0) +
-                card.count;
-              return result;
-            },
-            {}
-          );
-
-        for (const card of mainCards) {
-          const source =
-            sourceById.get(
-              card.id
-            ) ??
-            pool.find(
-              item =>
-                item.id === card.id
-            );
-
-          if (!source) {
-            continue;
-          }
-
-          const totalForName =
-            totalByName[
-              card.name.toLowerCase()
-            ] ?? 0;
-          const ruleLimit =
-            deckCopyLimit(
-              source,
-              bulkDeckFormat
-            );
-
-          if (totalForName > ruleLimit) {
-            const limitLabel =
-              Number.isFinite(ruleLimit)
-                ? String(ruleLimit)
-                : "beliebig";
-            pushError(
-              `${card.name}: insgesamt ${totalForName} Exemplare eingegeben, erlaubt sind höchstens ${limitLabel}.`
-            );
-          }
-        }
-
-        const collectionUpdates:
-          CardRecord[] = [];
-        let addedCopies = 0;
-
-        for (const deckCard of mainCards) {
-          const source =
-            sourceById.get(
-              deckCard.id
-            );
-
-          if (!source) {
-            continue;
-          }
-
-          const owned =
-            pool.find(
-              card =>
-                card.id ===
-                  deckCard.id
-            );
-          const ownedCount =
-            owned?.count ?? 0;
-
-          // Jede per Deck-Bulk eingegebene Hauptdeck-Karte
-          // wird zusätzlich zur Sammlung übernommen – auch wenn
-          // bereits Exemplare dieser Ausgabe vorhanden sind.
-          const addCount =
-            deckCard.count;
-
-          const finishes =
-            source.availableFinishes ?? [];
-          const finish:
-            CardFinish =
-              finishes.includes(
-                "nonfoil"
-              )
-                ? "nonfoil"
-                : "foil";
-
-          if (owned) {
-            const counts =
-              finishCountsFor(
-                owned
-              );
-            const nextCounts = {
-              ...counts,
-              [finish]:
-                counts[finish] +
-                addCount
-            };
-
-            collectionUpdates.push({
-              ...source,
-              ...owned,
-              count:
-                ownedCount +
-                addCount,
-              finishCounts:
-                nextCounts,
-              availableFinishes:
-                source.availableFinishes,
-              priceEur:
-                source.priceEur ??
-                owned.priceEur,
-              priceEurFoil:
-                source.priceEurFoil ??
-                owned.priceEurFoil,
-              priceUpdatedAt:
-                source.priceUpdatedAt,
-              gameChanger:
-                source.gameChanger ??
-                owned.gameChanger,
-              foil:
-                legacyFoilFlag(
-                  nextCounts
-                ),
-              updatedAt:
-                Date.now()
-            });
-          } else {
-            const counts = {
-              nonfoil: 0,
-              foil: 0
-            };
-            counts[finish] =
-              addCount;
-
-            collectionUpdates.push({
-              ...source,
-              count: addCount,
-              finishCounts: counts,
-              foil:
-                finish === "foil",
-              updatedAt:
-                Date.now()
-            });
-          }
-
-          addedCopies += addCount;
-        }
-
-        if (addedCopies > 0) {
-          warnings.push(
-            `${addedCopies} Karte${addedCopies === 1 ? "" : "n"} aus dem Bulk-Deck ${addedCopies === 1 ? "wird" : "werden"} zusätzlich zur Sammlung übernommen. Der Commander wird dabei nicht erneut hinzugefügt.`
-          );
-        }
-
-        const requestedMain =
-          groups.reduce(
-            (sum, group) =>
-              sum + group.numbers.length,
-            0
-          );
-
-        const requestedTotal =
-          requestedMain +
-          (
-            bulkDeckFormat ===
-              "commander" &&
-            commander
-              ? 1
-              : 0
-          );
-
-        const targetSize =
-          bulkDeckFormat ===
-            "commander"
-            ? 100
-            : 60;
-
-        if (requestedTotal > targetSize) {
-          pushError(
-            bulkDeckFormat ===
-              "commander"
-              ? `Das Commander-Deck hätte ${requestedTotal} Karten inklusive Commander. Erlaubt sind genau 100.`
-              : `Das Standard-Deck hätte ${requestedTotal} Karten. Für den Bulk-Import sind maximal 60 Karten vorgesehen.`
-          );
-        } else if (requestedTotal < targetSize) {
-          warnings.push(
-            bulkDeckFormat ===
-              "commander"
-              ? `Das Deck ist noch unvollständig: ${targetSize - requestedTotal} Karten fehlen bis 100 inklusive Commander.`
-              : `Das Deck ist noch unvollständig: ${targetSize - requestedTotal} Karten fehlen bis 60.`
-          );
-        }
-
-        const colors =
-          bulkDeckFormat ===
-            "commander"
-            ? commanderColors
-            : Array.from(
-                new Set(
-                  mainCards.flatMap(
-                    deckCard =>
-                      sourceById.get(
-                        deckCard.id
-                      )?.colorIdentity ??
-                      []
-                  )
-                )
-              );
-
-        const now = Date.now();
-        const usedSets =
-          Array.from(
-            new Set(
-              groups.map(
-                group =>
-                  group.setCode.toUpperCase()
-              )
-            )
-          );
-
-        const deck: DeckRecord = {
-          id: crypto.randomUUID(),
-          name:
-            bulkDeckName.trim() ||
-            "Bulk-Deck",
-          format: bulkDeckFormat,
-          commanderIds:
-            commander
-              ? [commander.id]
-              : [],
-          cards: mainCards,
-          sideboard: [],
-          colors,
-          createdAt: now,
-          updatedAt: now,
-          notes:
-            `Bulk-Deck aus ${usedSets.length} Set${usedSets.length === 1 ? "" : "s"} (${usedSets.join(", ")}) über Collector Numbers erstellt.`
-        };
-
-        setBulkDeckPreview({
-          deck,
-          rows,
-          requestedCards:
-            requestedMain,
-          resolvedCards,
-          collectionUpdates,
-          addedCopies,
-          errors,
-          warnings
-        });
-      } catch (error) {
-        console.error(
-          "Bulk-Deck konnte nicht geprüft werden:",
-          error
-        );
-        alert(
-          "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden."
-        );
-      } finally {
-        setBulkDeckBusy(false);
-      }
-    };
-
-  const applyBulkDeck =
-    async () => {
-      if (
-        !bulkDeckPreview ||
-        bulkDeckPreview.errors.length >
-          0 ||
-        bulkDeckPreview.resolvedCards ===
-          0
-      ) {
-        return;
-      }
-
-      setBulkDeckBusy(true);
-
-      try {
-        await onBulkSave(
-          bulkDeckPreview.deck,
-          bulkDeckPreview.collectionUpdates
-        );
-
-        closeBulkDeck();
-      } catch (error) {
-        console.error(
-          "Bulk-Deck konnte nicht gespeichert werden:",
-          error
-        );
-
-        alert(
-          "Das Bulk-Deck konnte nicht vollständig gespeichert werden. Bereits geschriebene Sammlungsänderungen wurden soweit möglich zurückgesetzt. Bitte versuche es erneut."
-        );
-      } finally {
-        setBulkDeckBusy(false);
-      }
-    };
-
-  const analyzeSavedDeck =
-    async (
-      deck: DeckRecord
-    ) => {
-      if (
-        demoMode ||
-        deck.cards.length === 0 ||
-        aiBusyDeckId
-      ) {
-        return;
-      }
-
-      setAiBusyDeckId(
-        deck.id
-      );
-
-      setAnalysisByDeckId(
-        current => ({
-          ...current,
-          [deck.id]: ""
-        })
-      );
-
-      const deckForAnalysis =
-        deckForAiAnalysis(
-          deck,
-          pool
-        );
-
-      try {
-        const text =
-          await generateAiDeckExplanation(
-            deckForAnalysis
-          );
-
-        setAnalysisByDeckId(
-          current => ({
-            ...current,
-            [deck.id]: text
-          })
-        );
-      } catch (error) {
-        console.error(
-          "KI-Analyse fehlgeschlagen:",
-          error
-        );
-
-        const fallback =
-          generateDeckExplanation(
-            deckForAnalysis
-          );
-
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : "Unbekannter Fehler bei der KI-Analyse.";
-
-        setAnalysisByDeckId(
-          current => ({
-            ...current,
-            [deck.id]:
-              fallback +
-              "\n\n---\n\n" +
-              "### ⚠️ Generative KI nicht verfügbar\n\n" +
-              errorMessage +
-              "\n\nDie lokale Deckanalyse wird deshalb als Fallback angezeigt."
-          })
-        );
-      } finally {
-        setAiBusyDeckId(
-          null
-        );
-      }
-    };
 
   if (editing) {
     return (
@@ -5834,894 +4960,95 @@ function Decks({
         deck={editing}
         pool={pool}
         demoMode={demoMode}
-        onBack={() =>
-          setEditing(null)
-        }
-        onSave={async d => {
-          await onSave(d);
+        onBack={() => setEditing(null)}
+        onSave={async deck => {
+          await onSave(deck);
           setEditing(null);
         }}
       />
     );
   }
 
-  return (
-    <section>
-      <div className="pagehead">
-        <div>
-          <h2>
-            Gespeicherte Decks
-          </h2>
+  if (!selectedDeckId) {
+    return <DeckLibrary decks={decks} pool={pool} onOpenDeck={onOpenDeck} />;
+  }
 
-          <p className="muted">
-            {decks.length} Decks
-          </p>
-        </div>
-
-        <div className="row">
-          <button
-            className="primary"
-            onClick={
-              newManualDeck
-            }
-          >
-            + Deck manuell erstellen
-          </button>
-
-          <button
-            className="secondary"
-            onClick={toggleBulkDeck}
-          >
-            Bulk-Deck erstellen
-          </button>
-
-        </div>
-      </div>
-
-
-      {showBulkDeck && (
-        <div className="panel">
-          <h3>
-            Bulk-Deck erstellen
-          </h3>
-
-          <p className="muted">
-            Wähle Format und Set und gib anschließend nur die Collector Numbers ein. Doppelte Nummern zählen als mehrere Exemplare. Alle Karten des Hauptdecks werden beim Speichern zusätzlich zur Sammlung hinzugefügt. Der Commander muss bereits in der Sammlung vorhanden sein und wird nicht erneut hinzugefügt. Das Deck wird außerdem gegen die Formatregeln geprüft.
-          </p>
-
-          <div className="two">
-            <label>
-              Deckname
-
-              <input
-                value={bulkDeckName}
-                onChange={e => {
-                  setBulkDeckName(
-                    e.target.value
-                  );
-                  setBulkDeckPreview(
-                    null
-                  );
-                }}
-                placeholder="Bulk-Deck"
-              />
-            </label>
-
-            <label>
-              Format
-
-              <select
-                value={bulkDeckFormat}
-                onChange={e => {
-                  const format =
-                    e.target
-                      .value as Format;
-
-                  setBulkDeckFormat(
-                    format
-                  );
-
-                  if (
-                    format ===
-                    "standard"
-                  ) {
-                    setBulkDeckCommanderId(
-                      ""
-                    );
-                  }
-
-                  setBulkDeckPreview(
-                    null
-                  );
-                }}
-              >
-                <option value="standard">
-                  Standard
-                </option>
-                <option value="commander">
-                  Commander
-                </option>
-              </select>
-            </label>
-          </div>
-
-          {bulkDeckFormat ===
-            "commander" && (
-            <label>
-              Commander
-              <select
-                value={bulkDeckCommanderId}
-                onChange={e => {
-                  setBulkDeckCommanderId(
-                    e.target.value
-                  );
-                  setBulkDeckPreview(null);
-                }}
-              >
-                <option value="">
-                  — Commander wählen —
-                </option>
-                {bulkCommanderOptions.map(
-                  card => (
-                    <option
-                      key={card.id}
-                      value={card.id}
-                    >
-                      {card.name}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-          )}
-
-        <div className="deck-list">
-  {bulkDeckGroups.map(
-    (group, index) => (
-      <div
-        className="panel"
-        key={group.id}
-      >
-        <div className="two">
-          <label>
-            Set {index + 1}
-            <select
-              value={group.setCode}
-              onChange={e => {
-                const value =
-                  e.target.value;
-
-                setBulkDeckGroups(
-                  current =>
-                    current.map(
-                      item =>
-                        item.id ===
-                        group.id
-                          ? {
-                              ...item,
-                              setCode:
-                                value
-                            }
-                          : item
-                    )
-                );
-
-                setBulkDeckPreview(null);
-              }}
-              disabled={bulkDeckSetsBusy}
-            >
-              <option value="">
-                {bulkDeckSetsBusy
-                  ? "Sets werden geladen…"
-                  : "— Set auswählen —"}
-              </option>
-
-              {[...bulkDeckSets]
-                .sort((a, b) =>
-                  a.name.localeCompare(
-                    b.name,
-                    "de",
-                    {
-                      sensitivity: "base"
-                    }
-                  )
-                )
-                .map(
-                  set => (
-                    <option
-                      key={set.id}
-                      value={set.code}
-                    >
-                      {set.name} ({set.code.toUpperCase()})
-                    </option>
-                  )
-                )}
-            </select>
-          </label>
-
-                    <label>
-                      Collector Numbers
-                      <textarea
-                        value={group.numbers}
-                        onChange={e => {
-                          const value =
-                            e.target.value;
-                          setBulkDeckGroups(
-                            current =>
-                              current.map(
-                                item =>
-                                  item.id ===
-                                  group.id
-                                    ? {
-                                        ...item,
-                                        numbers:
-                                          value
-                                      }
-                                    : item
-                              )
-                          );
-                          setBulkDeckPreview(null);
-                        }}
-                        rows={4}
-                        placeholder="z. B. 12, 18, 23, 56"
-                      />
-                    </label>
-                  </div>
-
-                  {bulkDeckGroups.length > 1 && (
-                    <button
-                      className="danger ghost"
-                      onClick={() => {
-                        setBulkDeckGroups(
-                          current =>
-                            current.filter(
-                              item =>
-                                item.id !==
-                                group.id
-                            )
-                        );
-                        setBulkDeckPreview(null);
-                      }}
-                    >
-                      Set-Block entfernen
-                    </button>
-                  )}
-                </div>
-              )
-            )}
-          </div>
-
-          <button
-            className="secondary"
-            onClick={() => {
-              setBulkDeckGroups(
-                current => [
-                  ...current,
-                  {
-                    id: crypto.randomUUID(),
-                    setCode: "",
-                    numbers: ""
-                  }
-                ]
-              );
-              setBulkDeckPreview(null);
-            }}
-          >
-            + weiteres Set
-          </button>
-
-          {bulkDeckFormat ===
-            "commander" && (
-            <p className="muted">
-              Der Commander wird separat gewählt und zählt nicht zu den eingegebenen Collector Numbers. Doppelte Karten, die das Commander-Copy-Limit überschreiten, werden als Fehler markiert.
-            </p>
-          )}
-
-          <div className="row">
-            <button
-              className="primary"
-              onClick={() =>
-                void previewBulkDeck()
-              }
-              disabled={
-                bulkDeckBusy ||
-                !bulkDeckGroups.some(
-                  group =>
-                    group.setCode &&
-                    parseCollectorNumbers(
-                      group.numbers
-                    ).length > 0
-                ) ||
-                (
-                  bulkDeckFormat ===
-                    "commander" &&
-                  !bulkDeckCommanderId
-                )
-              }
-            >
-              {bulkDeckBusy
-                ? "Deck wird geprüft…"
-                : "Bulk-Deck prüfen"}
-            </button>
-
-            <button
-              className="secondary"
-              onClick={closeBulkDeck}
-              disabled={bulkDeckBusy}
-            >
-              Abbrechen
-            </button>
-          </div>
-
-          {bulkDeckPreview && (
-            <div className="ai-box">
-              <h3>
-                Bulk-Deck-Prüfung
-              </h3>
-
-              <p>
-                Format: {" "}
-                <strong>
-                  {bulkDeckPreview.deck.format ===
-                  "commander"
-                    ? "Commander"
-                    : "Standard"}
-                </strong>
-                <br />
-                Eingegebene Karten: {" "}
-                <strong>
-                  {bulkDeckPreview.requestedCards}
-                </strong>
-                <br />
-                Erfolgreich aufgelöst: {" "}
-                <strong>
-                  {bulkDeckPreview.resolvedCards}
-                </strong>
-                <br />
-                Automatisch zur Sammlung: {" "}
-                <strong>
-                  {bulkDeckPreview.addedCopies}
-                </strong>
-                <br />
-                Deckgröße inklusive Commander: {" "}
-                <strong>
-                  {bulkDeckPreview.requestedCards +
-                    bulkDeckPreview.deck.commanderIds.length}
-                </strong>
-              </p>
-
-              <div className="deck-list">
-                {bulkDeckPreview.rows.map(
-                  row => (
-                    <div
-                      key={`${row.setCode}-${row.collectorNumber}`}
-                    >
-                      <span>
-                        {row.setCode.toUpperCase()} #{row.collectorNumber}
-                        {row.name
-                          ? ` · ${row.name}`
-                          : " · nicht gefunden"}
-                        {row.errors.length >
-                          0
-                          ? " · ✕"
-                          : " · ✓"}
-                      </span>
-
-                      <strong>
-                        {row.count}×
-                      </strong>
-                    </div>
-                  )
-                )}
-              </div>
-
-              {bulkDeckPreview.errors.length >
-                0 && (
-                <div className="error">
-                  <strong>
-                    Fehler – Speichern ist noch nicht möglich:
-                  </strong>
-
-                  <div className="deck-list">
-                    {bulkDeckPreview.errors.map(
-                      (
-                        error,
-                        index
-                      ) => (
-                        <div
-                          key={`${error}-${index}`}
-                        >
-                          <span>
-                            {error}
-                          </span>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {bulkDeckPreview.warnings.length >
-                0 && (
-                <div className="notice">
-                  <strong>
-                    Hinweise:
-                  </strong>
-
-                  <div className="deck-list">
-                    {bulkDeckPreview.warnings.map(
-                      (
-                        warning,
-                        index
-                      ) => (
-                        <div
-                          key={`${warning}-${index}`}
-                        >
-                          <span>
-                            {warning}
-                          </span>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="row">
-                <button
-                  className="primary"
-                  onClick={() =>
-                    void applyBulkDeck()
-                  }
-                  disabled={
-                    bulkDeckBusy ||
-                    bulkDeckPreview.resolvedCards ===
-                      0 ||
-                    bulkDeckPreview.errors.length >
-                      0
-                  }
-                >
-                  Bulk-Deck speichern
-                </button>
-
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    setBulkDeckPreview(
-                      null
-                    )
-                  }
-                  disabled={bulkDeckBusy}
-                >
-                  Eingabe bearbeiten
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="deck-grid">
-  {decks.map(d=>{
-    const stats=
-      deckStats(d);
-
-    const totalMain=
-      d.cards.reduce(
-        (sum,card)=>sum+card.count,
-        0
-      );
-
-    const totalWithCommanders=
-      totalMain+
-      (
-        d.format==="commander"
-          ?d.commanderIds.length
-          :0
-      );
-
-    const commanders=
-      d.commanderIds
-        .map(
-          id=>
-            pool.find(
-              card=>card.id===id
-            )
-        )
-        .filter(
-          (card):card is CardRecord=>
-            Boolean(card)
-        );
-
-    const roleCounts=
-      d.cards.reduce<
-        Record<string,number>
-      >(
-        (counts,deckCard)=>{
-          const source=
-            pool.find(
-              card=>card.id===deckCard.id
-            );
-
-          const role=
-            deckCard.role &&
-            deckCard.role!=="Manuell"
-              ?deckCard.role
-              :source
-                ?roleOf(source)
-                :"Sonstiges";
-
-          counts[role]=
-            (counts[role]??0)+
-            deckCard.count;
-
-          return counts;
-        },
-        {}
-      );
-
-    const roles=
-      Object.entries(
-        roleCounts
-      )
-        .sort(
-          (a,b)=>
-            b[1]-a[1]
-        );
-
-    const curve=
-      deckManaCurve(d);
-
-    const maxCurve=
-      Math.max(
-        1,
-        ...curve.map(
-          item=>item.count
-        )
-      );
-
-    const bracketEstimate =
-      commanderBracketEstimate(
-        d,
-        pool
-      );
-
-    const localAnalysis =
-      localDeckAnalysis(
-        d,
-        pool
-      );
-
+  if (!selectedDeck) {
     return (
-      <article
-        className="panel saved-deck-card"
-        key={d.id}
-      >
-        <style>{`
-          .saved-deck-card{
-            display:flex;
-            flex-direction:column;
-            gap:14px;
-          }
+      <section>
+        <div className="pagehead">
+          <button type="button" className="secondary" onClick={onCloseDeck}>
+            ← Zurück zu Decks
+          </button>
+        </div>
+        <div className="panel empty-state">
+          <h2>Deck nicht gefunden</h2>
+          <p className="muted">
+            Das angeforderte Deck existiert nicht mehr oder konnte nicht geladen werden.
+          </p>
+        </div>
+      </section>
+    );
+  }
 
-          .saved-deck-head{
-            display:flex;
-            justify-content:space-between;
-            align-items:flex-start;
-            gap:12px;
-          }
+  const stats = deckStats(selectedDeck);
+  const totalMain = selectedDeck.cards.reduce((sum, card) => sum + card.count, 0);
+  const totalCards =
+    totalMain +
+    (selectedDeck.format === "commander" ? selectedDeck.commanderIds.length : 0);
+  const commanders = selectedDeck.commanderIds
+    .map(id => pool.find(card => card.id === id))
+    .filter((card): card is CardRecord => Boolean(card));
+  const bracketEstimate = commanderBracketEstimate(selectedDeck, pool);
+  const analysis = analysisByDeckId[selectedDeck.id];
 
-          .saved-deck-head h3{
-            margin:0 0 4px;
-          }
+  return (
+    <section className="deck-detail-page">
+      <div className="pagehead deck-detail-pagehead">
+        <button type="button" className="secondary" onClick={onCloseDeck}>
+          ← Zurück zu Decks
+        </button>
 
-          .saved-commander{
-            padding:10px 12px;
-            border:1px solid rgba(214,173,88,.3);
-            border-radius:10px;
-            background:rgba(214,173,88,.055);
-          }
-
-          .saved-commander strong{
-            display:block;
-            margin-bottom:5px;
-          }
-
-          .saved-role-list{
-            display:flex;
-            flex-wrap:wrap;
-            gap:6px;
-          }
-
-          .saved-role-list span{
-            padding:5px 8px;
-            border:1px solid rgba(85,215,229,.16);
-            border-radius:999px;
-            background:rgba(85,215,229,.05);
-            font-size:11px;
-          }
-
-          .mini-curve{
-            display:grid;
-            grid-template-columns:repeat(8,1fr);
-            gap:5px;
-            align-items:end;
-            min-height:95px;
-          }
-
-          .mini-curve-column{
-            display:grid;
-            grid-template-rows:1fr auto auto;
-            align-items:end;
-            text-align:center;
-            min-width:0;
-          }
-
-          .mini-curve-bar-wrap{
-            height:58px;
-            display:flex;
-            align-items:flex-end;
-            justify-content:center;
-          }
-
-          .mini-curve-bar{
-            width:70%;
-            min-height:2px;
-            border-radius:4px 4px 0 0;
-            background:currentColor;
-            opacity:.72;
-          }
-
-          .mini-curve-count{
-            font-size:10px;
-            font-weight:700;
-          }
-
-          .mini-curve-label{
-            font-size:10px;
-            color:var(--muted);
-          }
-        `}</style>
-
-        <div className="saved-deck-head">
-          <div>
-            <h3>{d.name}</h3>
-
-            <div className="meta">
-              {d.format==="commander"
-                ?"Commander"
-                :"Standard"
-              }
-              {" · "}
-              {totalWithCommanders} Karten
-              {bracketEstimate && (
-                <>
-                  {" · "}
-                  {bracketEstimate.label}
-                </>
-              )}
-            </div>
-          </div>
-
-          {typeof d.score==="number"&&
-            <strong>
-              Score {d.score}
-            </strong>
-          }
+        <div className="deck-detail-title">
+          <h2>{selectedDeck.name}</h2>
+          <p className="muted">
+            {selectedDeck.format === "commander" ? "Commander" : "Standard"}
+            {commanders.length > 0 ? ` · ${commanders.map(card => card.name).join(" + ")}` : ""}
+          </p>
         </div>
 
-        {commanders.length>0&&
-          <div className="saved-commander">
-            <strong>
-              {commanders.length===1
-                ?"Commander"
-                :"Commander"
-              }
-            </strong>
-
-            {commanders
-              .map(card=>card.name)
-              .join(" + ")
-            }
-          </div>
-        }
-
-        <div className="stats">
-          <div>
-            <strong>
-              {totalWithCommanders}
-            </strong>
-
-            <span>
-              Karten gesamt
-            </span>
-          </div>
-
-          <div>
-            <strong>
-              {stats.lands}
-            </strong>
-
-            <span>
-              Länder
-            </span>
-          </div>
-
-          <div>
-            <strong>
-              {stats.nonland}
-            </strong>
-
-            <span>
-              Nichtländer
-            </span>
-          </div>
-
-          <div>
-            <strong>
-              {stats.averageManaValue}
-            </strong>
-
-            <span>
-              Ø Mana Value
-            </span>
-          </div>
-        </div>
-
-        {roles.length>0&&
-          <div>
-            <strong>
-              Kartenrollen
-            </strong>
-
-            <div className="saved-role-list">
-              {roles.map(
-                ([role,count])=>
-                  <span key={role}>
-                    {role}: {count}
-                  </span>
-              )}
-            </div>
-          </div>
-        }
-
-        <div>
-          <strong>
-            Mana-Kurve
-          </strong>
-
-          <div className="mini-curve">
-            {curve.map(item=>{
-              const height=
-                item.count===0
-                  ?2
-                  :Math.max(
-                      6,
-                      item.count/maxCurve*100
-                    );
-
-              return (
-                <div
-                  className="mini-curve-column"
-                  key={item.label}
-                >
-                  <div className="mini-curve-bar-wrap">
-                    <div
-                      className="mini-curve-bar"
-                      style={{
-                        height:`${height}%`
-                      }}
-                    />
-                  </div>
-
-                  <span className="mini-curve-count">
-                    {item.count}
-                  </span>
-
-                  <span className="mini-curve-label">
-                    {item.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <details>
-          <summary>
-            Lokale Deckanalyse
-          </summary>
-
-          <div className="stats">
-            <div>
-              <strong>{localAnalysis.lands}</strong>
-              <span>Länder</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.creatures}</strong>
-              <span>Kreaturen</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.ramp}</strong>
-              <span>Ramp</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.cardAdvantage}</strong>
-              <span>Card Advantage</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.interaction}</strong>
-              <span>Interaction</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.averageManaValue}</strong>
-              <span>Ø Mana Value</span>
-            </div>
-          </div>
-
-          <div className="deck-list">
-            {localAnalysis.warnings.map(
-              warning => (
-                <div key={warning}>
-                  <span>{warning}</span>
-                </div>
-              )
-            )}
-          </div>
-        </details>
-
-        <div className="row">
+        <div className="row deck-detail-actions">
           <button
             className="secondary"
-            onClick={() =>
-              void analyzeSavedDeck(
-                d
-              )
-            }
-            disabled={
-              Boolean(
-                aiBusyDeckId
-              ) ||
-              demoMode ||
-              d.cards.length === 0
-            }
+            type="button"
+            onClick={() => void analyzeSavedDeck(selectedDeck)}
+            disabled={Boolean(aiBusyDeckId) || demoMode || selectedDeck.cards.length === 0}
             title={
               demoMode
                 ? "Die generative KI benötigt eine Firebase-Anmeldung."
-                : d.cards.length === 0
+                : selectedDeck.cards.length === 0
                   ? "Für ein leeres Deck ist keine Analyse sinnvoll."
                   : undefined
             }
           >
-            {aiBusyDeckId ===
-            d.id
-              ? "KI analysiert…"
-              : "KI analysieren"}
+            {aiBusyDeckId === selectedDeck.id ? "KI analysiert…" : "KI analysieren"}
           </button>
 
-          <button
-            className="primary"
-            onClick={()=>setEditing(d)}
-          >
+          <button className="primary" type="button" onClick={() => setEditing(selectedDeck)}>
             Bearbeiten
           </button>
 
           <button
             className="secondary"
+            type="button"
             onClick={() => {
-              const now =
-                Date.now();
-
+              const now = Date.now();
               void onSave({
-                ...d,
-                id:
-                  crypto.randomUUID(),
-                name:
-                  `${d.name} – Kopie`,
-                createdAt:
-                  now,
-                updatedAt:
-                  now
+                ...selectedDeck,
+                id: crypto.randomUUID(),
+                name: `${selectedDeck.name} – Kopie`,
+                createdAt: now,
+                updatedAt: now
               });
             }}
           >
@@ -6730,41 +5057,70 @@ function Decks({
 
           <button
             className="secondary"
-            onClick={()=>download(
-              `${d.name}.txt`,
-              deckText(d,pool)
-            )}
+            type="button"
+            onClick={() => download(`${selectedDeck.name}.txt`, deckText(selectedDeck, pool))}
           >
             Export
           </button>
 
           <button
             className="danger ghost"
-            onClick={()=>onDelete(d.id)}
+            type="button"
+            onClick={() => {
+              if (window.confirm(`Deck „${selectedDeck.name}“ wirklich löschen?`)) {
+                void onDelete(selectedDeck.id).then(onCloseDeck);
+              }
+            }}
           >
             Löschen
           </button>
         </div>
+      </div>
 
-        {analysisByDeckId[
-          d.id
-        ] && (
-          <div className="ai-box analysis-box markdown-content">
-            <ReactMarkdown
-              remarkPlugins={[
-                remarkGfm
-              ]}
-            >
-              {analysisByDeckId[
-                d.id
-              ]}
-            </ReactMarkdown>
+      <div className="deck-detail-summary panel">
+        <div className="stats deck-detail-stats">
+          <div>
+            <strong>{totalCards}</strong>
+            <span>Karten gesamt</span>
           </div>
-        )}
-      </article>
-    );
-  })}
-</div>
+          <div>
+            <strong>{stats.lands}</strong>
+            <span>Länder</span>
+          </div>
+          <div>
+            <strong>{stats.nonland}</strong>
+            <span>Nichtländer</span>
+          </div>
+          <div>
+            <strong>{stats.averageManaValue}</strong>
+            <span>Ø Mana Value</span>
+          </div>
+          {typeof selectedDeck.score === "number" && (
+            <div>
+              <strong>{selectedDeck.score}</strong>
+              <span>Deck-Score</span>
+            </div>
+          )}
+          {bracketEstimate && (
+            <div>
+              <strong>{bracketEstimate.bracket}</strong>
+              <span>Commander-Bracket</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <DeckBoard deck={selectedDeck} pool={pool} onCardClick={setSelectedCard} />
+
+      {analysis && (
+        <div className="ai-box analysis-box markdown-content deck-detail-analysis">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysis}</ReactMarkdown>
+        </div>
+      )}
+
+      {selectedCard && (
+        <CardDetailsModal card={selectedCard} onClose={() => setSelectedCard(null)} />
+      )}
     </section>
   );
 }
@@ -6809,6 +5165,11 @@ function DeckEditor({
     useState<string | null>(
       null
     );
+
+  const [manualSearch, setManualSearch] = useState("");
+  const [manualColors, setManualColors] = useState<string[]>([]);
+  const [manualTypes, setManualTypes] = useState<string[]>([]);
+  const [manualSet, setManualSet] = useState("");
 
   const previewCard =
     previewCardId
@@ -6917,12 +5278,6 @@ function DeckEditor({
       pool
     );
 
-  const localAnalysis =
-    localDeckAnalysis(
-      d,
-      pool
-    );
-
   const commanderMainTarget =
     100 -
     Math.max(
@@ -6968,6 +5323,55 @@ function DeckEditor({
     pool.filter(
       isSourceLegal
     );
+
+  const manualSetOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          legalPool.map(card => [
+            card.set.toLowerCase(),
+            card.setName ? `${card.setName} (${card.set.toUpperCase()})` : card.set.toUpperCase()
+          ])
+        ).entries()
+      ).sort((a, b) => a[1].localeCompare(b[1], "de")),
+    [legalPool]
+  );
+
+  const manualFilteredPool = useMemo(() => {
+    const search = manualSearch.trim().toLowerCase();
+
+    const typeMatches = (card: CardRecord) => {
+      if (manualTypes.length === 0) return true;
+      const typeLine = card.typeLine ?? "";
+      return manualTypes.some(type => new RegExp(`\\b${type}\\b`, "i").test(typeLine));
+    };
+
+    const colorMatches = (card: CardRecord) => {
+      if (manualColors.length === 0) return true;
+      const identity = card.colorIdentity ?? card.colors ?? [];
+      return manualColors.some(color =>
+        color === "C" ? identity.length === 0 : identity.includes(color)
+      );
+    };
+
+    return legalPool.filter(card =>
+      (!search || card.name.toLowerCase().includes(search)) &&
+      typeMatches(card) &&
+      colorMatches(card) &&
+      (!manualSet || card.set.toLowerCase() === manualSet)
+    );
+  }, [legalPool, manualColors, manualSearch, manualSet, manualTypes]);
+
+  const toggleManualFilter = (
+    value: string,
+    setValues: Dispatch<SetStateAction<string[]>>
+  ) => {
+    setValues(current =>
+      current.includes(value)
+        ? current.filter(item => item !== value)
+        : [...current, value]
+    );
+  };
 
   const illegalCards =
     all.filter(
@@ -7476,10 +5880,16 @@ function DeckEditor({
         </div>
       </div>
 
-      <div className="panel">
-        <h3>
-          Deck-Einstellungen
-        </h3>
+      <details className="panel manual-settings-panel" open>
+        <summary className="manual-settings-summary">
+          <span>
+            <strong>Deck-Einstellungen</strong>
+            <small>Name, Format, Commander und Regelchecks</small>
+          </span>
+          <span className="manual-settings-toggle">Ein-/ausklappen</span>
+        </summary>
+
+        <div className="manual-settings-content">
 
         <div className="two">
           <label>
@@ -7746,61 +6156,6 @@ function DeckEditor({
             </div>
           )}
 
-        <div className="ai-box">
-          <strong>
-            Lokale Deckanalyse
-          </strong>
-
-          <div className="muted">
-            Regelbasierte Heuristik ohne generative KI. Die Werte sind Hinweise und keine verbindlichen Deckbau-Regeln.
-          </div>
-
-          <div className="stats">
-            <div>
-              <strong>{localAnalysis.lands}</strong>
-              <span>Länder</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.creatures}</strong>
-              <span>Kreaturen</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.ramp}</strong>
-              <span>Ramp</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.cardAdvantage}</strong>
-              <span>Card Advantage</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.interaction}</strong>
-              <span>Interaction</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.boardwipes}</strong>
-              <span>Boardwipes</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.tutors}</strong>
-              <span>Tutoren</span>
-            </div>
-            <div>
-              <strong>{localAnalysis.averageManaValue}</strong>
-              <span>Ø Mana Value</span>
-            </div>
-          </div>
-
-          <div className="deck-list">
-            {localAnalysis.warnings.map(
-              warning => (
-                <div key={warning}>
-                  <span>{warning}</span>
-                </div>
-              )
-            )}
-          </div>
-        </div>
-
         {d.format === "commander" &&
           bracketEstimate && (
           <div className="ai-box">
@@ -7960,7 +6315,8 @@ function DeckEditor({
             </div>
           </div>
         )}
-      </div>
+        </div>
+      </details>
 
       <div className="editor-grid">
         <div className="panel">
@@ -8287,29 +6643,103 @@ function DeckEditor({
             )
             : (
               <>
-                <input
-                  placeholder="Karte filtern…"
-                  onChange={e => {
-                    const value =
-                      e.target.value.toLowerCase();
+                <div className="manual-filter-panel">
+                  <label className="manual-filter-search">
+                    <span>Suche</span>
+                    <input
+                      value={manualSearch}
+                      placeholder="Kartenname…"
+                      onChange={e => setManualSearch(e.target.value)}
+                    />
+                  </label>
 
-                    document
-                      .querySelectorAll<HTMLElement>(
-                        "[data-card]"
-                      )
-                      .forEach(
-                        element => {
-                          element.hidden =
-                            !element.dataset.card!.includes(
-                              value
-                            );
-                        }
-                      );
-                  }}
-                />
+                  <fieldset className="manual-filter-group">
+                    <legend>Farbe</legend>
+                    <div className="manual-filter-checks">
+                      {[
+                        ["W", "Weiß"],
+                        ["U", "Blau"],
+                        ["B", "Schwarz"],
+                        ["R", "Rot"],
+                        ["G", "Grün"],
+                        ["C", "Farblos"]
+                      ].map(([value, label]) => (
+                        <label key={value}>
+                          <input
+                            type="checkbox"
+                            checked={manualColors.includes(value)}
+                            onChange={() => toggleManualFilter(value, setManualColors)}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+
+                  <fieldset className="manual-filter-group">
+                    <legend>Kartentyp</legend>
+                    <div className="manual-filter-checks manual-filter-types">
+                      {[
+                        ["Creature", "Kreatur"],
+                        ["Artifact", "Artefakt"],
+                        ["Enchantment", "Verzauberung"],
+                        ["Instant", "Spontanzauber"],
+                        ["Sorcery", "Hexerei"],
+                        ["Planeswalker", "Planeswalker"],
+                        ["Land", "Land"],
+                        ["Battle", "Schlacht"]
+                      ].map(([value, label]) => (
+                        <label key={value}>
+                          <input
+                            type="checkbox"
+                            checked={manualTypes.includes(value)}
+                            onChange={() => toggleManualFilter(value, setManualTypes)}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+
+                  <label>
+                    Set
+                    <select value={manualSet} onChange={e => setManualSet(e.target.value)}>
+                      <option value="">Alle Sets</option>
+                      {manualSetOptions.map(([code, label]) => (
+                        <option value={code} key={code}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="manual-filter-footer">
+                    <span className="muted">
+                      {manualFilteredPool.length} von {legalPool.length} legalen Karten
+                    </span>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => {
+                        setManualSearch("");
+                        setManualColors([]);
+                        setManualTypes([]);
+                        setManualSet("");
+                      }}
+                      disabled={
+                        !manualSearch &&
+                        manualColors.length === 0 &&
+                        manualTypes.length === 0 &&
+                        !manualSet
+                      }
+                    >
+                      Filter zurücksetzen
+                    </button>
+                  </div>
+                </div>
 
                 <div className="add-list">
-                  {legalPool
+                  {manualFilteredPool
                     .slice(
                       0,
                       200
@@ -8355,9 +6785,6 @@ function DeckEditor({
                         return (
                           <div
                             className="manual-add-row"
-                            data-card={
-                              card.name.toLowerCase()
-                            }
                             key={
                               card.id
                             }
@@ -8412,10 +6839,9 @@ function DeckEditor({
                     )}
                 </div>
 
-                {legalPool.length ===
-                  0 && (
+                {manualFilteredPool.length === 0 && (
                   <div className="notice">
-                    Für die aktuelle Auswahl sind keine legalen Karten aus deiner Sammlung verfügbar.
+                    Für die aktuellen Filter sind keine legalen Karten aus deiner Sammlung verfügbar.
                   </div>
                 )}
               </>
