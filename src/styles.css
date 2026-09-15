@@ -4430,3 +4430,187 @@ footer {
     flex-direction: column !important;
   }
 }
+
+
+/* D1 UX hotfix 4 — Filter oben, Sammlungsauswahl + gestapeltes Deck */
+.manual-builder-workspace {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.manual-builder-workspace-heading {
+  margin-bottom: 0;
+}
+
+.manual-builder-workspace-heading > span {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.manual-filter-details {
+  overflow: hidden;
+  border: 1px solid rgba(85, 215, 229, 0.16);
+  border-radius: 12px;
+  background: rgba(5, 14, 25, 0.46);
+}
+
+.manual-filter-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 13px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.manual-filter-summary::-webkit-details-marker { display: none; }
+.manual-filter-summary > span:first-child { display: grid; gap: 2px; }
+.manual-filter-summary small,
+.manual-filter-summary-toggle { color: var(--muted); font-size: 11px; }
+
+.manual-filter-panel-full {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 1fr) minmax(260px, 1.25fr) minmax(180px, .8fr);
+  gap: 10px 14px;
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  border-top: 1px solid rgba(85, 215, 229, 0.12);
+  border-radius: 0;
+  background: transparent;
+}
+
+.manual-filter-panel-full .manual-filter-search,
+.manual-filter-panel-full .manual-filter-set {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.manual-filter-panel-full .manual-filter-footer {
+  grid-column: 1 / -1;
+  padding-top: 2px;
+}
+
+.manual-builder-columns {
+  display: grid;
+  grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.manual-collection-pane,
+.manual-deck-board-pane {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid rgba(113, 138, 167, 0.16);
+  border-radius: 12px;
+  background: rgba(5, 14, 25, 0.34);
+}
+
+.manual-subpanel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(113, 138, 167, 0.14);
+}
+
+.manual-subpanel-heading h4,
+.manual-subpanel-heading p { margin: 0; }
+.manual-subpanel-heading p { margin-top: 3px; font-size: 11px; }
+.manual-subpanel-heading > span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+.manual-collection-list {
+  max-height: 66vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.manual-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.manual-card-preview-trigger {
+  min-width: 0;
+  text-align: left;
+}
+
+.manual-card-preview-trigger > span {
+  display: grid;
+  gap: 2px;
+}
+
+.manual-card-preview-trigger strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-deck-board-pane .deck-board-shell {
+  margin: 0;
+}
+
+.manual-deck-board-pane .deck-board {
+  min-width: max-content;
+}
+
+.manual-deck-board-pane .deck-board-card-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.deck-board-warning {
+  color: #f2c879 !important;
+}
+
+@media (max-width: 1180px) {
+  .manual-filter-panel-full {
+    grid-template-columns: 1fr 1fr;
+  }
+  .manual-filter-panel-full .manual-filter-footer { grid-column: 1 / -1; }
+  .manual-builder-columns { grid-template-columns: 1fr; }
+  .manual-collection-list { max-height: 420px; }
+}
+
+@media (max-width: 720px) {
+  .manual-filter-panel-full { grid-template-columns: 1fr; }
+  .manual-filter-panel-full .manual-filter-footer { grid-column: auto; }
+  .manual-filter-summary-toggle { display: none; }
+  .manual-builder-workspace { padding: 12px; }
+}
+
+/* D1 UX hotfix 5 — Sammlung und aktuelles Deck untereinander */
+.manual-builder-columns {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.manual-collection-pane,
+.manual-deck-board-pane {
+  width: 100%;
+}
+
+.manual-collection-list {
+  max-height: 44vh;
+}
+
+.manual-deck-board-pane .deck-board-shell {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.manual-deck-board-pane .deck-board {
+  min-width: max-content;
+}
+
+@media (max-width: 1180px) {
+  .manual-builder-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
