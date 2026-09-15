@@ -104,7 +104,6 @@ import HomePage from "./pages/HomePage";
 import CollectionPage from "./pages/CollectionPage";
 import DeckLibrary from "./components/DeckLibrary";
 import DeckBoard from "./components/DeckBoard";
-import ManualCardPoolBoard from "./components/ManualCardPoolBoard";
 import CardDetailsModal from "./components/CardDetailsModal";
 import { useAppNavigation } from "./navigation";
 
@@ -5629,354 +5628,252 @@ function DeckEditor({
         </div>
       </details>
 
-      <div className="editor-grid manual-editor-grid">
-        <div className="panel manual-deck-panel">
-          <h3>
-            {d.format ===
-            "commander"
-              ? `Deck · ${mainDeckCount}/${commanderMainTarget} Karten`
-              : `Deck · ${totalCards} Karten`}
-          </h3>
-
-          {d.format ===
-            "commander" &&
-            selectedCommanders.map(
-              (
-                commander,
-                index
-              ) => (
-                <div
-                  className="commander-card"
-                  key={
-                    commander.id
-                  }
-                >
-                  <strong>
-                    {index ===
-                    0
-                      ? "Commander"
-                      : "Zweiter Commander"}
-                  </strong>
-
-                  <span>
-                    {
-                      commander.name
-                    }
-                  </span>
-
-                  <small>
-                    {
-                      commander.typeLine
-                    }
-                  </small>
-                </div>
-              )
-            )}
-
-          {all.length ===
-            0 && (
+      <section className="panel manual-builder-workspace">
+        <div className="manual-panel-heading manual-builder-workspace-heading">
+          <div>
+            <h3>Manueller Deckbau</h3>
             <p className="muted">
-              Das Deck ist noch leer. Füge rechts Karten aus deiner Sammlung hinzu.
+              Wähle Karten aus deiner Sammlung. Die Filter kannst du bei Bedarf einblenden; dein aktuelles Deck wird darunter nach Kartentyp gruppiert und gestapelt angezeigt.
             </p>
-          )}
+          </div>
+          <span className="muted">
+            {d.format === "commander"
+              ? `${mainDeckCount}/${commanderMainTarget} Hauptdeckkarten`
+              : `${totalCards} Karten`}
+          </span>
+        </div>
 
-          {all.map(card => {
-            const source =
-              pool.find(
-                item =>
-                  item.id ===
-                  card.id
-              );
-
-            const illegal =
-              illegalCards.some(
-                item =>
-                  item.id ===
-                  card.id
-              );
-
-            const copyViolation =
-              copyViolationNames.includes(
-                card.name
-              );
-
-            const ruleLimit =
-              source
-                ? deckCopyLimit(
-                    source,
-                    d.format
-                  )
-                : 0;
-
-            const allowedLabel =
-              Number.isFinite(
-                ruleLimit
-              )
-                ? String(
-                    ruleLimit
-                  )
-                : "beliebig";
-
-            return (
-              <div
-                className="edit-row"
-                key={card.id}
-              >
+        {d.format === "commander" && selectedCommanders.length === 0 ? (
+          <p className="muted">Wähle zuerst oben in den Deck-Einstellungen einen Commander.</p>
+        ) : (
+          <>
+            <details className="manual-filter-details">
+              <summary className="manual-filter-summary">
                 <span>
-                  {card.count}×{" "}
-                  {card.name}
-
-                  {illegal && (
-                    <small className="illegal-card">
-                      {" "}· nicht erlaubt
-                    </small>
-                  )}
-
-                  {copyViolation && (
-                    <small className="illegal-card">
-                      {" "}· Maximum{" "}
-                      {allowedLabel}
-                    </small>
-                  )}
+                  <strong>Filter</strong>
+                  <small>
+                    {manualFilteredPool.length} von {legalPool.length} legalen Karten
+                    {(manualSearch || manualColors.length > 0 || manualTypes.length > 0 || manualSet)
+                      ? " · Filter aktiv"
+                      : ""}
+                  </small>
                 </span>
+                <span className="manual-filter-summary-toggle">Ein-/ausklappen</span>
+              </summary>
 
-                <div>
+              <div className="manual-filter-panel manual-filter-panel-full">
+                <label className="manual-filter-search">
+                  <span>Suche</span>
+                  <input
+                    value={manualSearch}
+                    placeholder="Kartenname…"
+                    onChange={e => setManualSearch(e.target.value)}
+                  />
+                </label>
+
+                <fieldset className="manual-filter-group">
+                  <legend>Farbe</legend>
+                  <div className="manual-filter-checks">
+                    {[
+                      ["W", "Weiß"],
+                      ["U", "Blau"],
+                      ["B", "Schwarz"],
+                      ["R", "Rot"],
+                      ["G", "Grün"],
+                      ["C", "Farblos"]
+                    ].map(([value, label]) => (
+                      <label key={value}>
+                        <input
+                          type="checkbox"
+                          checked={manualColors.includes(value)}
+                          onChange={() => toggleManualFilter(value, setManualColors)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <fieldset className="manual-filter-group manual-filter-type-group">
+                  <legend>Kartentyp</legend>
+                  <div className="manual-filter-checks manual-filter-types">
+                    {[
+                      ["Creature", "Kreatur"],
+                      ["Artifact", "Artefakt"],
+                      ["Enchantment", "Verzauberung"],
+                      ["Instant", "Spontanzauber"],
+                      ["Sorcery", "Hexerei"],
+                      ["Planeswalker", "Planeswalker"],
+                      ["Land", "Land"],
+                      ["Battle", "Schlacht"]
+                    ].map(([value, label]) => (
+                      <label key={value}>
+                        <input
+                          type="checkbox"
+                          checked={manualTypes.includes(value)}
+                          onChange={() => toggleManualFilter(value, setManualTypes)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <label className="manual-filter-set">
+                  <span>Set</span>
+                  <select value={manualSet} onChange={e => setManualSet(e.target.value)}>
+                    <option value="">Alle Sets</option>
+                    {manualSetOptions.map(([code, label]) => (
+                      <option value={code} key={code}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="manual-filter-footer">
+                  <span className="muted">
+                    {manualFilteredPool.length} von {legalPool.length} legalen Karten
+                  </span>
                   <button
+                    type="button"
+                    className="secondary"
                     onClick={() => {
-                      setD(current => ({
-                        ...current,
-                        cards:
-                          current.cards
-                            .map(
-                              item =>
-                                item.id ===
-                                card.id
-                                  ? {
-                                      ...item,
-                                      count:
-                                        Math.max(
-                                          0,
-                                          item.count -
-                                            1
-                                        )
-                                    }
-                                  : item
-                            )
-                            .filter(
-                              item =>
-                                item.count >
-                                0
-                            )
-                      }));
-
-                      setAnalysisText("");
+                      setManualSearch("");
+                      setManualColors([]);
+                      setManualTypes([]);
+                      setManualSet("");
                     }}
-                  >
-                    −
-                  </button>
-
-                  <button
                     disabled={
-                      !source ||
-                      card.count >=
-                        source.count ||
-                      (
-                        (
-                          deckCountByName[
-                            card.name.toLowerCase()
-                          ] ??
-                          0
-                        ) >=
-                        (
-                          source
-                            ? deckCopyLimit(
-                                source,
-                                d.format
-                              )
-                            : 0
-                        )
-                      ) ||
-                      (
-                        d.format ===
-                          "commander" &&
-                        mainDeckCount >=
-                          commanderMainTarget
-                      )
+                      !manualSearch &&
+                      manualColors.length === 0 &&
+                      manualTypes.length === 0 &&
+                      !manualSet
                     }
-                    onClick={() => {
-                      if (source) {
-                        add(source);
-                        setAnalysisText(
-                          ""
-                        );
-                      }
-                    }}
                   >
-                    +
+                    Filter zurücksetzen
                   </button>
                 </div>
               </div>
-            );
-          })}
-        </div>
+            </details>
 
-        <div className="panel manual-card-pool-panel">
-          <div className="manual-panel-heading">
-            <div>
-              <h3>Karten hinzufügen</h3>
-              <p className="muted">Die legalen Karten deiner Sammlung sind nach Kartentyp gruppiert. Klick auf eine Karte öffnet die Detailansicht.</p>
-            </div>
-          </div>
-
-          {d.format === "commander" && selectedCommanders.length === 0 ? (
-            <p className="muted">Wähle zuerst einen Commander.</p>
-          ) : (
-            <>
-              <details className="manual-filter-details">
-                <summary className="manual-filter-summary">
-                  <span>
-                    <strong>Filter</strong>
-                    <small>
-                      {manualFilteredPool.length} von {legalPool.length} legalen Karten
-                      {(manualSearch || manualColors.length > 0 || manualTypes.length > 0 || manualSet)
-                        ? " · Filter aktiv"
-                        : ""}
-                    </small>
-                  </span>
-                  <span className="manual-filter-summary-toggle">Ein-/ausklappen</span>
-                </summary>
-
-                <div className="manual-filter-panel manual-filter-panel-full">
-                  <label className="manual-filter-search">
-                    <span>Suche</span>
-                    <input
-                      value={manualSearch}
-                      placeholder="Kartenname…"
-                      onChange={e => setManualSearch(e.target.value)}
-                    />
-                  </label>
-
-                  <fieldset className="manual-filter-group">
-                    <legend>Farbe</legend>
-                    <div className="manual-filter-checks">
-                      {[
-                        ["W", "Weiß"],
-                        ["U", "Blau"],
-                        ["B", "Schwarz"],
-                        ["R", "Rot"],
-                        ["G", "Grün"],
-                        ["C", "Farblos"]
-                      ].map(([value, label]) => (
-                        <label key={value}>
-                          <input
-                            type="checkbox"
-                            checked={manualColors.includes(value)}
-                            onChange={() => toggleManualFilter(value, setManualColors)}
-                          />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-
-                  <fieldset className="manual-filter-group manual-filter-type-group">
-                    <legend>Kartentyp</legend>
-                    <div className="manual-filter-checks manual-filter-types">
-                      {[
-                        ["Creature", "Kreatur"],
-                        ["Artifact", "Artefakt"],
-                        ["Enchantment", "Verzauberung"],
-                        ["Instant", "Spontanzauber"],
-                        ["Sorcery", "Hexerei"],
-                        ["Planeswalker", "Planeswalker"],
-                        ["Land", "Land"],
-                        ["Battle", "Schlacht"]
-                      ].map(([value, label]) => (
-                        <label key={value}>
-                          <input
-                            type="checkbox"
-                            checked={manualTypes.includes(value)}
-                            onChange={() => toggleManualFilter(value, setManualTypes)}
-                          />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-
-                  <label className="manual-filter-set">
-                    <span>Set</span>
-                    <select value={manualSet} onChange={e => setManualSet(e.target.value)}>
-                      <option value="">Alle Sets</option>
-                      {manualSetOptions.map(([code, label]) => (
-                        <option value={code} key={code}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <div className="manual-filter-footer">
-                    <span className="muted">
-                      {manualFilteredPool.length} von {legalPool.length} legalen Karten
-                    </span>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => {
-                        setManualSearch("");
-                        setManualColors([]);
-                        setManualTypes([]);
-                        setManualSet("");
-                      }}
-                      disabled={
-                        !manualSearch &&
-                        manualColors.length === 0 &&
-                        manualTypes.length === 0 &&
-                        !manualSet
-                      }
-                    >
-                      Filter zurücksetzen
-                    </button>
+            <div className="manual-builder-columns">
+              <section className="manual-collection-pane" aria-label="Karten aus der Sammlung auswählen">
+                <div className="manual-subpanel-heading">
+                  <div>
+                    <h4>Sammlung</h4>
+                    <p className="muted">Alle legalen Karten deiner Sammlung als Liste. Karte anklicken für Details, mit +1 zum Deck hinzufügen.</p>
                   </div>
+                  <span>{manualFilteredPool.length} Treffer</span>
                 </div>
-              </details>
 
-              {manualFilteredPool.length > 0 ? (
-                <ManualCardPoolBoard
-                  cards={manualFilteredPool.slice(0, 200)}
-                  onCardClick={card => setPreviewCardId(card.id)}
-                  onAdd={card => {
-                    add(card);
-                    setAnalysisText("");
-                  }}
-                  statusForCard={card => {
-                    const current = all.find(item => item.id === card.id)?.count ?? 0;
-                    const currentByName = deckCountByName[card.name.toLowerCase()] ?? 0;
-                    const ruleLimit = deckCopyLimit(card, d.format);
-                    const ruleLimitLabel = Number.isFinite(ruleLimit) ? String(ruleLimit) : "∞";
-                    const commanderFull = d.format === "commander" && mainDeckCount >= commanderMainTarget;
+                {manualFilteredPool.length > 0 ? (
+                  <div className="add-list manual-collection-list">
+                    {manualFilteredPool.map(card => {
+                      const current = all.find(item => item.id === card.id)?.count ?? 0;
+                      const currentByName = deckCountByName[card.name.toLowerCase()] ?? 0;
+                      const ruleLimit = deckCopyLimit(card, d.format);
+                      const ruleLimitLabel = Number.isFinite(ruleLimit) ? String(ruleLimit) : "beliebig";
+                      const commanderFull = d.format === "commander" && mainDeckCount >= commanderMainTarget;
 
-                    return {
-                      current,
-                      currentByName,
-                      ruleLimitLabel,
-                      disabled:
-                        current >= card.count ||
-                        currentByName >= ruleLimit ||
-                        commanderFull
-                    };
-                  }}
-                />
-              ) : (
-                <div className="notice">
-                  Für die aktuellen Filter sind keine legalen Karten aus deiner Sammlung verfügbar.
+                      return (
+                        <div className="manual-add-row" key={card.id}>
+                          <button
+                            type="button"
+                            className="manual-card-preview-trigger"
+                            onClick={() => setPreviewCardId(card.id)}
+                            title="Karte anzeigen"
+                          >
+                            <span>
+                              <strong>{card.name}</strong>
+                              <small className="muted">
+                                {card.setCode ? ` ${card.setCode.toUpperCase()} ·` : ""} MV {card.manaValue ?? 0} · im Deck {currentByName}/{ruleLimitLabel}
+                              </small>
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={
+                              current >= card.count ||
+                              currentByName >= ruleLimit ||
+                              commanderFull
+                            }
+                            onClick={() => {
+                              add(card);
+                              setAnalysisText("");
+                            }}
+                          >
+                            +1
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="notice">
+                    Für die aktuellen Filter sind keine legalen Karten aus deiner Sammlung verfügbar.
+                  </div>
+                )}
+              </section>
+
+              <section className="manual-deck-board-pane" aria-label="Aktuelles Deck">
+                <div className="manual-subpanel-heading">
+                  <div>
+                    <h4>Aktuelles Deck</h4>
+                    <p className="muted">Nach Kartentyp gruppiert und gestapelt wie in deinen gespeicherten Decks.</p>
+                  </div>
+                  <span>
+                    {d.format === "commander"
+                      ? `${mainDeckCount}/${commanderMainTarget}`
+                      : totalCards}
+                  </span>
                 </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
+
+                {d.cards.length === 0 && d.commanderIds.length === 0 ? (
+                  <div className="notice">Das Deck ist noch leer.</div>
+                ) : (
+                  <DeckBoard
+                    deck={d}
+                    pool={pool}
+                    onCardClick={card => setPreviewCardId(card.id)}
+                    onIncrement={deckCard => {
+                      const source = pool.find(card => card.id === deckCard.id);
+                      if (source) {
+                        add(source);
+                        setAnalysisText("");
+                      }
+                    }}
+                    onDecrement={deckCard => {
+                      setD(current => ({
+                        ...current,
+                        cards: current.cards
+                          .map(item =>
+                            item.id === deckCard.id
+                              ? { ...item, count: Math.max(0, item.count - 1) }
+                              : item
+                          )
+                          .filter(item => item.count > 0)
+                      }));
+                      setAnalysisText("");
+                    }}
+                    canIncrement={deckCard => {
+                      const source = pool.find(card => card.id === deckCard.id);
+                      if (!source) return false;
+                      const currentByName = deckCountByName[deckCard.name.toLowerCase()] ?? 0;
+                      const ruleLimit = deckCopyLimit(source, d.format);
+                      const commanderFull = d.format === "commander" && mainDeckCount >= commanderMainTarget;
+                      return deckCard.count < source.count && currentByName < ruleLimit && !commanderFull;
+                    }}
+                    noteForCard={deckCard => {
+                      if (illegalCards.some(item => item.id === deckCard.id)) return "Nicht erlaubt";
+                      if (copyViolationNames.includes(deckCard.name)) return "Mengenlimit überschritten";
+                      return undefined;
+                    }}
+                  />
+                )}
+              </section>
+            </div>
+          </>
+        )}
+      </section>
 
       {previewCard && (
         <CardDetailsModal

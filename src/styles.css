@@ -4644,3 +4644,79 @@ footer {
   width: max-content;
   min-width: 100%;
 }
+
+
+/* D1 UX hotfix 7 — finale Struktur manueller Deckbau */
+.manual-builder-workspace {
+  display: block;
+}
+
+.manual-filter-details {
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.manual-filter-summary {
+  width: 100%;
+}
+
+.manual-builder-columns {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 22px !important;
+  width: 100% !important;
+}
+
+.manual-collection-pane,
+.manual-deck-board-pane {
+  width: 100% !important;
+  max-width: none !important;
+}
+
+.manual-collection-pane { order: 1 !important; }
+.manual-deck-board-pane { order: 2 !important; }
+
+/* Sammlung: normale Liste über die gesamte Breite */
+.manual-collection-list {
+  width: 100%;
+  max-height: none !important;
+  overflow: visible !important;
+  padding-right: 0 !important;
+}
+
+.manual-add-row {
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(113, 138, 167, 0.12);
+}
+
+.manual-add-row:last-child {
+  border-bottom: 0;
+}
+
+.manual-card-preview-trigger {
+  width: 100%;
+  max-width: none;
+}
+
+/* Aktuelles Deck: volle Breite, Kategorien nebeneinander, Karten gestapelt */
+.manual-deck-board-pane .deck-board-shell {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: auto;
+}
+
+.manual-deck-board-pane .deck-board {
+  width: max-content;
+  min-width: 100%;
+}
+
+.manual-deck-board-pane .deck-board-column {
+  min-width: 220px;
+}
+
+/* Filter standardmäßig geschlossen; geöffnet weiterhin volle Breite */
+.manual-filter-details:not([open]) .manual-filter-panel {
+  display: none;
+}
