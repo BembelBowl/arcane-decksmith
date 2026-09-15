@@ -2591,15 +2591,12 @@ footer {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
   min-width: 0;
-  margin: 0;
-  padding: 7px 8px;
+  padding: 6px 7px;
   color: #d2ddea;
   border-radius: 7px;
   cursor: pointer;
   font-size: 0.84rem;
-  line-height: 1.25;
 }
 
 .collection-filter-options label:hover {
@@ -2607,12 +2604,7 @@ footer {
 }
 
 .collection-filter-options input[type="checkbox"] {
-  display: inline-block;
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  padding: 0;
+  flex: none;
   accent-color: var(--gold);
 }
 
@@ -2633,8 +2625,7 @@ footer {
 }
 
 .collection-mv-options {
-  grid-template-columns: repeat(2, minmax(84px, 1fr));
-  min-width: 210px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .collection-filter-result {
@@ -3206,6 +3197,9 @@ footer {
 }
 
 .deck-library-card {
+  display: grid;
+  grid-template-rows: 168px minmax(148px, auto);
+  height: 100%;
   padding: 0;
   overflow: hidden;
   text-align: left;
@@ -3256,9 +3250,16 @@ footer {
 }
 
 .deck-library-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 148px;
+  padding: 14px 15px 16px;
+}
+
+.deck-library-copy-main {
   display: grid;
   gap: 8px;
-  padding: 14px 15px 16px;
 }
 
 .deck-library-title-row {
@@ -3279,7 +3280,8 @@ footer {
   font-size: 11px;
 }
 
-.deck-library-commander {
+.deck-library-subtitle {
+  min-height: 34px;
   margin: 0;
   color: rgba(255, 255, 255, 0.78);
   font-size: 12px;
@@ -3291,29 +3293,61 @@ footer {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
+  margin-top: auto;
   color: var(--muted);
   font-size: 11px;
 }
 
 .deck-library-colors {
   display: inline-flex;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
 }
 
-.deck-library-colors i {
+.deck-library-colors i,
+.mana-symbol {
   display: grid;
   place-items: center;
-  width: 19px;
-  height: 19px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(0, 0, 0, 0.28);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
-  font-size: 9px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #111;
+  font-size: 10px;
   font-style: normal;
   font-weight: 800;
 }
 
+.mana-symbol-w {
+  background: linear-gradient(180deg, #f8f2d5, #e4d9a1);
+  color: #241d09;
+}
+
+.mana-symbol-u {
+  background: linear-gradient(180deg, #b4d7ef, #6da9d7);
+  color: #06223b;
+}
+
+.mana-symbol-b {
+  background: linear-gradient(180deg, #b8b2c6, #6e667f);
+  color: #fff;
+}
+
+.mana-symbol-r {
+  background: linear-gradient(180deg, #f3b1a0, #d97a63);
+  color: #3a0f06;
+}
+
+.mana-symbol-g {
+  background: linear-gradient(180deg, #b8d8b0, #6fac78);
+  color: #0b2810;
+}
+
+.mana-symbol-c {
+  background: linear-gradient(180deg, #d4d6db, #a1a7b1);
+  color: #1c2027;
+}
 .deck-detail-pagehead {
   align-items: center;
 }
