@@ -4907,3 +4907,14 @@ footer {
     display: none;
   }
 }
+
+
+/* E5 UI fix — Help-Icon wurde entfernt, daher Header wieder zweispaltig */
+.tuning-control-head {
+  grid-template-columns: auto 1fr;
+}
+
+.tuning-control-head strong {
+  grid-column: 2;
+  justify-self: end;
+}
