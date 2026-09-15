@@ -4918,3 +4918,88 @@ footer {
   grid-column: 2;
   justify-self: end;
 }
+
+
+/* Popup-Verbesserungen: echte Mana-Symbole + scrollbare Druckliste */
+.card-modal-card-header > div {
+  align-items: center;
+}
+
+.card-modal-mana-symbols {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.card-modal-mana-symbol {
+  width: 24px;
+  height: 24px;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+}
+
+.card-modal-mana-separator {
+  margin: 0 2px;
+  color: #cfd9e3;
+  font-weight: 700;
+}
+
+.card-modal-printings {
+  display: grid;
+  gap: 1px;
+  max-height: 255px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 9px;
+  scrollbar-gutter: stable;
+}
+
+.card-modal-printings a {
+  align-items: center;
+}
+
+.card-modal-printing-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.card-modal-printing-main small {
+  color: #7e93a8;
+  font-size: 0.69rem;
+  line-height: 1.2;
+}
+
+.card-modal-printings a span:first-child {
+  min-width: 0;
+}
+
+.card-modal-printings a span:first-child > span:first-child {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-modal-printings a.is-current-printing {
+  background: rgba(214, 173, 88, 0.08);
+}
+
+.card-modal-printings a.is-current-printing:hover {
+  background: rgba(214, 173, 88, 0.13);
+}
+
+.card-modal-printings-hint {
+  margin-top: 8px;
+}
+
+@media (max-width: 760px) {
+  .card-modal-mana-symbol {
+    width: 22px;
+    height: 22px;
+  }
+}
