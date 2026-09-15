@@ -3003,11 +3003,6 @@ function TuningSlider({
         <span>
           {label}
         </span>
-
-
-        <strong>
-          {valueText}
-        </strong>
       </div>
 
       <input
