@@ -5343,41 +5343,6 @@ function DeckEditor({
           )}
 
         {d.format ===
-          "commander" &&
-          selectedCommanders.length >
-            0 && (
-            <div className="ai-box">
-              <strong>
-                Commander:
-              </strong>{" "}
-
-              {selectedCommanders
-                .map(
-                  card =>
-                    card.name
-                )
-                .join(" + ")}
-
-              <br />
-
-              <span>
-                Farbidentität:{" "}
-                {commanderColors.length
-                  ? commanderColors
-                      .map(
-                        color =>
-                          COLOR_NAMES[
-                            color
-                          ] ??
-                          color
-                      )
-                      .join(", ")
-                  : "Farblos"}
-              </span>
-            </div>
-          )}
-
-        {d.format ===
           "commander" && (
           <label className="row">
             <input
@@ -5396,67 +5361,87 @@ function DeckEditor({
           </label>
         )}
 
-        {bracketEstimate && (
-          <div className="ai-box">
-            <strong>
-              {bracketEstimate.label}
-            </strong>
-            <div className="muted">
-              Schätzung nach den Wizards-Commander-Bracket-Leitlinien. Spielabsicht und Zwei-Karten-Kombos lassen sich nicht vollständig automatisch aus der Deckliste bestimmen.
+        {d.format === "standard" ? (
+          <div className="stats">
+            <div>
+              <strong>{totalCards}</strong>
+              <span>Karten aktuell</span>
             </div>
-            <div className="deck-list">
-              {bracketEstimate.reasons.map(
-                reason => (
-                  <div key={reason}>
-                    <span>{reason}</span>
+            <div>
+              <strong>60+</strong>
+              <span>Mindestgröße</span>
+            </div>
+          </div>
+        ) : (
+          selectedCommanders.length > 0 && (
+            <div className="commander-summary">
+              <div className="commander-summary-grid">
+                <div>
+                  <strong>{totalCards}/100</strong>
+                  <span>Deckgröße</span>
+                </div>
+                <div>
+                  <strong>{mainDeckCount}/{commanderMainTarget}</strong>
+                  <span>Deck ohne Commander</span>
+                </div>
+                <div>
+                  <strong>
+                    {commanderColors.length > 0
+                      ? commanderColors
+                          .map(color => COLOR_NAMES[color] ?? color)
+                          .join(", ")
+                      : "Farblos"}
+                  </strong>
+                  <span>Farbidentität</span>
+                </div>
+                {bracketEstimate && (
+                  <div>
+                    <strong>{bracketEstimate.label}</strong>
+                    <span>Bracket-Schätzung</span>
                   </div>
-                )
+                )}
+                <div>
+                  <strong>{illegalCards.length}</strong>
+                  <span>Format-/Farbverstöße</span>
+                </div>
+                <div>
+                  <strong>{copyViolationNames.length}</strong>
+                  <span>Kopier-/Bestandsverstöße</span>
+                </div>
+              </div>
+
+              {bracketEstimate && (
+                <details className="commander-check-details">
+                  <summary>Commander-Check & Bracket-Details</summary>
+                  <div className="commander-check-details-content">
+                    <p className="muted">
+                      Die Bracket-Schätzung ist eine automatische Orientierung. Spielabsicht
+                      und nicht eindeutig erkennbare Kombos können nicht vollständig aus der
+                      Deckliste bestimmt werden.
+                    </p>
+
+                    <div className="commander-check-metrics">
+                      <span><strong>{bracketEstimate.gameChangers}</strong> Game Changer</span>
+                      <span><strong>{bracketEstimate.tutorCards}</strong> Tutoren</span>
+                      <span><strong>{bracketEstimate.extraTurnCards}</strong> Extra Turns</span>
+                      <span><strong>{bracketEstimate.massLandDenialCards}</strong> Landverwehrung</span>
+                    </div>
+
+                    {bracketEstimate.reasons.length > 0 && (
+                      <div className="deck-list">
+                        {bracketEstimate.reasons.map(reason => (
+                          <div key={reason}>
+                            <span>{reason}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </details>
               )}
             </div>
-          </div>
+          )
         )}
-
-        <div className="stats">
-          <div>
-            <strong>
-              {totalCards}
-            </strong>
-
-            <span>
-              Karten aktuell
-            </span>
-          </div>
-
-          <div>
-            <strong>
-              {d.format ===
-              "commander"
-                ? "100"
-                : "60+"}
-            </strong>
-
-            <span>
-              {d.format ===
-              "commander"
-                ? "Deckgröße"
-                : "Mindestgröße"}
-            </span>
-          </div>
-
-          {d.format ===
-            "commander" && (
-            <div>
-              <strong>
-                {mainDeckCount}/
-                {commanderMainTarget}
-              </strong>
-
-              <span>
-                Karten ohne Commander
-              </span>
-            </div>
-          )}
-        </div>
 
         {d.format ===
           "standard" &&
@@ -5466,83 +5451,6 @@ function DeckEditor({
               {60 - totalCards} Karten bis zur Mindestgröße.
             </div>
           )}
-
-        {d.format === "commander" &&
-          bracketEstimate && (
-          <div className="ai-box">
-            <strong>
-              Commander-Check
-            </strong>
-
-            <div className="stats">
-              <div>
-                <strong>{totalCards}/100</strong>
-                <span>Deckgröße</span>
-              </div>
-              <div>
-                <strong>{selectedCommanders.length}</strong>
-                <span>Commander</span>
-              </div>
-              <div>
-                <strong>{bracketEstimate.gameChangers}</strong>
-                <span>Game Changer</span>
-              </div>
-              <div>
-                <strong>{bracketEstimate.tutorCards}</strong>
-                <span>Tutoren</span>
-              </div>
-              <div>
-                <strong>{bracketEstimate.extraTurnCards}</strong>
-                <span>Extra Turns</span>
-              </div>
-              <div>
-                <strong>{bracketEstimate.massLandDenialCards}</strong>
-                <span>Landverwehrung</span>
-              </div>
-            </div>
-
-            <div className="deck-list">
-              <div>
-                <span>Farbidentität</span>
-                <strong>
-                  {commanderColors.length > 0
-                    ? commanderColors
-                        .map(
-                          color =>
-                            COLOR_NAMES[color] ??
-                            color
-                        )
-                        .join(", ")
-                    : "Farblos"}
-                </strong>
-              </div>
-              <div>
-                <span>
-                  Format-/Farbverstöße
-                </span>
-                <strong>
-                  {illegalCards.length}
-                </strong>
-              </div>
-              <div>
-                <span>
-                  Kopier-/Bestandsverstöße
-                </span>
-                <strong>
-                  {copyViolationNames.length}
-                </strong>
-              </div>
-              <div>
-                <span>
-                  Bracket-Schätzung
-                </span>
-                <strong>
-                  {bracketEstimate.label}
-                </strong>
-              </div>
-            </div>
-          </div>
-        )}
 
         {d.format ===
           "commander" &&
