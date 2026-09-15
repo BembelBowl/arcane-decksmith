@@ -2591,12 +2591,15 @@ footer {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   min-width: 0;
-  padding: 6px 7px;
+  margin: 0;
+  padding: 7px 8px;
   color: #d2ddea;
   border-radius: 7px;
   cursor: pointer;
   font-size: 0.84rem;
+  line-height: 1.25;
 }
 
 .collection-filter-options label:hover {
@@ -2604,7 +2607,12 @@ footer {
 }
 
 .collection-filter-options input[type="checkbox"] {
-  flex: none;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
   accent-color: var(--gold);
 }
 
@@ -2625,7 +2633,8 @@ footer {
 }
 
 .collection-mv-options {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(84px, 1fr));
+  min-width: 210px;
 }
 
 .collection-filter-result {
