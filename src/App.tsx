@@ -3243,10 +3243,12 @@ function recommendStrategy(
 
 function Builder({
   pool,
-  onSave
+  onSave,
+  onChangeBuildMode
 }: {
   pool: CardRecord[];
   onSave: (d: DeckRecord) => Promise<void>;
+  onChangeBuildMode: () => void;
 }) {
   const [format, setFormat] = useState<Format>("commander");
   const [colors, setColors] = useState<string[]>([...COLORS]);
@@ -3649,6 +3651,52 @@ function Builder({
     </div>
   );
 
+  const renderBuilderToolbar = (showWizardNavigation: boolean) => (
+    <div className="build-mode-toolbar automatic-builder-toolbar">
+      <button className="secondary" type="button" onClick={onChangeBuildMode}>
+        ← Bauart wechseln
+      </button>
+
+      <div className="automatic-builder-toolbar-copy">
+        <strong>Automatischer Deckbau</strong>
+        <span>Der Optimierer stellt ein Deck aus deiner Sammlung zusammen.</span>
+      </div>
+
+      {showWizardNavigation && (
+        <div className="builder-wizard-nav builder-wizard-nav-top">
+          <button
+            className="secondary"
+            type="button"
+            onClick={previousStep}
+            disabled={wizardIndex === 0 || buildBusy}
+          >
+            ← Zurück
+          </button>
+
+          {wizardIndex < wizardSteps.length - 1 ? (
+            <button
+              className="primary"
+              type="button"
+              onClick={nextStep}
+              disabled={!canContinue || buildBusy}
+            >
+              Weiter →
+            </button>
+          ) : (
+            <button
+              className="primary"
+              type="button"
+              onClick={() => void build()}
+              disabled={builderDisabled || !canContinue}
+            >
+              {buildBusy ? "Deck wird datenbasiert erstellt…" : "Deck erstellen"}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   if (result) {
     const stats = deckStats(result);
     const strategyChanged = suggestedStrategy !== strategy;
@@ -3812,6 +3860,7 @@ function Builder({
 
   return (
     <section className="automatic-builder-wizard">
+      {renderBuilderToolbar(true)}
       <div className="pagehead">
         <div>
           <h2>Deck automatisch bauen</h2>
@@ -4048,37 +4097,6 @@ function Builder({
           </div>
         )}
 
-        <footer className="builder-wizard-nav">
-          <button
-            className="secondary"
-            type="button"
-            onClick={previousStep}
-            disabled={wizardIndex === 0 || buildBusy}
-          >
-            ← Zurück
-          </button>
-
-          {wizardIndex < wizardSteps.length - 1 ? (
-            <button
-              className="primary"
-              type="button"
-              onClick={nextStep}
-              disabled={!canContinue || buildBusy}
-            >
-              Weiter →
-            </button>
-          ) : (
-            <button
-              className="primary"
-              type="button"
-              onClick={() => void build()}
-              disabled={builderDisabled || !canContinue}
-            >
-              {buildBusy ? "Deck wird datenbasiert erstellt…" : "Deck erstellen"}
-            </button>
-          )}
-        </footer>
-
         {pool.length === 0 && (
           <div className="notice">
             Deine Sammlung ist leer. Füge zuerst Karten über die Kartensuche hinzu.
@@ -4121,18 +4139,11 @@ function BuildHub({
 
   if (mode === "automatic") {
     return (
-      <section>
-        <div className="build-mode-toolbar">
-          <button className="secondary" type="button" onClick={() => setMode(null)}>
-            ← Bauart wechseln
-          </button>
-          <div>
-            <strong>Automatischer Deckbau</strong>
-            <span>Der Optimierer stellt ein Deck aus deiner Sammlung zusammen.</span>
-          </div>
-        </div>
-        <Builder pool={pool} onSave={onSave} />
-      </section>
+      <Builder
+        pool={pool}
+        onSave={onSave}
+        onChangeBuildMode={() => setMode(null)}
+      />
     );
   }
 

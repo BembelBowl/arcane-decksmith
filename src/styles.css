@@ -4851,3 +4851,59 @@ footer {
 .commander-check-metrics strong {
   color: var(--text);
 }
+
+
+/* E1 UX hotfix — Wizard-Navigation in die obere Bauart-Leiste */
+.automatic-builder-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 10px 0;
+}
+
+.automatic-builder-toolbar-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.automatic-builder-toolbar-copy span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.builder-wizard-nav-top {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.builder-wizard-nav-top button {
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .automatic-builder-toolbar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .automatic-builder-toolbar-copy {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .builder-wizard-nav-top {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .builder-wizard-nav-top .secondary {
+    display: none;
+  }
+}
