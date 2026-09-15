@@ -8,6 +8,7 @@ const API = "https://api.scryfall.com";
 const cache = new Map<string, CardRecord>();
 const searchCache = new Map<string, ScryfallCard[]>();
 const printingsCache = new Map<string, ScryfallCard[]>();
+const rawCardCache = new Map<string, ScryfallCard>();
 let setsCache: ScryfallSet[] | null = null;
 
 let lastRequest = 0;
@@ -53,11 +54,19 @@ export interface ScryfallCard {
       normal?: string;
       large?: string;
     };
+    power?: string;
+    toughness?: string;
+    loyalty?: string;
   }>;
 
   legalities?: Record<string, string>;
   game_changer?: boolean;
   rarity?: string;
+  artist?: string;
+  power?: string;
+  toughness?: string;
+  loyalty?: string;
+  released_at?: string;
   set_name?: string;
   prices?: Record<string, string | null>;
   scryfall_uri?: string;
@@ -521,9 +530,10 @@ export async function searchCards(
 
   searchCache.set(key, result.data);
 
-  result.data.forEach(card =>
-    cache.set(card.id, normalizeCard(card))
-  );
+  result.data.forEach(card => {
+    rawCardCache.set(card.id, card);
+    cache.set(card.id, normalizeCard(card));
+  });
 
   return result.data;
 }
@@ -644,12 +654,13 @@ export async function getCardsBySetAndCollectorNumbers(
     }
   }
 
-  cards.forEach(card =>
+  cards.forEach(card => {
+    rawCardCache.set(card.id, card);
     cache.set(
       card.id,
       normalizeCard(card)
-    )
-  );
+    );
+  });
 
   return {
     cards,
@@ -706,9 +717,10 @@ export async function getPrintings(
 
   printingsCache.set(cacheKey, sorted);
 
-  sorted.forEach(card =>
-    cache.set(card.id, normalizeCard(card))
-  );
+  sorted.forEach(card => {
+    rawCardCache.set(card.id, card);
+    cache.set(card.id, normalizeCard(card));
+  });
 
   return sorted;
 }
@@ -732,6 +744,25 @@ export async function autocomplete(
 export async function canonicalEnglishCard(
   card: ScryfallCard
 ): Promise<ScryfallCard> {
+  return card;
+}
+
+export async function getScryfallCard(
+  id: string
+): Promise<ScryfallCard> {
+  const rawHit = rawCardCache.get(id);
+
+  if (rawHit) {
+    return rawHit;
+  }
+
+  const card = await getJson<ScryfallCard>(
+    `${API}/cards/${encodeURIComponent(id)}`
+  );
+
+  rawCardCache.set(card.id, card);
+  cache.set(card.id, normalizeCard(card));
+
   return card;
 }
 
@@ -806,10 +837,7 @@ export async function getCard(
     return hit;
   }
 
-  const card = await getJson<ScryfallCard>(
-    `${API}/cards/${encodeURIComponent(id)}`
-  );
-
+  const card = await getScryfallCard(id);
   const normalized = normalizeCard(card);
   cache.set(id, normalized);
 
