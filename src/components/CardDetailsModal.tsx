@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   displayOracleText,
   displayTypeLine,
@@ -304,7 +305,7 @@ export default function CardDetailsModal({
   };
 
 
-  return (
+  return createPortal(
     <div
       className="card-modal-backdrop"
       role="presentation"
@@ -505,6 +506,7 @@ export default function CardDetailsModal({
           </section>
         </aside>
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }
