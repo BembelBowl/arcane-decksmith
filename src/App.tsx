@@ -4438,7 +4438,7 @@ function Decks({
         </div>
 
         {typeof selectedDeck.score === "number" && (
-          <div className="deck-score-explanation muted">
+          <div className="deck-score-explanation muted" style={{ fontSize: "0.78rem", lineHeight: 1.45 }}>
             <strong>Deck-Score:</strong> 0–100 Punkte. Bewertet, wie gut das Deck das
             gewählte Zielprofil erfüllt: Vollständigkeit 35 %, Länderabdeckung 20 %,
             Rollenabdeckung 30 % und Nähe zur Ziel-Manakurve 15 %. 100 bedeutet,
