@@ -4481,15 +4481,6 @@ function Decks({
         </div>
       </div>
 
-      <div className="panel deck-analysis-budget-panel">
-        <PurchaseBudgetControls
-          maxCardPrice={maxSuggestionCardPrice}
-          maxDeckPrice={maxSuggestionDeckPrice}
-          onMaxCardPriceChange={setMaxSuggestionCardPrice}
-          onMaxDeckPriceChange={setMaxSuggestionDeckPrice}
-        />
-      </div>
-
       <div className="deck-detail-summary panel">
         <div className="stats deck-detail-stats">
           <div>
@@ -4520,6 +4511,34 @@ function Decks({
               <span>Commander-Bracket</span>
             </div>
           )}
+          <div className="budget-stat">
+            <label>
+              <span>Max. pro Karte (€)</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="Unbegrenzt"
+                value={maxSuggestionCardPrice}
+                onChange={event => setMaxSuggestionCardPrice(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="budget-stat">
+            <label>
+              <span>Max. gesamt pro Deck (€)</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="Unbegrenzt"
+                value={maxSuggestionDeckPrice}
+                onChange={event => setMaxSuggestionDeckPrice(event.target.value)}
+              />
+            </label>
+          </div>
         </div>
 
         {typeof selectedDeck.score === "number" && (

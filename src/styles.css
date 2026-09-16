@@ -5233,3 +5233,30 @@ footer {
     align-items: stretch;
   }
 }
+
+/* Budget-Limits als Statistik-Kacheln in der Deck-Detailansicht */
+.deck-detail-stats .budget-stat {
+  display: flex;
+  align-items: stretch;
+}
+
+.deck-detail-stats .budget-stat label {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.deck-detail-stats .budget-stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.deck-detail-stats .budget-stat input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
