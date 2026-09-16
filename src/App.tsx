@@ -4425,7 +4425,7 @@ function Decks({
           </div>
           {typeof selectedDeck.score === "number" && (
             <div>
-              <strong>{selectedDeck.score}</strong>
+              <strong>{selectedDeck.score}/100</strong>
               <span>Deck-Score</span>
             </div>
           )}
@@ -4436,6 +4436,16 @@ function Decks({
             </div>
           )}
         </div>
+
+        {typeof selectedDeck.score === "number" && (
+          <div className="deck-score-explanation muted">
+            <strong>Deck-Score:</strong> 0–100 Punkte. Bewertet, wie gut das Deck das
+            gewählte Zielprofil erfüllt: Vollständigkeit 35 %, Länderabdeckung 20 %,
+            Rollenabdeckung 30 % und Nähe zur Ziel-Manakurve 15 %. 100 bedeutet,
+            dass das Zielprofil vollständig erfüllt ist – nicht eine garantierte
+            Gewinnchance.
+          </div>
+        )}
       </div>
 
       <DeckBoard deck={selectedDeck} pool={pool} onCardClick={setSelectedCard} />
