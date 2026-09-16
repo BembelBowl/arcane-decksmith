@@ -5152,3 +5152,45 @@ footer {
     border-radius: 14px;
   }
 }
+
+
+/* Popup desktop/tablet: Karte oben ausrichten, Dialoghöhe durch Inhalt bestimmen */
+@media (min-width: 761px) {
+  .card-modal-backdrop {
+    /* Bei langen Karten niemals um die Viewport-Mitte zentrieren:
+       der komplette Dialog beginnt oben und der Backdrop scrollt als Ganzes. */
+    place-items: start center;
+  }
+
+  .card-modal {
+    align-items: start;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .card-modal-image-column {
+    align-self: start;
+    align-items: start;
+  }
+
+  .card-modal-image-column img {
+    /* Kein vertikales Zentrieren innerhalb einer hohen Grid-Zeile. */
+    margin: 0 auto;
+    max-height: none;
+  }
+
+  .card-modal-rules-column,
+  .card-modal-side-column {
+    /* Lange Oracle-Texte vergrößern den Dialog statt einzelne Spalten
+       unabhängig zu scrollen/zu zentrieren. */
+    overflow: visible;
+  }
+}
+
+/* Auch im 2-Spalten-Tablet-Layout soll die rechte Spalte den Dialog
+   nicht künstlich in der Höhe begrenzen. */
+@media (min-width: 761px) and (max-width: 1100px) {
+  .card-modal-side-column {
+    max-height: none;
+  }
+}
