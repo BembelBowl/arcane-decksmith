@@ -2304,6 +2304,65 @@ function selectedPurchaseCandidates(
   return selected;
 }
 
+function fallbackPurchaseCandidates(
+  context: AiRequestContext
+): PurchaseCandidate[] {
+  const candidates =
+    Object.values(
+      context.purchaseByToken
+    );
+
+  if (
+    candidates.length ===
+    0
+  ) {
+    return [];
+  }
+
+  /*
+   * Wenn Groq keine P-Kennung auswählt, soll der Abschnitt nicht leer
+   * bleiben, obwohl bereits Scryfall-verifizierte, legale und nicht
+   * vorhandene Kandidaten ermittelt wurden.
+   *
+   * Positive Rollendefizite haben Vorrang. Danach folgen weitere
+   * verifizierte Alternativen. Die ursprüngliche Kandidatenreihenfolge
+   * bleibt innerhalb gleicher Defizite stabil.
+   */
+  return candidates
+    .map(
+      (
+        candidate,
+        index
+      ) => ({
+        candidate,
+        index
+      })
+    )
+    .sort(
+      (a, b) =>
+        Number(
+          b.candidate.deficit >
+          0
+        ) -
+          Number(
+            a.candidate.deficit >
+            0
+          ) ||
+        b.candidate.deficit -
+          a.candidate.deficit ||
+        a.index -
+          b.index
+    )
+    .slice(
+      0,
+      3
+    )
+    .map(
+      item =>
+        item.candidate
+    );
+}
+
 function deterministicPurchaseReason(
   candidate: PurchaseCandidate
 ): string {
@@ -2337,7 +2396,7 @@ function deterministicPurchaseSection(
     return [
       heading,
       "",
-      "Aus der Scryfall-verifizierten Kandidatenliste wurde aktuell keine Anschaffung ausgewählt, die für diese Analyse einen ausreichend klaren zusätzlichen Nutzen bietet."
+      "Für dieses Deck konnten aktuell keine passenden, Scryfall-verifizierten und regelkonformen Karten außerhalb deiner Sammlung ermittelt werden."
     ].join("\n");
   }
 
@@ -2440,9 +2499,17 @@ function finalClientExplanation(
       context
     );
 
+  const effectivePurchaseCandidates =
+    selected.length >
+    0
+      ? selected
+      : fallbackPurchaseCandidates(
+          context
+        );
+
   const purchaseSection =
     deterministicPurchaseSection(
-      selected
+      effectivePurchaseCandidates
     );
 
   return insertPurchaseSection(
