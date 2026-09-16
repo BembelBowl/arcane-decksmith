@@ -690,7 +690,7 @@ export default function CollectionPage({
         </div>
 
         <div className="collection-filter-bar">
-          <details className="collection-filter-group">
+          <details className="collection-filter-group" name="collection-filter">
             <summary>Farbe {colorFilters.size > 0 ? `(${colorFilters.size})` : ""}</summary>
             <div className="collection-filter-options">
               {[
@@ -714,7 +714,7 @@ export default function CollectionPage({
             </div>
           </details>
 
-          <details className="collection-filter-group">
+          <details className="collection-filter-group" name="collection-filter">
             <summary>Kartentyp {typeFilters.size > 0 ? `(${typeFilters.size})` : ""}</summary>
             <div className="collection-filter-options">
               {TYPE_ORDER.map(type => (
@@ -730,7 +730,7 @@ export default function CollectionPage({
             </div>
           </details>
 
-          <details className="collection-filter-group collection-set-filter">
+          <details className="collection-filter-group collection-set-filter" name="collection-filter">
             <summary>Set {setFilters.size > 0 ? `(${setFilters.size})` : ""}</summary>
             <div className="collection-filter-options collection-set-options">
               {setOptions.map(([code, name]) => (
@@ -747,7 +747,7 @@ export default function CollectionPage({
             </div>
           </details>
 
-          <details className="collection-filter-group">
+          <details className="collection-filter-group" name="collection-filter">
             <summary>Mana Value {manaFilters.size > 0 ? `(${manaFilters.size})` : ""}</summary>
             <div className="collection-filter-options collection-mv-options">
               {["0", "1", "2", "3", "4", "5", "6", "7+"].map(value => (
@@ -830,10 +830,6 @@ export default function CollectionPage({
                       {card.setName ?? card.set.toUpperCase()} · #{card.collectorNumber} · MV {card.manaValue}
                     </div>
                     <p>{card.typeLine}</p>
-                    <div className="collection-card-footer">
-                      <span>{card.count} Exemplare</span>
-                      <span className="collection-card-open-hint">Details öffnen →</span>
-                    </div>
                   </div>
                 </article>
               ))}
