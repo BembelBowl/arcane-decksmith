@@ -34,6 +34,7 @@ interface ScryfallCandidateCard {
   oracle_text?: string;
   color_identity?: string[];
   legalities?: Record<string, string>;
+  prices?: Record<string, string | null>;
 }
 
 interface ScryfallSearchResponse {
@@ -52,6 +53,14 @@ interface PurchaseCandidate {
   currentRoleCount: number;
   targetRoleCount: number;
   deficit: number;
+  priceEur?: number;
+}
+
+export interface PurchaseSuggestionBudget {
+  /** Hard maximum price for one suggested card. Undefined means no limit. */
+  maxPricePerCardEur?: number;
+  /** Hard maximum total price for all suggested cards. Undefined means no limit. */
+  maxPricePerDeckEur?: number;
 }
 
 type CardTokenKind =
@@ -73,6 +82,7 @@ interface AiRequestContext {
     string,
     PurchaseCandidate
   >;
+  purchaseBudget: PurchaseSuggestionBudget;
   commanderBracketSection: string | null;
 }
 
@@ -1399,12 +1409,95 @@ function candidateLegal(
         "legal";
 }
 
+function normalizedBudgetValue(
+  value: number | undefined
+): number | undefined {
+  return Number.isFinite(value) && Number(value) >= 0
+    ? Number(value)
+    : undefined;
+}
+
+function normalizedPurchaseBudget(
+  budget: PurchaseSuggestionBudget = {}
+): PurchaseSuggestionBudget {
+  return {
+    maxPricePerCardEur: normalizedBudgetValue(
+      budget.maxPricePerCardEur
+    ),
+    maxPricePerDeckEur: normalizedBudgetValue(
+      budget.maxPricePerDeckEur
+    )
+  };
+}
+
+function parseCandidateEuroPrice(
+  candidate: ScryfallCandidateCard
+): number | undefined {
+  const raw = candidate.prices?.eur;
+
+  if (!raw) {
+    return undefined;
+  }
+
+  const parsed = Number(raw);
+
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : undefined;
+}
+
+function candidateWithinPerCardBudget(
+  priceEur: number | undefined,
+  budget: PurchaseSuggestionBudget
+): boolean {
+  const max = budget.maxPricePerCardEur;
+
+  if (max === undefined) {
+    return true;
+  }
+
+  return priceEur !== undefined && priceEur <= max;
+}
+
+function takeWithinDeckBudget(
+  candidates: PurchaseCandidate[],
+  budget: PurchaseSuggestionBudget,
+  limit = 3
+): PurchaseCandidate[] {
+  const selected: PurchaseCandidate[] = [];
+  let totalPriceEur = 0;
+  const maxTotal = budget.maxPricePerDeckEur;
+
+  for (const candidate of candidates) {
+    if (selected.length >= limit) {
+      break;
+    }
+
+    if (maxTotal !== undefined) {
+      if (candidate.priceEur === undefined) {
+        continue;
+      }
+
+      if (totalPriceEur + candidate.priceEur > maxTotal) {
+        continue;
+      }
+    }
+
+    selected.push(candidate);
+    totalPriceEur += candidate.priceEur ?? 0;
+  }
+
+  return selected;
+}
+
 async function verifiedPurchaseCandidates(
   deck: DeckRecord,
-  collection: CardRecord[]
+  collection: CardRecord[],
+  budget: PurchaseSuggestionBudget = {}
 ): Promise<
   PurchaseCandidate[]
 > {
+  const normalizedBudget = normalizedPurchaseBudget(budget);
   const ownedNames =
     new Set(
       collection.map(
@@ -1579,6 +1672,20 @@ async function verifiedPurchaseCandidates(
         continue;
       }
 
+      const priceEur =
+        parseCandidateEuroPrice(
+          card
+        );
+
+      if (
+        !candidateWithinPerCardBudget(
+          priceEur,
+          normalizedBudget
+        )
+      ) {
+        continue;
+      }
+
       result.push({
         id:
           card.id,
@@ -1614,7 +1721,11 @@ async function verifiedPurchaseCandidates(
           role.target,
 
         deficit:
-          role.deficit
+          role.deficit,
+
+        ...(priceEur !== undefined
+          ? { priceEur }
+          : {})
       });
 
       seenNames.add(
@@ -1633,12 +1744,23 @@ function purchaseCandidateContext(
   candidates: PurchaseCandidate[],
   purchaseEntries: CardTokenEntry[],
   allEntries: CardTokenEntry[],
-  maxLength: number
+  maxLength: number,
+  budget: PurchaseSuggestionBudget
 ): string {
+  const budgetDescription = [
+    budget.maxPricePerCardEur !== undefined
+      ? `Maximalpreis pro Karte: ${budget.maxPricePerCardEur.toFixed(2)} EUR.`
+      : "Kein Maximalpreis pro Karte.",
+    budget.maxPricePerDeckEur !== undefined
+      ? `Maximalpreis aller ausgewählten Vorschläge zusammen: ${budget.maxPricePerDeckEur.toFixed(2)} EUR.`
+      : "Kein Gesamtbudget für die Vorschläge."
+  ].join(" ");
+
   const header = [
     "SCRYFALL-VERIFIZIERTE OPTIONALE ANSCHAFFUNGSKANDIDATEN",
     "P-Kennungen sind keine Deckkarten.",
-    "Sie wurden vorab über Scryfall auf Existenz, Formatlegalität, Farbidentität bei Commander und Nichtbesitz geprüft.",
+    "Sie wurden vorab über Scryfall auf Existenz, Formatlegalität, Farbidentität bei Commander, Nichtbesitz und konfigurierte Preisgrenzen geprüft.",
+    budgetDescription,
     "Die KI darf aus diesen Kandidaten höchstens drei P-Kennungen auswählen.",
     "Sie darf die Effekte oder Kaufbegründungen nicht selbst formulieren; die sichtbare Darstellung wird nach der Auswahl deterministisch erzeugt.",
     ""
@@ -1682,6 +1804,7 @@ function purchaseCandidateContext(
       `Aktueller Rollenwert ${candidate.currentRoleCount}`,
       `Zielwert ${candidate.targetRoleCount}`,
       `Defizit ${candidate.deficit}`,
+      `Preis ${candidate.priceEur !== undefined ? `${candidate.priceEur.toFixed(2)} EUR` : "unbekannt"}`,
       `MV ${candidate.manaValue}`,
       `Typ ${candidate.typeLine}`,
       `Oracle ${shorten(
@@ -1852,8 +1975,12 @@ function purchaseMapFromEntries(
 
 async function createAiRequestContext(
   deck: DeckRecord,
-  collection: CardRecord[]
+  collection: CardRecord[],
+  purchaseBudget: PurchaseSuggestionBudget = {}
 ): Promise<AiRequestContext> {
+  const normalizedBudget = normalizedPurchaseBudget(
+    purchaseBudget
+  );
   const [
     purchaseCandidates,
     deckEvidence
@@ -1861,7 +1988,8 @@ async function createAiRequestContext(
     await Promise.all([
       verifiedPurchaseCandidates(
         deck,
-        collection
+        collection,
+        normalizedBudget
       ),
       getDeckAnalysisEvidence(
         deck,
@@ -1975,7 +2103,7 @@ async function createAiRequestContext(
     externalEvidence
   ].join("\n");
 
-  const purchaseBudget =
+  const purchaseContextBudget =
     Math.max(
       0,
       Math.min(
@@ -1989,13 +2117,14 @@ async function createAiRequestContext(
     );
 
   const purchaseContext =
-    purchaseBudget >=
+    purchaseContextBudget >=
     450
       ? purchaseCandidateContext(
           purchaseCandidates,
           purchaseEntries,
           allEntries,
-          purchaseBudget
+          purchaseContextBudget,
+          normalizedBudget
         )
       : [
           "SCRYFALL-VERIFIZIERTE OPTIONALE ANSCHAFFUNGSKANDIDATEN",
@@ -2080,11 +2209,14 @@ async function createAiRequestContext(
         purchaseEntries
       ),
 
+    purchaseBudget: normalizedBudget,
+
     commanderBracketSection:
       commanderBracketProgressionSection(
         deck,
         collection,
-        purchaseCandidates
+        purchaseCandidates,
+        normalizedBudget
       )
   };
 }
@@ -2268,9 +2400,7 @@ function selectedPurchaseCandidates(
     return [];
   }
 
-  const selected:
-    PurchaseCandidate[] =
-      [];
+  const candidates: PurchaseCandidate[] = [];
 
   const seen =
     new Set<string>();
@@ -2279,10 +2409,7 @@ function selectedPurchaseCandidates(
     const token
     of tokens
   ) {
-    if (
-      selected.length >=
-      3
-    ) {
+    if (candidates.length >= 3) {
       break;
     }
 
@@ -2309,12 +2436,15 @@ function selectedPurchaseCandidates(
       token
     );
 
-    selected.push(
+    candidates.push(
       candidate
     );
   }
 
-  return selected;
+  return takeWithinDeckBudget(
+    candidates,
+    context.purchaseBudget
+  );
 }
 
 
@@ -2571,7 +2701,8 @@ function bracketCandidateTrait(
 function commanderBracketProgressionSection(
   deck: DeckRecord,
   collection: CardRecord[],
-  candidates: PurchaseCandidate[]
+  candidates: PurchaseCandidate[],
+  purchaseBudget: PurchaseSuggestionBudget = {}
 ): string | null {
   const snapshot =
     commanderBracketSnapshot(
@@ -2637,7 +2768,7 @@ function commanderBracketProgressionSection(
           `oder mindestens **6 Nichtland-Tutoren** (aktuell ${snapshot.tutorCards})`
         ];
 
-  const suggestions =
+  const bracketCandidates =
     candidates
       .map(
         candidate => ({
@@ -2660,11 +2791,20 @@ function commanderBracketProgressionSection(
           Boolean(
             item.trait
           )
-      )
-      .slice(
-        0,
-        3
       );
+
+  const budgetedCandidates = takeWithinDeckBudget(
+    bracketCandidates.map(item => item.candidate),
+    purchaseBudget
+  );
+
+  const budgetedCandidateIds = new Set(
+    budgetedCandidates.map(candidate => candidate.id)
+  );
+
+  const suggestions = bracketCandidates.filter(item =>
+    budgetedCandidateIds.has(item.candidate.id)
+  );
 
   const lines = [
     heading,
@@ -2847,7 +2987,7 @@ function fallbackPurchaseCandidates(
    * verifizierte Alternativen. Die ursprüngliche Kandidatenreihenfolge
    * bleibt innerhalb gleicher Defizite stabil.
    */
-  return candidates
+  const ranked = candidates
     .map(
       (
         candidate,
@@ -2872,14 +3012,15 @@ function fallbackPurchaseCandidates(
         a.index -
           b.index
     )
-    .slice(
-      0,
-      3
-    )
     .map(
       item =>
         item.candidate
     );
+
+  return takeWithinDeckBudget(
+    ranked,
+    context.purchaseBudget
+  );
 }
 
 function deterministicPurchaseReason(
@@ -2928,6 +3069,7 @@ function deterministicPurchaseSection(
           `- **Kategorie:** ${candidate.category}`,
           `- **Mana Value:** ${candidate.manaValue}`,
           `- **Kartentyp:** ${candidate.typeLine}`,
+          `- **Scryfall-Preis:** ${candidate.priceEur !== undefined ? `${candidate.priceEur.toFixed(2).replace(".", ",")} €` : "kein EUR-Preis verfügbar"}`,
           `- **Oracle-Text:** ${candidate.oracleText}`,
           `- **Einordnung:** ${deterministicPurchaseReason(candidate)}`
         ].join("\n")
@@ -3046,7 +3188,8 @@ function finalClientExplanation(
 }
 
 export async function generateAiDeckExplanation(
-  deck: DeckRecord
+  deck: DeckRecord,
+  purchaseBudget: PurchaseSuggestionBudget = {}
 ): Promise<string> {
   const user =
     auth?.currentUser;
@@ -3072,7 +3215,8 @@ export async function generateAiDeckExplanation(
   const context =
     await createAiRequestContext(
       deck,
-      collection
+      collection,
+      purchaseBudget
     );
 
   for (

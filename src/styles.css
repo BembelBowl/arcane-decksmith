@@ -5194,3 +5194,42 @@ footer {
     max-height: none;
   }
 }
+
+.purchase-budget-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(170px, 220px));
+  gap: 1rem;
+  align-items: end;
+}
+
+.purchase-budget-copy {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.purchase-budget-copy small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.purchase-budget-controls label {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.purchase-budget-controls input {
+  width: 100%;
+}
+
+.deck-analysis-budget-panel {
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 820px) {
+  .purchase-budget-controls {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}

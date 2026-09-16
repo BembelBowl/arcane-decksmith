@@ -84,7 +84,8 @@ import {
 } from "./importExport";
 import {
   generateAiDeckExplanation,
-  generateDeckExplanation
+  generateDeckExplanation,
+  type PurchaseSuggestionBudget
 } from "./ai";
 import {
   getBuildDeckEvidence
@@ -3076,6 +3077,71 @@ function TuningSlider({
   );
 }
 
+function optionalEuroLimit(
+  value: string
+): number | undefined {
+  if (!value.trim()) {
+    return undefined;
+  }
+
+  const parsed = Number(
+    value.replace(",", ".")
+  );
+
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : undefined;
+}
+
+function PurchaseBudgetControls({
+  maxCardPrice,
+  maxDeckPrice,
+  onMaxCardPriceChange,
+  onMaxDeckPriceChange
+}: {
+  maxCardPrice: string;
+  maxDeckPrice: string;
+  onMaxCardPriceChange: (value: string) => void;
+  onMaxDeckPriceChange: (value: string) => void;
+}) {
+  return (
+    <div className="purchase-budget-controls">
+      <div className="purchase-budget-copy">
+        <strong>Budget für Kaufvorschläge</strong>
+        <small>
+          Leer lassen = kein Limit. Bei aktivem Limit werden nur Vorschläge mit verifiziertem Scryfall-EUR-Preis berücksichtigt.
+        </small>
+      </div>
+
+      <label>
+        Max. pro Karte (€)
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          placeholder="Unbegrenzt"
+          value={maxCardPrice}
+          onChange={event => onMaxCardPriceChange(event.target.value)}
+        />
+      </label>
+
+      <label>
+        Max. gesamt pro Deck (€)
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          placeholder="Unbegrenzt"
+          value={maxDeckPrice}
+          onChange={event => onMaxDeckPriceChange(event.target.value)}
+        />
+      </label>
+    </div>
+  );
+}
+
 
 type BuilderStepId =
   | "name"
@@ -4241,6 +4307,13 @@ function Decks({
   const [analysisByDeckId, setAnalysisByDeckId] = useState<Record<string, string>>({});
   const [aiBusyDeckId, setAiBusyDeckId] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<CardRecord | null>(null);
+  const [maxSuggestionCardPrice, setMaxSuggestionCardPrice] = useState("");
+  const [maxSuggestionDeckPrice, setMaxSuggestionDeckPrice] = useState("");
+
+  const purchaseBudget: PurchaseSuggestionBudget = {
+    maxPricePerCardEur: optionalEuroLimit(maxSuggestionCardPrice),
+    maxPricePerDeckEur: optionalEuroLimit(maxSuggestionDeckPrice)
+  };
 
   const selectedDeck = selectedDeckId
     ? decks.find(deck => deck.id === selectedDeckId) ?? null
@@ -4257,7 +4330,10 @@ function Decks({
     const deckForAnalysis = deckForAiAnalysis(deck, pool);
 
     try {
-      const text = await generateAiDeckExplanation(deckForAnalysis);
+      const text = await generateAiDeckExplanation(
+        deckForAnalysis,
+        purchaseBudget
+      );
       setAnalysisByDeckId(current => ({ ...current, [deck.id]: text }));
     } catch (error) {
       console.error("KI-Analyse fehlgeschlagen:", error);
@@ -4405,6 +4481,15 @@ function Decks({
         </div>
       </div>
 
+      <div className="panel deck-analysis-budget-panel">
+        <PurchaseBudgetControls
+          maxCardPrice={maxSuggestionCardPrice}
+          maxDeckPrice={maxSuggestionDeckPrice}
+          onMaxCardPriceChange={setMaxSuggestionCardPrice}
+          onMaxDeckPriceChange={setMaxSuggestionDeckPrice}
+        />
+      </div>
+
       <div className="deck-detail-summary panel">
         <div className="stats deck-detail-stats">
           <div>
@@ -4508,6 +4593,13 @@ function DeckEditor({
   const [manualColors, setManualColors] = useState<string[]>([]);
   const [manualTypes, setManualTypes] = useState<string[]>([]);
   const [manualSet, setManualSet] = useState("");
+  const [maxSuggestionCardPrice, setMaxSuggestionCardPrice] = useState("");
+  const [maxSuggestionDeckPrice, setMaxSuggestionDeckPrice] = useState("");
+
+  const purchaseBudget: PurchaseSuggestionBudget = {
+    maxPricePerCardEur: optionalEuroLimit(maxSuggestionCardPrice),
+    maxPricePerDeckEur: optionalEuroLimit(maxSuggestionDeckPrice)
+  };
 
   const previewCard =
     previewCardId
@@ -4850,7 +4942,8 @@ function DeckEditor({
       try {
         const text =
           await generateAiDeckExplanation(
-            deckForAnalysis
+            deckForAnalysis,
+            purchaseBudget
           );
 
         setAnalysisText(
@@ -5216,6 +5309,15 @@ function DeckEditor({
             Speichern
           </button>
         </div>
+      </div>
+
+      <div className="panel deck-analysis-budget-panel">
+        <PurchaseBudgetControls
+          maxCardPrice={maxSuggestionCardPrice}
+          maxDeckPrice={maxSuggestionDeckPrice}
+          onMaxCardPriceChange={setMaxSuggestionCardPrice}
+          onMaxDeckPriceChange={setMaxSuggestionDeckPrice}
+        />
       </div>
 
       <details className="panel manual-settings-panel">
