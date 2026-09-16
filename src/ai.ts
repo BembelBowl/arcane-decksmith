@@ -28,6 +28,7 @@ const EXTERNAL_EVIDENCE_CONTEXT_LIMIT = 2600;
 interface ScryfallCandidateCard {
   id: string;
   name: string;
+  game_changer?: boolean;
   cmc?: number;
   type_line?: string;
   oracle_text?: string;
@@ -42,6 +43,7 @@ interface ScryfallSearchResponse {
 interface PurchaseCandidate {
   id: string;
   name: string;
+  gameChanger: boolean;
   category: string;
   roleName: string;
   manaValue: number;
@@ -71,6 +73,7 @@ interface AiRequestContext {
     string,
     PurchaseCandidate
   >;
+  commanderBracketSection: string | null;
 }
 
 interface WorkerResponse {
@@ -1583,6 +1586,9 @@ async function verifiedPurchaseCandidates(
         name:
           card.name,
 
+        gameChanger:
+          card.game_changer === true,
+
         category:
           role.category,
 
@@ -2072,6 +2078,13 @@ async function createAiRequestContext(
       purchaseMapFromEntries(
         purchaseCandidates,
         purchaseEntries
+      ),
+
+    commanderBracketSection:
+      commanderBracketProgressionSection(
+        deck,
+        collection,
+        purchaseCandidates
       )
   };
 }
@@ -2304,6 +2317,512 @@ function selectedPurchaseCandidates(
   return selected;
 }
 
+
+type CommanderBracketSnapshot = {
+  bracket: 2 | 3 | 4 | 5;
+  label: string;
+  gameChangers: number;
+  extraTurnCards: number;
+  massLandDenialCards: number;
+  tutorCards: number;
+};
+
+function bracketLooksLikeExtraTurn(
+  oracleText: string
+): boolean {
+  return /take an extra turn/i.test(
+    oracleText
+  );
+}
+
+function bracketLooksLikeMassLandDenial(
+  oracleText: string
+): boolean {
+  return (
+    /destroy all lands/i.test(oracleText) ||
+    /destroy all nonbasic lands/i.test(oracleText) ||
+    /return all lands to their owners'? hands/i.test(oracleText) ||
+    /lands don'?t untap/i.test(oracleText) ||
+    /nonbasic lands are mountains/i.test(oracleText) ||
+    /each player sacrifices .*lands?/i.test(oracleText)
+  );
+}
+
+function bracketLooksLikeTutor(
+  oracleText: string
+): boolean {
+  return (
+    /search your library for (?:a|an) (?!basic land|land)/i.test(oracleText) ||
+    /search your library for up to (?:one|two|three|four|\d+) (?!basic land|land)/i.test(oracleText)
+  );
+}
+
+function commanderBracketSnapshot(
+  deck: DeckRecord,
+  collection: CardRecord[]
+): CommanderBracketSnapshot | null {
+  if (
+    deck.format !==
+    "commander"
+  ) {
+    return null;
+  }
+
+  const entries:
+    Array<{
+      card: CardRecord;
+      count: number;
+    }> = [];
+
+  for (
+    const deckCard
+    of deck.cards
+  ) {
+    const source =
+      collection.find(
+        card =>
+          card.id ===
+          deckCard.id
+      );
+
+    if (source) {
+      entries.push({
+        card: source,
+        count:
+          deckCard.count
+      });
+    }
+  }
+
+  for (
+    const commanderId
+    of deck.commanderIds
+  ) {
+    const commander =
+      collection.find(
+        card =>
+          card.id ===
+          commanderId
+      );
+
+    if (commander) {
+      entries.push({
+        card: commander,
+        count: 1
+      });
+    }
+  }
+
+  const countMatching = (
+    predicate:
+      (card: CardRecord) =>
+        boolean
+  ) =>
+    entries.reduce(
+      (
+        sum,
+        entry
+      ) =>
+        sum +
+        (
+          predicate(
+            entry.card
+          )
+            ? entry.count
+            : 0
+        ),
+      0
+    );
+
+  const gameChangers =
+    countMatching(
+      card =>
+        card.gameChanger ===
+        true
+    );
+
+  const extraTurnCards =
+    countMatching(
+      card =>
+        bracketLooksLikeExtraTurn(
+          card.oracleText ??
+          ""
+        )
+    );
+
+  const massLandDenialCards =
+    countMatching(
+      card =>
+        bracketLooksLikeMassLandDenial(
+          card.oracleText ??
+          ""
+        )
+    );
+
+  const tutorCards =
+    countMatching(
+      card =>
+        bracketLooksLikeTutor(
+          card.oracleText ??
+          ""
+        )
+    );
+
+  if (deck.cedh) {
+    return {
+      bracket: 5,
+      label:
+        "Bracket 5 – cEDH",
+      gameChangers,
+      extraTurnCards,
+      massLandDenialCards,
+      tutorCards
+    };
+  }
+
+  let bracket:
+    2 | 3 | 4 =
+      2;
+
+  if (
+    gameChangers > 3 ||
+    massLandDenialCards > 0 ||
+    extraTurnCards >= 3 ||
+    tutorCards >= 6
+  ) {
+    bracket = 4;
+  } else if (
+    gameChangers > 0 ||
+    extraTurnCards > 0 ||
+    tutorCards >= 3
+  ) {
+    bracket = 3;
+  }
+
+  return {
+    bracket,
+    label:
+      bracket === 4
+        ? "Bracket 4 – Optimized"
+        : bracket === 3
+          ? "Bracket 3 – Upgraded"
+          : "Bracket 2 – Core",
+    gameChangers,
+    extraTurnCards,
+    massLandDenialCards,
+    tutorCards
+  };
+}
+
+function bracketCandidateTrait(
+  candidate: PurchaseCandidate,
+  targetBracket:
+    3 | 4
+): string | null {
+  const traits:
+    string[] = [];
+
+  if (
+    candidate.gameChanger
+  ) {
+    traits.push(
+      "Game Changer"
+    );
+  }
+
+  if (
+    bracketLooksLikeExtraTurn(
+      candidate.oracleText
+    )
+  ) {
+    traits.push(
+      "Extra Turn"
+    );
+  }
+
+  if (
+    bracketLooksLikeTutor(
+      candidate.oracleText
+    )
+  ) {
+    traits.push(
+      "Tutor"
+    );
+  }
+
+  if (
+    targetBracket ===
+      4 &&
+    bracketLooksLikeMassLandDenial(
+      candidate.oracleText
+    )
+  ) {
+    traits.push(
+      "mögliche Landverwehrung"
+    );
+  }
+
+  return traits.length >
+    0
+      ? traits.join(", ")
+      : null;
+}
+
+function commanderBracketProgressionSection(
+  deck: DeckRecord,
+  collection: CardRecord[],
+  candidates: PurchaseCandidate[]
+): string | null {
+  const snapshot =
+    commanderBracketSnapshot(
+      deck,
+      collection
+    );
+
+  if (!snapshot) {
+    return null;
+  }
+
+  const heading =
+    "### Nächstes Commander-Bracket";
+
+  if (
+    snapshot.bracket ===
+    5
+  ) {
+    return [
+      heading,
+      "",
+      `**Aktuelle automatische Einordnung:** ${snapshot.label}`,
+      "",
+      "Bracket 5 ist die höchste Stufe. Es gibt daher kein nächsthöheres Commander-Bracket."
+    ].join("\n");
+  }
+
+  if (
+    snapshot.bracket ===
+    4
+  ) {
+    return [
+      heading,
+      "",
+      `**Aktuelle automatische Einordnung:** ${snapshot.label}`,
+      "**Nächste Stufe:** Bracket 5 – cEDH",
+      "",
+      "Bracket 5 wird hier nicht durch das bloße Hinzufügen einer bestimmten Anzahl einzelner Karten abgeleitet. Für cEDH zählen vor allem kompetitive Spielabsicht, maximale Effizienz, sehr hohe Konsistenz, Interaktion und ein entsprechend optimierter Gameplan.",
+      "",
+      "Die App kann deshalb für den Sprung von Bracket 4 auf 5 keine einzelne Karte seriös als ausreichende Änderung ausweisen. Im Deck-Editor muss cEDH bewusst als Ziel gesetzt werden."
+    ].join("\n");
+  }
+
+  const targetBracket:
+    3 | 4 =
+      snapshot.bracket ===
+        2
+        ? 3
+        : 4;
+
+  const criteria =
+    targetBracket ===
+      3
+      ? [
+          `mindestens **1 Game Changer** (aktuell ${snapshot.gameChangers})`,
+          `oder mindestens **1 Extra-Turn-Karte** (aktuell ${snapshot.extraTurnCards})`,
+          `oder mindestens **3 Nichtland-Tutoren** (aktuell ${snapshot.tutorCards})`
+        ]
+      : [
+          `mindestens **4 Game Changer** (aktuell ${snapshot.gameChangers})`,
+          `oder mindestens **1 Karte mit möglicher massenhafter Landverwehrung** (aktuell ${snapshot.massLandDenialCards})`,
+          `oder mindestens **3 Extra-Turn-Karten** (aktuell ${snapshot.extraTurnCards})`,
+          `oder mindestens **6 Nichtland-Tutoren** (aktuell ${snapshot.tutorCards})`
+        ];
+
+  const suggestions =
+    candidates
+      .map(
+        candidate => ({
+          candidate,
+          trait:
+            bracketCandidateTrait(
+              candidate,
+              targetBracket
+            )
+        })
+      )
+      .filter(
+        (
+          item
+        ): item is {
+          candidate:
+            PurchaseCandidate;
+          trait: string;
+        } =>
+          Boolean(
+            item.trait
+          )
+      )
+      .slice(
+        0,
+        3
+      );
+
+  const lines = [
+    heading,
+    "",
+    `**Aktuelle automatische Einordnung:** ${snapshot.label}`,
+    `**Nächste Stufe:** Bracket ${targetBracket} – ${targetBracket === 3 ? "Upgraded" : "Optimized"}`,
+    "",
+    "Nach der aktuell in Arcane Decksmith verwendeten automatischen Heuristik würde bereits **eines** der folgenden Merkmale die nächsthöhere Stufe auslösen:",
+    "",
+    ...criteria.map(
+      item =>
+        `- ${item}`
+    )
+  ];
+
+  if (
+    suggestions.length >
+    0
+  ) {
+    lines.push(
+      "",
+      "**Mögliche verifizierte Karten aus den Anschaffungskandidaten:**"
+    );
+
+    for (
+      const {
+        candidate,
+        trait
+      }
+      of suggestions
+    ) {
+      lines.push(
+        `- **${candidate.name}** – ${trait}; Scryfall-verifiziert, formatlegal und mit der Commander-Farbidentität vereinbar.`
+      );
+    }
+  } else {
+    lines.push(
+      "",
+      "Unter den aktuell ermittelten Scryfall-verifizierten Anschaffungskandidaten wurde keine Karte gefunden, die eines dieser Bracket-Merkmale eindeutig erfüllt."
+    );
+  }
+
+  lines.push(
+    "",
+    "*Hinweis: Das ist eine technische Schätzung anhand automatisch erkennbarer Merkmale. Die tatsächliche Einordnung eines Commander-Decks hängt auch von Spielabsicht, Kombos, Effizienz und dem gesamten Gameplan ab.*"
+  );
+
+  return lines.join(
+    "\n"
+  );
+}
+
+function stripCommanderBracketSection(
+  explanation: string
+): string {
+  const heading =
+    "### Nächstes Commander-Bracket";
+
+  const start =
+    explanation.indexOf(
+      heading
+    );
+
+  if (
+    start <
+    0
+  ) {
+    return explanation;
+  }
+
+  const nextHeading =
+    explanation.indexOf(
+      "\n### ",
+      start +
+        heading.length
+    );
+
+  if (
+    nextHeading <
+    0
+  ) {
+    return explanation
+      .slice(
+        0,
+        start
+      )
+      .trimEnd();
+  }
+
+  return (
+    explanation
+      .slice(
+        0,
+        start
+      )
+      .trimEnd() +
+    "\n\n" +
+    explanation
+      .slice(
+        nextHeading +
+          1
+      )
+      .trimStart()
+  );
+}
+
+function insertCommanderBracketSection(
+  explanation: string,
+  bracketSection: string
+): string {
+  const cleaned =
+    stripCommanderBracketSection(
+      explanation
+    );
+
+  const finalHeading =
+    "### Fazit";
+
+  const finalStart =
+    cleaned.indexOf(
+      finalHeading
+    );
+
+  if (
+    finalStart <
+    0
+  ) {
+    return [
+      cleaned.trimEnd(),
+      "",
+      bracketSection
+    ].join("\n");
+  }
+
+  const before =
+    cleaned
+      .slice(
+        0,
+        finalStart
+      )
+      .trimEnd();
+
+  const after =
+    cleaned
+      .slice(
+        finalStart
+      )
+      .trimStart();
+
+  return [
+    before,
+    "",
+    bracketSection,
+    "",
+    after
+  ].join("\n");
+}
+
 function fallbackPurchaseCandidates(
   context: AiRequestContext
 ): PurchaseCandidate[] {
@@ -2512,8 +3031,16 @@ function finalClientExplanation(
       effectivePurchaseCandidates
     );
 
+  const explanationWithBracket =
+    context.commanderBracketSection
+      ? insertCommanderBracketSection(
+          data.explanation.trim(),
+          context.commanderBracketSection
+        )
+      : data.explanation.trim();
+
   return insertPurchaseSection(
-    data.explanation.trim(),
+    explanationWithBracket,
     purchaseSection
   );
 }
