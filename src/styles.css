@@ -5003,3 +5003,152 @@ footer {
     height: 22px;
   }
 }
+
+
+/* Mobile layout hotfix — Popups + Deckbuilder */
+@media (max-width: 760px) {
+  /* Das Modal wird per Portal direkt unter body gerendert. Der Backdrop ist
+     selbst der Scrollcontainer und liegt sicher über Header/Footer. */
+  .card-modal-backdrop {
+    position: fixed;
+    z-index: 1000;
+    inset: 0;
+    display: block;
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    padding:
+      max(10px, env(safe-area-inset-top))
+      10px
+      max(18px, env(safe-area-inset-bottom));
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .card-modal {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: min(100%, 680px);
+    max-width: 100%;
+    max-height: none;
+    min-height: 0;
+    margin: 0 auto;
+    overflow: visible;
+  }
+
+  .card-modal-image-column,
+  .card-modal-rules-column,
+  .card-modal-side-column {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .card-modal-image-column {
+    padding: 48px 28px 14px;
+  }
+
+  .card-modal-image-column img {
+    width: min(100%, 460px);
+    max-height: none;
+  }
+
+  .card-modal-rules-column,
+  .card-modal-side-column {
+    overflow: visible;
+  }
+
+  .card-modal-side-column {
+    display: block;
+    max-height: none;
+    padding-bottom: 24px;
+  }
+
+  .card-modal-close {
+    position: fixed;
+    z-index: 1002;
+    top: max(12px, env(safe-area-inset-top));
+    right: 12px;
+  }
+
+  /* Automatischer/manueller Builder darf auf schmalen Screens niemals über
+     den Viewport hinausragen. */
+  .build-mode-page,
+  .build-mode-grid,
+  .build-mode-card,
+  .automatic-builder-wizard,
+  .automatic-builder-result,
+  .builder-wizard-card,
+  .builder-step-content,
+  .strategy-choice-grid,
+  .format-choice-grid,
+  .manual-editor-grid,
+  .manual-card-pool-panel,
+  .manual-deck-panel,
+  .manual-filter-panel-full,
+  .builder-board-panel,
+  .deck-board-shell {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .build-mode-grid,
+  .manual-editor-grid,
+  .strategy-choice-grid,
+  .format-choice-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .build-mode-card,
+  .builder-wizard-card,
+  .manual-card-pool-panel,
+  .manual-deck-panel,
+  .builder-board-panel {
+    overflow: hidden;
+  }
+
+  .build-mode-card {
+    padding: 18px 16px;
+  }
+
+  .build-mode-card p,
+  .builder-step-head p,
+  .builder-choice-explanation,
+  .strategy-choice,
+  .manual-panel-heading,
+  .deck-board-card-copy {
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  .builder-wizard-progress {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+  }
+
+  /* Footer darf normalen Seiteninhalt nicht überdecken. Modals liegen durch
+     z-index 1000 darüber. */
+  .app main {
+    padding-bottom: 112px;
+  }
+}
+
+@media (max-width: 430px) {
+  .card-modal-backdrop {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .card-modal-image-column {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .build-mode-card,
+  .builder-wizard-card {
+    border-radius: 14px;
+  }
+}

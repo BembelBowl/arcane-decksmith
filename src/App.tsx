@@ -1273,18 +1273,52 @@ for (
 
   const persistDeck =
     async (d: DeckRecord) => {
-      await saveDeck(uid, d);
-      setDecks(
-        await loadDecks(uid)
-      );
+      try {
+        // Automatisch erzeugte Decks können optionale Felder mit `undefined`
+        // enthalten. Firestore akzeptiert solche Werte nicht in verschachtelten
+        // Objekten. Durch die JSON-Rundreise werden nur serialisierbare Werte
+        // gespeichert, ohne die Deckstruktur zu verändern.
+        const cleanDeck =
+          JSON.parse(
+            JSON.stringify({
+              ...d,
+              updatedAt: Date.now()
+            })
+          ) as DeckRecord;
 
-      navigate("decks");
-      setToast("Deck gespeichert.");
+        await saveDeck(
+          uid,
+          cleanDeck
+        );
 
-      setTimeout(
-        () => setToast(""),
-        2200
-      );
+        setDecks(
+          await loadDecks(uid)
+        );
+
+        navigate("decks");
+        setToast("Deck gespeichert.");
+
+        setTimeout(
+          () => setToast(""),
+          2200
+        );
+      } catch (error) {
+        console.error(
+          "Deck konnte nicht gespeichert werden:",
+          error
+        );
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unbekannter Fehler";
+
+        alert(
+          `Deck konnte nicht gespeichert werden: ${message}`
+        );
+
+        throw error;
+      }
     };
 
   const delCard =
