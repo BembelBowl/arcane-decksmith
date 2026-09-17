@@ -142,6 +142,45 @@ const EUR_FORMATTER =
     }
   );
 
+const OFFICIAL_COLOR_COMBINATION_NAMES: Record<string, string> = {
+  C: "Farblos",
+  W: "Mono-Weiß",
+  U: "Mono-Blau",
+  B: "Mono-Schwarz",
+  R: "Mono-Rot",
+  G: "Mono-Grün",
+  WU: "Azorius",
+  UB: "Dimir",
+  BR: "Rakdos",
+  RG: "Gruul",
+  GW: "Selesnya",
+  WB: "Orzhov",
+  UR: "Izzet",
+  BG: "Golgari",
+  RW: "Boros",
+  GU: "Simic",
+  WUB: "Esper",
+  UBR: "Grixis",
+  BRG: "Jund",
+  RGW: "Naya",
+  GWU: "Bant",
+  WBG: "Abzan",
+  URW: "Jeskai",
+  BGU: "Sultai",
+  RWB: "Mardu",
+  GUR: "Temur"
+};
+
+function officialColorCombinationName(colors: string[]): string | undefined {
+  if (colors.length === 0) return undefined;
+  const order = ["W", "U", "B", "R", "G"];
+  const normalized = colors.length === 1 && colors[0] === "C"
+    ? "C"
+    : order.filter(color => colors.includes(color)).join("");
+  return OFFICIAL_COLOR_COMBINATION_NAMES[normalized];
+}
+
+
 function formatEuro(
   value:
     | number
@@ -4405,6 +4444,7 @@ function Decks({
     .filter((card): card is CardRecord => Boolean(card));
   const bracketEstimate = commanderBracketEstimate(selectedDeck, pool);
   const analysis = analysisByDeckId[selectedDeck.id];
+  const colorCombinationName = officialColorCombinationName(selectedDeck.colors);
 
   return (
     <section className="deck-detail-page">
@@ -4417,6 +4457,7 @@ function Decks({
           <h2>{selectedDeck.name}</h2>
           <p className="muted">
             {selectedDeck.format === "commander" ? "Commander" : "Standard"}
+            {colorCombinationName ? ` · ${colorCombinationName}` : ""}
             {commanders.length > 0 ? ` · ${commanders.map(card => card.name).join(" + ")}` : ""}
           </p>
         </div>
@@ -4481,6 +4522,15 @@ function Decks({
         </div>
       </div>
 
+      <div className="panel deck-analysis-budget-panel">
+        <PurchaseBudgetControls
+          maxCardPrice={maxSuggestionCardPrice}
+          maxDeckPrice={maxSuggestionDeckPrice}
+          onMaxCardPriceChange={setMaxSuggestionCardPrice}
+          onMaxDeckPriceChange={setMaxSuggestionDeckPrice}
+        />
+      </div>
+
       <div className="deck-detail-summary panel">
         <div className="stats deck-detail-stats">
           <div>
@@ -4511,34 +4561,6 @@ function Decks({
               <span>Commander-Bracket</span>
             </div>
           )}
-          <div className="budget-stat">
-            <label>
-              <span>Max. pro Karte (€)</span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                placeholder="Unbegrenzt"
-                value={maxSuggestionCardPrice}
-                onChange={event => setMaxSuggestionCardPrice(event.target.value)}
-              />
-            </label>
-          </div>
-          <div className="budget-stat">
-            <label>
-              <span>Max. gesamt pro Deck (€)</span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                placeholder="Unbegrenzt"
-                value={maxSuggestionDeckPrice}
-                onChange={event => setMaxSuggestionDeckPrice(event.target.value)}
-              />
-            </label>
-          </div>
         </div>
 
         {typeof selectedDeck.score === "number" && (
