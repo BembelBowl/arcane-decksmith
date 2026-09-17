@@ -119,7 +119,10 @@ export default function DeckLibrary({ decks, pool, onOpenDeck }: DeckLibraryProp
                     <span>{formatLabel(deck)}</span>
                     {typeof deck.score === "number" && <span>Score {deck.score}</span>}
                     {colors.length > 0 && (
-                      <span className="deck-library-colors" aria-label="Farbidentität">
+                      <span
+                        className="deck-library-colors"
+                        aria-label={`Farbidentität: ${colors.join("/")}`}
+                      >
                         {colors.map(color => (
                           <img
                             key={color}
