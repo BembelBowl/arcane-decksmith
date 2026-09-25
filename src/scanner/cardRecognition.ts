@@ -51,6 +51,32 @@ export function normalizeCardNameCandidate(text: string): string {
     .trim();
 }
 
+export function extractCardNameCandidates(text: string): string[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map(normalizeOcrText)
+    .filter(Boolean)
+    .filter(line => line.length >= 3 && line.length <= 80)
+    .filter(line => {
+      const upper = line.toUpperCase();
+      if (NOISE_WORDS.has(upper)) return false;
+      const letters = (line.match(/\p{L}/gu) ?? []).length;
+      if (letters < 3) return false;
+      // Reine Metadaten-/Nummernzeilen sind keine Kartennamen.
+      if (/^[A-Z]{2,6}\s+[A-Z]?-?\d{1,4}[A-Z]?(?:\s|$)/i.test(line)) return false;
+      if (/^\d+(?:\s*\/\s*\d+)?$/.test(line)) return false;
+      return true;
+    });
+
+  return [...new Set(lines)]
+    .sort((a, b) => {
+      const aLetters = (a.match(/\p{L}/gu) ?? []).length;
+      const bLetters = (b.match(/\p{L}/gu) ?? []).length;
+      return bLetters - aLetters || b.length - a.length;
+    })
+    .slice(0, 4);
+}
+
 export function parseScannerMetadata(
   rawText: string,
   sets: ScryfallSet[]
@@ -60,10 +86,12 @@ export function parseScannerMetadata(
   const knownSets = new Set(sets.map(set => set.code.toUpperCase()));
 
   let setCode: string | undefined;
-  for (const token of tokens) {
-    const clean = token.replace(/[^A-Z0-9]/g, "");
+  let setTokenIndex = -1;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const clean = tokens[index].replace(/[^A-Z0-9]/g, "");
     if (knownSets.has(clean)) {
       setCode = clean.toLowerCase();
+      setTokenIndex = index;
       break;
     }
   }
@@ -76,12 +104,20 @@ export function parseScannerMetadata(
     collectorNumber = slashMatch[1].replace(/^0+(?=\d)/, "").toLowerCase();
   }
 
+  if (!collectorNumber && setTokenIndex >= 0) {
+    // Im Vollbild können viele zufällige Zahlen vorkommen. Eine Zahl in direkter
+    // Nähe des erkannten Set-Codes ist deshalb der wesentlich bessere Kandidat.
+    const nearby = tokens
+      .slice(Math.max(0, setTokenIndex - 5), Math.min(tokens.length, setTokenIndex + 6))
+      .map(token => token.replace(/[^A-Z0-9-]/g, ""))
+      .filter(token => /^(?:[A-Z]-?)?\d{1,4}[A-Z]?$/.test(token));
+    collectorNumber = nearby[0]?.replace(/^0+(?=\d)/, "").toLowerCase();
+  }
+
   if (!collectorNumber) {
     const candidates = tokens
       .map(token => token.replace(/[^A-Z0-9-]/g, ""))
       .filter(token => /^(?:[A-Z]-?)?\d{1,4}[A-Z]?$/.test(token));
-
-    // Untere Kartenzeilen enthalten oft zuerst die Collector Number.
     collectorNumber = candidates[0]?.replace(/^0+(?=\d)/, "").toLowerCase();
   }
 

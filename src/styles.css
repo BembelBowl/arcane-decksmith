@@ -5322,73 +5322,22 @@ footer {
   object-fit: cover;
 }
 
-.scanner-card-guide {
-  position: absolute;
-  left: 50%;
-  top: 46%;
-  width: min(82vw, 78dvh * 0.63);
-  aspect-ratio: 63 / 88;
-  transform: translate(-50%, -50%);
-  border: 2px solid rgba(255, 255, 255, 0.82);
-  border-radius: 4.2% / 3%;
-  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.28), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-}
-
-.scanner-card-guide::before,
-.scanner-card-guide::after {
-  content: "";
-  position: absolute;
-  left: 4%;
-  right: 4%;
-  border: 1px dashed rgba(255, 255, 255, 0.52);
-}
-
-.scanner-card-guide::before {
-  top: 4%;
-  height: 13%;
-}
-
-.scanner-card-guide::after {
-  bottom: 3%;
-  height: 17%;
-}
-
-.scanner-guide-title,
-.scanner-guide-bottom {
-  position: absolute;
-  left: 5%;
-  z-index: 1;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.64);
-  color: white;
-  font-size: 0.68rem;
-}
-
-.scanner-guide-title {
-  top: 4%;
-}
-
-.scanner-guide-bottom {
-  bottom: 3%;
-}
-
 .scanner-sweep {
   position: absolute;
-  left: 10%;
-  right: 10%;
-  top: 20%;
+  left: 0;
+  right: 0;
+  top: 12%;
   height: 2px;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 0 12px rgba(255, 255, 255, 0.75);
-  animation: scanner-sweep 2.2s ease-in-out infinite alternate;
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.48);
+  animation: scanner-sweep 2.1s ease-in-out infinite alternate;
   pointer-events: none;
 }
 
 @keyframes scanner-sweep {
   from { transform: translateY(0); }
-  to { transform: translateY(33dvh); }
+  to { transform: translateY(68dvh); }
 }
 
 .scanner-torch {

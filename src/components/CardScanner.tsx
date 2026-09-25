@@ -10,15 +10,14 @@ import {
 } from "../scryfall";
 import type { CardFinish } from "../types";
 import {
-  captureScannerMetadataFrame,
-  captureScannerTitleFrame,
+  captureScannerFullFrame,
   openBackCamera,
   setTorch,
   stopCamera,
   supportsTorch
 } from "../scanner/camera";
 import {
-  normalizeCardNameCandidate,
+  extractCardNameCandidates,
   parseScannerMetadata,
   rankPrintings,
   shouldIgnoreName,
@@ -34,6 +33,7 @@ type CardScannerProps = {
 type TesseractResult = { data: { text: string; confidence?: number } };
 type TesseractWorker = {
   recognize: (image: CanvasImageSource) => Promise<TesseractResult>;
+  setParameters?: (params: Record<string, string>) => Promise<void>;
   terminate: () => Promise<void>;
 };
 type TesseractModule = {
@@ -115,7 +115,12 @@ function loadTesseractModule(): Promise<TesseractModule> {
 async function loadTesseract(): Promise<TesseractWorker> {
   if (!tesseractWorkerPromise) {
     tesseractWorkerPromise = loadTesseractModule()
-      .then(tesseract => tesseract.createWorker(["eng", "deu"], 1))
+      .then(async tesseract => {
+        const worker = await tesseract.createWorker(["eng", "deu"], 1);
+        // Sparse text eignet sich besser, wenn die ganze Kamerafläche gelesen wird.
+        await worker.setParameters?.({ tessedit_pageseg_mode: "11" });
+        return worker;
+      })
       .catch(error => {
         tesseractWorkerPromise = null;
         throw error;
@@ -273,22 +278,21 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
       scanningRef.current = true;
 
       try {
-        // Fast Path: zuerst nur den kleinen Metadatenbereich lesen. Set +
-        // Collector Number reichen aus, um das Printing eindeutig zu bestimmen.
-        const metadataFrame = captureScannerMetadataFrame(video);
-        if (!metadataFrame) {
+        // Vollbild-Scan: Ein OCR-Lauf liest den kompletten sichtbaren Kamerabereich.
+        // Set + Collector Number bleiben der schnelle und eindeutige Primärpfad.
+        const fullFrame = captureScannerFullFrame(video);
+        if (!fullFrame) {
           schedule(250);
           return;
         }
 
-        const metadataResult = await worker.recognize(metadataFrame);
+        const ocrResult = await worker.recognize(fullFrame);
         if (cancelledRef.current) return;
 
-        const parsedMetadata = parseScannerMetadata(metadataResult.data.text, sets);
-    
+        const rawText = ocrResult.data.text;
+        const parsedMetadata = parseScannerMetadata(rawText, sets);
         let ranked: RecognitionCandidate[] = [];
         let exactPrinting = false;
-        let name = "";
 
         if (parsedMetadata.setCode && parsedMetadata.collectorNumber) {
           const exactCards = await lookupExactPrinting(
@@ -297,44 +301,26 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
           );
 
           if (exactCards.length > 0) {
-            let matchingCards = exactCards;
-
-            if (parsedMetadata.language) {
-              const allPrintings = await getPrintings(exactCards[0]);
-              const localized = allPrintings.filter(card =>
-                card.set.toLowerCase() === parsedMetadata.setCode &&
-                card.collector_number.toLowerCase() === parsedMetadata.collectorNumber &&
-                card.lang?.toLowerCase() === parsedMetadata.language
-              );
-              if (localized.length > 0) matchingCards = localized;
-            }
-
-            ranked = rankPrintings(matchingCards, "", parsedMetadata).map(candidate => ({
+            ranked = rankPrintings(exactCards, "", parsedMetadata).map(candidate => ({
               ...candidate,
-              score: Math.max(candidate.score, 98),
-              reasons: candidate.reasons.length
-                ? candidate.reasons
-                : ["Set und Collector Number stimmen überein"]
+              score: Math.max(candidate.score, 98)
             }));
             exactPrinting = true;
           }
         }
 
-        // Slow Path nur bei Bedarf: Der deutlich teurere Namens-OCR-Lauf wird
-        // komplett übersprungen, sobald Set + Collector Number erfolgreich waren.
+        // Fallback: Wenn im Vollbild keine eindeutige Set-/Nummer-Kombination
+        // lesbar war, testen wir einige plausible Textzeilen als Kartennamen.
         if (ranked.length === 0) {
-          const titleFrame = captureScannerTitleFrame(video);
-          if (titleFrame) {
-            const titleResult = await worker.recognize(titleFrame);
-            if (cancelledRef.current) return;
-            name = normalizeCardNameCandidate(titleResult.data.text);
-          }
-
-          if (name && !shouldIgnoreName(name)) {
+          const nameCandidates = extractCardNameCandidates(rawText);
+          for (const name of nameCandidates) {
+            if (shouldIgnoreName(name)) continue;
             const fuzzy = await lookupFuzzyCard(name);
-            if (fuzzy) {
-              const printings = await getPrintings(fuzzy);
-              ranked = rankPrintings(printings, name, parsedMetadata).slice(0, 8);
+            if (!fuzzy) continue;
+            const printings = await getPrintings(fuzzy);
+            const candidateRanking = rankPrintings(printings, name, parsedMetadata).slice(0, 8);
+            if (candidateRanking.length > 0 && candidateRanking[0].score > (ranked[0]?.score ?? -1)) {
+              ranked = candidateRanking;
             }
           }
         }
@@ -438,10 +424,6 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
         <div className="scanner-camera">
           <video ref={videoRef} playsInline muted autoPlay />
           <button className="scanner-close" type="button" onClick={onClose} aria-label="Scanner schließen">×</button>
-          <div className="scanner-card-guide" aria-hidden="true">
-            <span className="scanner-guide-title">Name</span>
-            <span className="scanner-guide-bottom">Set / Collector Number</span>
-          </div>
           {!paused && !error && <div className="scanner-sweep" aria-hidden="true" />}
           {torchAvailable && (
             <button className="scanner-torch secondary" type="button" onClick={() => void toggleTorch()}>
@@ -510,8 +492,8 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
               </div>
             ) : (
               <div className="scanner-hint">
-                <strong>Karte vollständig in den Rahmen halten.</strong>
-                <span>Die erkannte Karte erscheint unten. Für die genaue Version liest der Scanner zusätzlich Set und Collector Number am unteren Kartenrand.</span>
+                <strong>Karte ins Kamerabild halten.</strong>
+                <span>Der gesamte sichtbare Bereich wird gescannt.</span>
               </div>
             )}
           </div>

@@ -1,17 +1,9 @@
-export type ScannerFrame = {
-  full: HTMLCanvasElement;
-  title: HTMLCanvasElement;
-  metadata: HTMLCanvasElement;
-};
-
 type SourceRect = {
   x: number;
   y: number;
   width: number;
   height: number;
 };
-
-const CARD_ASPECT = 63 / 88;
 
 function createCanvas(width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
@@ -27,8 +19,8 @@ function visibleSourceRect(video: HTMLVideoElement): SourceRect | null {
   const displayHeight = video.clientHeight;
   if (!sourceWidth || !sourceHeight || !displayWidth || !displayHeight) return null;
 
-  // Das Video wird mit object-fit: cover dargestellt. Dieser Ausschnitt bildet
-  // exakt den tatsächlich sichtbaren Kamerabereich zurück auf die Videoquelle.
+  // Das Video wird mit object-fit: cover dargestellt. Wir lesen deshalb exakt
+  // den Bereich aus, der auf dem Display sichtbar ist – nicht nur einen Rahmen.
   const scale = Math.max(displayWidth / sourceWidth, displayHeight / sourceHeight);
   const visibleWidth = displayWidth / scale;
   const visibleHeight = displayHeight / scale;
@@ -41,38 +33,12 @@ function visibleSourceRect(video: HTMLVideoElement): SourceRect | null {
   };
 }
 
-function scannerCardRect(video: HTMLVideoElement): SourceRect | null {
-  const visible = visibleSourceRect(video);
-  if (!visible) return null;
-
-  const displayWidth = video.clientWidth;
-  const displayHeight = video.clientHeight;
-  const displayCardWidth = Math.min(
-    displayWidth * 0.82,
-    displayHeight * 0.78 * CARD_ASPECT
-  );
-  const displayCardHeight = displayCardWidth / CARD_ASPECT;
-  const displayCardX = (displayWidth - displayCardWidth) / 2;
-  const displayCardY = displayHeight * 0.46 - displayCardHeight / 2;
-
-  const xRatio = visible.width / displayWidth;
-  const yRatio = visible.height / displayHeight;
-
-  return {
-    x: visible.x + displayCardX * xRatio,
-    y: visible.y + displayCardY * yRatio,
-    width: displayCardWidth * xRatio,
-    height: displayCardHeight * yRatio
-  };
-}
-
 function drawVideoCrop(
   video: HTMLVideoElement,
   rect: SourceRect,
-  maxWidth: number,
-  upscale = 2
+  maxWidth: number
 ): HTMLCanvasElement {
-  const targetWidth = Math.min(maxWidth, Math.max(rect.width, rect.width * upscale));
+  const targetWidth = Math.min(maxWidth, rect.width);
   const targetHeight = targetWidth * (rect.height / rect.width);
   const canvas = createCanvas(targetWidth, targetHeight);
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -86,13 +52,12 @@ function drawVideoCrop(
     0, 0, canvas.width, canvas.height
   );
 
-  // Die OCR bekommt nur kleine Ausschnitte. Kontrastanhebung bleibt erhalten,
-  // wird aber auf deutlich weniger Pixel angewendet als zuvor.
+  // Moderate Graustufen-/Kontrastanhebung für OCR über das gesamte Bild.
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = image.data;
   for (let i = 0; i < data.length; i += 4) {
     const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    const contrasted = Math.max(0, Math.min(255, (gray - 128) * 1.35 + 128));
+    const contrasted = Math.max(0, Math.min(255, (gray - 128) * 1.28 + 128));
     data[i] = contrasted;
     data[i + 1] = contrasted;
     data[i + 2] = contrasted;
@@ -101,52 +66,15 @@ function drawVideoCrop(
   return canvas;
 }
 
-export function captureScannerMetadataFrame(video: HTMLVideoElement): HTMLCanvasElement | null {
-  const card = scannerCardRect(video);
-  if (!card) return null;
-
-  return drawVideoCrop(
-    video,
-    {
-      x: card.x + card.width * 0.04,
-      y: card.y + card.height * 0.80,
-      width: card.width * 0.92,
-      height: card.height * 0.17
-    },
-    900,
-    2.15
-  );
-}
-
-export function captureScannerTitleFrame(video: HTMLVideoElement): HTMLCanvasElement | null {
-  const card = scannerCardRect(video);
-  if (!card) return null;
-
-  return drawVideoCrop(
-    video,
-    {
-      x: card.x + card.width * 0.055,
-      y: card.y + card.height * 0.035,
-      width: card.width * 0.89,
-      height: card.height * 0.13
-    },
-    820,
-    2
-  );
-}
-
-// Kompatibilitätsfunktion für möglichen späteren Gebrauch. Der Scanner selbst
-// nutzt die beiden separaten Fast-/Fallback-Crops, damit nicht unnötig beide
-// OCR-Bilder pro Durchlauf erzeugt werden.
-export function captureScannerFrame(video: HTMLVideoElement): ScannerFrame | null {
-  const title = captureScannerTitleFrame(video);
-  const metadata = captureScannerMetadataFrame(video);
-  if (!title || !metadata) return null;
-
-  const full = createCanvas(video.videoWidth, video.videoHeight);
-  const ctx = full.getContext("2d");
-  if (ctx) ctx.drawImage(video, 0, 0, full.width, full.height);
-  return { full, title, metadata };
+/**
+ * Liefert den kompletten sichtbaren Kamerabereich für die OCR. Dadurch kann die
+ * Karte beliebig im Vollbild liegen; ein fest definierter Kartenrahmen ist nicht
+ * mehr Teil der Erkennungslogik.
+ */
+export function captureScannerFullFrame(video: HTMLVideoElement): HTMLCanvasElement | null {
+  const visible = visibleSourceRect(video);
+  if (!visible) return null;
+  return drawVideoCrop(video, visible, 900);
 }
 
 export async function openBackCamera(): Promise<MediaStream> {
