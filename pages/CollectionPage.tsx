@@ -177,6 +177,30 @@ function toggleSetValue(
   return next;
 }
 
+function isSmartphoneOrTablet(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgent = navigator.userAgent ?? "";
+  const isMobileUserAgent =
+    /Android|iPhone|iPad|iPod|Mobile|Tablet|Silk|Kindle/i.test(userAgent);
+  const isIPadDesktopMode =
+    navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  const isCoarseTouchDevice =
+    navigator.maxTouchPoints > 0 &&
+    window.matchMedia("(pointer: coarse)").matches &&
+    window.matchMedia("(hover: none)").matches;
+  const shorterScreenSide = Math.min(window.screen.width, window.screen.height);
+  const hasPhoneOrTabletScreen = shorterScreenSide <= 1024;
+
+  return (
+    isMobileUserAgent ||
+    isIPadDesktopMode ||
+    (isCoarseTouchDevice && hasPhoneOrTabletScreen)
+  );
+}
+
 type CollectionPageProps = {
   cards: CardRecord[];
   onChange: (card: CardRecord) => Promise<void>;
@@ -195,6 +219,7 @@ export default function CollectionPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerAvailable] = useState(() => isSmartphoneOrTablet());
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
@@ -520,13 +545,15 @@ export default function CollectionPage({
         </div>
 
         <div className="collection-page-actions">
-          <button
-            className="scanner-open-button"
-            type="button"
-            onClick={() => setScannerOpen(true)}
-          >
-            <span aria-hidden="true">▣</span> Karte scannen
-          </button>
+          {scannerAvailable && (
+            <button
+              className="scanner-open-button"
+              type="button"
+              onClick={() => setScannerOpen(true)}
+            >
+              <span aria-hidden="true">▣</span> Karte scannen
+            </button>
+          )}
           <button
             className="secondary"
             type="button"
@@ -912,11 +939,13 @@ export default function CollectionPage({
         />
       )}
 
-      <CardScanner
-        open={scannerOpen}
-        onClose={() => setScannerOpen(false)}
-        onAdd={addScannedCard}
-      />
+      {scannerAvailable && (
+        <CardScanner
+          open={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          onAdd={addScannedCard}
+        />
+      )}
     </section>
   );
 }
