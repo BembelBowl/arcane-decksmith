@@ -11,7 +11,8 @@ import {
 } from "../scryfall";
 import type { CardFinish } from "../types";
 import {
-  captureScannerFrame,
+  captureScannerMetadataFrame,
+  captureScannerTitleFrame,
   openBackCamera,
   setTorch,
   stopCamera,
@@ -22,8 +23,7 @@ import {
   parseScannerMetadata,
   rankPrintings,
   shouldIgnoreName,
-  type RecognitionCandidate,
-  type ScannerMetadata
+  type RecognitionCandidate
 } from "../scanner/cardRecognition";
 
 type CardScannerProps = {
@@ -49,7 +49,10 @@ type TesseractWindow = Window & { Tesseract?: TesseractModule };
 
 const TESSERACT_SCRIPT = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
 let tesseractModulePromise: Promise<TesseractModule> | null = null;
-const SCAN_DELAY_MS = 900;
+let tesseractWorkerPromise: Promise<TesseractWorker> | null = null;
+const exactPrintingCache = new Map<string, Promise<ScryfallCard[]>>();
+const fuzzyCardCache = new Map<string, Promise<ScryfallCard | null>>();
+const SCAN_DELAY_MS = 380;
 const HIGH_CONFIDENCE = 92;
 const MEDIUM_CONFIDENCE = 60;
 
@@ -121,17 +124,48 @@ function loadTesseractModule(): Promise<TesseractModule> {
   return tesseractModulePromise;
 }
 
-async function loadTesseract(
-  onProgress: (value: number, label: string) => void
-): Promise<TesseractWorker> {
-  const tesseract = await loadTesseractModule();
-  return tesseract.createWorker(["eng", "deu"], 1, {
-    logger(message) {
-      const progress = typeof message.progress === "number" ? message.progress : 0;
-      const label = message.status === "recognizing text" ? "Karte lesen…" : "Scanner vorbereiten…";
-      onProgress(progress, label);
-    }
-  });
+async function loadTesseract(): Promise<TesseractWorker> {
+  if (!tesseractWorkerPromise) {
+    tesseractWorkerPromise = loadTesseractModule()
+      .then(tesseract => tesseract.createWorker(["eng", "deu"], 1))
+      .catch(error => {
+        tesseractWorkerPromise = null;
+        throw error;
+      });
+  }
+
+  return tesseractWorkerPromise;
+}
+
+async function lookupExactPrinting(
+  setCode: string,
+  collectorNumber: string
+): Promise<ScryfallCard[]> {
+  const key = `${setCode.toLowerCase()}:${collectorNumber.toLowerCase()}`;
+  let pending = exactPrintingCache.get(key);
+  if (!pending) {
+    pending = getCardsBySetAndCollectorNumbers(setCode, [collectorNumber])
+      .then(result => result.cards)
+      .catch(error => {
+        exactPrintingCache.delete(key);
+        throw error;
+      });
+    exactPrintingCache.set(key, pending);
+  }
+  return pending;
+}
+
+async function lookupFuzzyCard(name: string): Promise<ScryfallCard | null> {
+  const key = name.trim().toLocaleLowerCase();
+  let pending = fuzzyCardCache.get(key);
+  if (!pending) {
+    pending = getCardByFuzzyName(name).catch(error => {
+      fuzzyCardCache.delete(key);
+      throw error;
+    });
+    fuzzyCardCache.set(key, pending);
+  }
+  return pending;
 }
 
 export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) {
@@ -144,13 +178,9 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
   const stableRef = useRef<{ id: string; count: number }>({ id: "", count: 0 });
 
   const [sets, setSets] = useState<ScryfallSet[]>([]);
-  const [status, setStatus] = useState("Kamera wird gestartet…");
-  const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const [candidates, setCandidates] = useState<RecognitionCandidate[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [metadata, setMetadata] = useState<ScannerMetadata | null>(null);
-  const [ocrName, setOcrName] = useState("");
   const [finish, setFinish] = useState<CardFinish>("nonfoil");
   const [adding, setAdding] = useState(false);
   const [torchAvailable, setTorchAvailable] = useState(false);
@@ -185,8 +215,6 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
     setError("");
     setCandidates([]);
     setSelectedId(null);
-    setMetadata(null);
-    setOcrName("");
     setAddedMessage("");
     setPaused(false);
     stableRef.current = { id: "", count: 0 };
@@ -196,17 +224,11 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
         const [catalog, stream, worker] = await Promise.all([
           getSets(),
           openBackCamera(),
-          loadTesseract((value, label) => {
-            if (!cancelledRef.current) {
-              setProgress(value);
-              setStatus(label);
-            }
-          })
+          loadTesseract()
         ]);
 
         if (cancelledRef.current) {
           stopCamera(stream);
-          await worker.terminate();
           return;
         }
 
@@ -220,8 +242,6 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
         }
 
         setTorchAvailable(supportsTorch(stream));
-        setProgress(1);
-        setStatus("Karte in den Rahmen halten");
       } catch (cause) {
         console.error(cause);
         setError(
@@ -240,9 +260,7 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
       scanTimerRef.current = null;
       stopCamera(streamRef.current);
       streamRef.current = null;
-      const worker = workerRef.current;
       workerRef.current = null;
-      if (worker) void worker.terminate();
       scanningRef.current = false;
     };
   }, [open]);
@@ -265,63 +283,71 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
       }
 
       scanningRef.current = true;
-      setStatus("Karte lesen…");
-      setProgress(0);
 
       try {
-        const frame = captureScannerFrame(video);
-        if (!frame) {
-          schedule(500);
+        // Fast Path: zuerst nur den kleinen Metadatenbereich lesen. Set +
+        // Collector Number reichen aus, um das Printing eindeutig zu bestimmen.
+        const metadataFrame = captureScannerMetadataFrame(video);
+        if (!metadataFrame) {
+          schedule(250);
           return;
         }
 
-        const titleResult = await worker.recognize(frame.title);
-        const metadataResult = await worker.recognize(frame.metadata);
-
+        const metadataResult = await worker.recognize(metadataFrame);
         if (cancelledRef.current) return;
 
-        const name = normalizeCardNameCandidate(titleResult.data.text);
         const parsedMetadata = parseScannerMetadata(metadataResult.data.text, sets);
-        setOcrName(name);
-        setMetadata(parsedMetadata);
-
+    
         let ranked: RecognitionCandidate[] = [];
+        let exactPrinting = false;
+        let name = "";
 
-        // Beste Route: Set + Collector Number identifiziert genau das Printing.
         if (parsedMetadata.setCode && parsedMetadata.collectorNumber) {
-          const exact = await getCardsBySetAndCollectorNumbers(parsedMetadata.setCode, [parsedMetadata.collectorNumber]);
-          if (exact.cards.length > 0) {
-            let exactCards = exact.cards;
+          const exactCards = await lookupExactPrinting(
+            parsedMetadata.setCode,
+            parsedMetadata.collectorNumber
+          );
 
-            // Set + Collector Number identifizieren das Printing. Bei lokalisierten
-            // Karten wird zusätzlich die erkannte Sprachkennung berücksichtigt.
+          if (exactCards.length > 0) {
+            let matchingCards = exactCards;
+
             if (parsedMetadata.language) {
-              const allPrintings = await getPrintings(exact.cards[0]);
+              const allPrintings = await getPrintings(exactCards[0]);
               const localized = allPrintings.filter(card =>
                 card.set.toLowerCase() === parsedMetadata.setCode &&
                 card.collector_number.toLowerCase() === parsedMetadata.collectorNumber &&
                 card.lang?.toLowerCase() === parsedMetadata.language
               );
-              if (localized.length > 0) exactCards = localized;
+              if (localized.length > 0) matchingCards = localized;
             }
 
-            ranked = rankPrintings(exactCards, name, parsedMetadata);
-            ranked = ranked.map(candidate => ({
+            ranked = rankPrintings(matchingCards, "", parsedMetadata).map(candidate => ({
               ...candidate,
-              score: Math.max(candidate.score, 95),
+              score: Math.max(candidate.score, 98),
               reasons: candidate.reasons.length
                 ? candidate.reasons
                 : ["Set und Collector Number stimmen überein"]
             }));
+            exactPrinting = true;
           }
         }
 
-        // Fallback: Name fuzzy bestimmen und dessen Printings gegen die Metadaten ranken.
-        if (ranked.length === 0 && name && !shouldIgnoreName(name)) {
-          const fuzzy = await getCardByFuzzyName(name);
-          if (fuzzy) {
-            const printings = await getPrintings(fuzzy);
-            ranked = rankPrintings(printings, name, parsedMetadata).slice(0, 8);
+        // Slow Path nur bei Bedarf: Der deutlich teurere Namens-OCR-Lauf wird
+        // komplett übersprungen, sobald Set + Collector Number erfolgreich waren.
+        if (ranked.length === 0) {
+          const titleFrame = captureScannerTitleFrame(video);
+          if (titleFrame) {
+            const titleResult = await worker.recognize(titleFrame);
+            if (cancelledRef.current) return;
+            name = normalizeCardNameCandidate(titleResult.data.text);
+          }
+
+          if (name && !shouldIgnoreName(name)) {
+            const fuzzy = await lookupFuzzyCard(name);
+            if (fuzzy) {
+              const printings = await getPrintings(fuzzy);
+              ranked = rankPrintings(printings, name, parsedMetadata).slice(0, 8);
+            }
           }
         }
 
@@ -329,12 +355,22 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
           stableRef.current = { id: "", count: 0 };
           setCandidates([]);
           setSelectedId(null);
-          setStatus("Noch kein sicherer Treffer – Karte ruhig im Rahmen halten");
-          schedule(650);
+          schedule(380);
           return;
         }
 
         const top = ranked[0];
+
+        // Ein gültiger Scryfall-Treffer über Set + Collector Number ist bereits
+        // eindeutig. Dafür ist kein zweiter OCR-Durchlauf nötig.
+        if (exactPrinting) {
+          stableRef.current = { id: top.card.id, count: 1 };
+          setCandidates(ranked);
+          setSelectedId(top.card.id);
+          setPaused(true);
+          return;
+        }
+
         const stable = stableRef.current.id === top.card.id
           ? { id: top.card.id, count: stableRef.current.count + 1 }
           : { id: top.card.id, count: 1 };
@@ -352,25 +388,21 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
 
         const score = adjusted[0].score;
         if (score >= HIGH_CONFIDENCE && stable.count >= 2) {
-          setStatus("Karte stabil erkannt – bitte bestätigen");
           setPaused(true);
         } else if (score >= MEDIUM_CONFIDENCE) {
-          setStatus("Treffer gefunden – Version prüfen");
           setPaused(true);
         } else {
-          setStatus("Möglicher Treffer – weiter scannen für mehr Sicherheit");
-          schedule(700);
+          schedule(420);
         }
       } catch (cause) {
         console.error(cause);
-        setStatus("Erkennung fehlgeschlagen – neuer Versuch…");
-        schedule(1000);
+        schedule(600);
       } finally {
         scanningRef.current = false;
       }
     };
 
-    schedule(350);
+    schedule(180);
     return () => {
       if (scanTimerRef.current !== null) window.clearTimeout(scanTimerRef.current);
       scanTimerRef.current = null;
@@ -382,12 +414,9 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
   const resumeScanning = () => {
     setCandidates([]);
     setSelectedId(null);
-    setMetadata(null);
-    setOcrName("");
     setAddedMessage("");
     stableRef.current = { id: "", count: 0 };
     setPaused(false);
-    setStatus("Karte in den Rahmen halten");
   };
 
   const addSelected = async () => {
@@ -397,7 +426,6 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
       await onAdd(selected.card, finish);
       if (navigator.vibrate) navigator.vibrate(80);
       setAddedMessage(`${selected.card.name} wurde zur Sammlung hinzugefügt.`);
-      setStatus("Hinzugefügt – nächste Karte bereithalten");
       window.setTimeout(() => {
         if (!cancelledRef.current) resumeScanning();
       }, 1200);
