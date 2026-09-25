@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
-import { getSets, type ScryfallSet } from "../scryfall";
+import CardScanner from "../components/CardScanner";
+import { getSets, normalizeCard, type ScryfallCard, type ScryfallSet } from "../scryfall";
 import { download, toCsv } from "../importExport";
 import type {
   CardFinish,
@@ -193,6 +194,7 @@ export default function CollectionPage({
   const [sort, setSort] = useState("name");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
@@ -470,6 +472,43 @@ export default function CollectionPage({
     setManaFilters(new Set());
   };
 
+  const addScannedCard = async (scryfallCard: ScryfallCard, finish: CardFinish) => {
+    const existing = cards.find(card =>
+      card.id === scryfallCard.id ||
+      (
+        card.oracleId === scryfallCard.oracle_id &&
+        card.set.toLowerCase() === scryfallCard.set.toLowerCase() &&
+        card.collectorNumber.toLowerCase() === scryfallCard.collector_number.toLowerCase()
+      )
+    );
+
+    const fresh = normalizeCard(scryfallCard, 1, finish === "foil");
+
+    if (!existing) {
+      await onChange(fresh);
+      return;
+    }
+
+    const counts = finishCountsFor(existing);
+    const nextCounts = {
+      ...counts,
+      [finish]: counts[finish] + 1
+    };
+
+    await onChange({
+      ...existing,
+      count: existing.count + 1,
+      finishCounts: nextCounts,
+      availableFinishes: fresh.availableFinishes,
+      ...(fresh.priceEur !== undefined ? { priceEur: fresh.priceEur } : {}),
+      ...(fresh.priceEurFoil !== undefined ? { priceEurFoil: fresh.priceEurFoil } : {}),
+      priceUpdatedAt: fresh.priceUpdatedAt,
+      gameChanger: fresh.gameChanger ?? existing.gameChanger,
+      foil: nextCounts.foil > 0 && nextCounts.nonfoil === 0,
+      updatedAt: Date.now()
+    });
+  };
+
   return (
     <section className="collection-page">
       <div className="pagehead">
@@ -480,15 +519,24 @@ export default function CollectionPage({
           </p>
         </div>
 
-        <button
-          className="secondary"
-          type="button"
-          onClick={() =>
-            download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
-          }
-        >
-          CSV export
-        </button>
+        <div className="collection-page-actions">
+          <button
+            className="scanner-open-button"
+            type="button"
+            onClick={() => setScannerOpen(true)}
+          >
+            <span aria-hidden="true">▣</span> Karte scannen
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() =>
+              download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
+            }
+          >
+            CSV export
+          </button>
+        </div>
       </div>
 
       <div className="collection-summary-strip" aria-label="Sammlungsstatistiken">
@@ -830,10 +878,6 @@ export default function CollectionPage({
                       {card.setName ?? card.set.toUpperCase()} · #{card.collectorNumber} · MV {card.manaValue}
                     </div>
                     <p>{card.typeLine}</p>
-                    <div className="collection-card-footer">
-                      <span>{card.count} Exemplare</span>
-                      <span className="collection-card-open-hint">Details öffnen →</span>
-                    </div>
                   </div>
                 </article>
               ))}
@@ -867,6 +911,12 @@ export default function CollectionPage({
           onClose={() => setSelectedCardId(null)}
         />
       )}
+
+      <CardScanner
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onAdd={addScannedCard}
+      />
     </section>
   );
 }
