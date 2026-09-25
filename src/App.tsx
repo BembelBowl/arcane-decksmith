@@ -107,6 +107,7 @@ import CollectionPage from "./pages/CollectionPage";
 import DeckLibrary from "./components/DeckLibrary";
 import DeckBoard from "./components/DeckBoard";
 import CardDetailsModal from "./components/CardDetailsModal";
+import CardScanner from "./components/CardScanner";
 import { useAppNavigation } from "./navigation";
 
 const COLORS = ["W", "U", "B", "R", "G"];
@@ -1751,6 +1752,7 @@ function Search({
     <SearchCollectionTools
       cards={cards}
       onImport={onImport}
+      onAdd={onAdd}
     />
 
     {busy
@@ -1773,17 +1775,50 @@ function Search({
   </section>
 );
 }
+function isSmartphoneOrTablet(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgent = navigator.userAgent ?? "";
+  const isMobileUserAgent =
+    /Android|iPhone|iPad|iPod|Mobile|Tablet|Silk|Kindle/i.test(userAgent);
+  const isIPadDesktopMode =
+    navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  const isCoarseTouchDevice =
+    navigator.maxTouchPoints > 0 &&
+    window.matchMedia("(pointer: coarse)").matches &&
+    window.matchMedia("(hover: none)").matches;
+  const shorterScreenSide = Math.min(window.screen.width, window.screen.height);
+  const hasPhoneOrTabletScreen = shorterScreenSide <= 1024;
+
+  return (
+    isMobileUserAgent ||
+    isIPadDesktopMode ||
+    (isCoarseTouchDevice && hasPhoneOrTabletScreen)
+  );
+}
+
 function SearchCollectionTools({
   cards,
-  onImport
+  onImport,
+  onAdd
 }: {
   cards: CardRecord[];
   onImport: (
     c: CardRecord[]
   ) => Promise<void>;
+  onAdd: (
+    c: ScryfallCard,
+    finish: CardFinish
+  ) => Promise<void>;
 }) {
   const [showImport, setShowImport] =
     useState(false);
+  const [scannerOpen, setScannerOpen] =
+    useState(false);
+  const [scannerAvailable] =
+    useState(() => isSmartphoneOrTablet());
   const [importText, setImportText] =
     useState("");
   const [importBusy, setImportBusy] =
@@ -2381,6 +2416,15 @@ function SearchCollectionTools({
         >
           Bulk hinzufügen
         </button>
+        {scannerAvailable && (
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => setScannerOpen(true)}
+          >
+            Karte scannen
+          </button>
+        )}
       </div>
 
       {showBulkAdd && (
@@ -2642,6 +2686,13 @@ function SearchCollectionTools({
             </div>
           )}
         </div>
+      )}
+      {scannerAvailable && (
+        <CardScanner
+          open={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          onAdd={onAdd}
+        />
       )}
     </>
   );

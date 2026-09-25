@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
-import CardScanner from "../components/CardScanner";
-import { getSets, normalizeCard, type ScryfallCard, type ScryfallSet } from "../scryfall";
+import { getSets, type ScryfallSet } from "../scryfall";
 import { download, toCsv } from "../importExport";
 import type {
   CardFinish,
@@ -177,30 +176,6 @@ function toggleSetValue(
   return next;
 }
 
-function isSmartphoneOrTablet(): boolean {
-  if (typeof window === "undefined" || typeof navigator === "undefined") {
-    return false;
-  }
-
-  const userAgent = navigator.userAgent ?? "";
-  const isMobileUserAgent =
-    /Android|iPhone|iPad|iPod|Mobile|Tablet|Silk|Kindle/i.test(userAgent);
-  const isIPadDesktopMode =
-    navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
-  const isCoarseTouchDevice =
-    navigator.maxTouchPoints > 0 &&
-    window.matchMedia("(pointer: coarse)").matches &&
-    window.matchMedia("(hover: none)").matches;
-  const shorterScreenSide = Math.min(window.screen.width, window.screen.height);
-  const hasPhoneOrTabletScreen = shorterScreenSide <= 1024;
-
-  return (
-    isMobileUserAgent ||
-    isIPadDesktopMode ||
-    (isCoarseTouchDevice && hasPhoneOrTabletScreen)
-  );
-}
-
 type CollectionPageProps = {
   cards: CardRecord[];
   onChange: (card: CardRecord) => Promise<void>;
@@ -218,8 +193,6 @@ export default function CollectionPage({
   const [sort, setSort] = useState("name");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
-  const [scannerOpen, setScannerOpen] = useState(false);
-  const [scannerAvailable] = useState(() => isSmartphoneOrTablet());
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
@@ -497,43 +470,6 @@ export default function CollectionPage({
     setManaFilters(new Set());
   };
 
-  const addScannedCard = async (scryfallCard: ScryfallCard, finish: CardFinish) => {
-    const existing = cards.find(card =>
-      card.id === scryfallCard.id ||
-      (
-        card.oracleId === scryfallCard.oracle_id &&
-        card.set.toLowerCase() === scryfallCard.set.toLowerCase() &&
-        card.collectorNumber.toLowerCase() === scryfallCard.collector_number.toLowerCase()
-      )
-    );
-
-    const fresh = normalizeCard(scryfallCard, 1, finish === "foil");
-
-    if (!existing) {
-      await onChange(fresh);
-      return;
-    }
-
-    const counts = finishCountsFor(existing);
-    const nextCounts = {
-      ...counts,
-      [finish]: counts[finish] + 1
-    };
-
-    await onChange({
-      ...existing,
-      count: existing.count + 1,
-      finishCounts: nextCounts,
-      availableFinishes: fresh.availableFinishes,
-      ...(fresh.priceEur !== undefined ? { priceEur: fresh.priceEur } : {}),
-      ...(fresh.priceEurFoil !== undefined ? { priceEurFoil: fresh.priceEurFoil } : {}),
-      priceUpdatedAt: fresh.priceUpdatedAt,
-      gameChanger: fresh.gameChanger ?? existing.gameChanger,
-      foil: nextCounts.foil > 0 && nextCounts.nonfoil === 0,
-      updatedAt: Date.now()
-    });
-  };
-
   return (
     <section className="collection-page">
       <div className="pagehead">
@@ -544,26 +480,15 @@ export default function CollectionPage({
           </p>
         </div>
 
-        <div className="collection-page-actions">
-          {scannerAvailable && (
-            <button
-              className="scanner-open-button"
-              type="button"
-              onClick={() => setScannerOpen(true)}
-            >
-              <span aria-hidden="true">▣</span> Karte scannen
-            </button>
-          )}
-          <button
-            className="secondary"
-            type="button"
-            onClick={() =>
-              download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
-            }
-          >
-            CSV export
-          </button>
-        </div>
+        <button
+          className="secondary"
+          type="button"
+          onClick={() =>
+            download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
+          }
+        >
+          CSV export
+        </button>
       </div>
 
       <div className="collection-summary-strip" aria-label="Sammlungsstatistiken">
@@ -936,14 +861,6 @@ export default function CollectionPage({
           onChange={onChange}
           onDelete={onDelete}
           onClose={() => setSelectedCardId(null)}
-        />
-      )}
-
-      {scannerAvailable && (
-        <CardScanner
-          open={scannerOpen}
-          onClose={() => setScannerOpen(false)}
-          onAdd={addScannedCard}
         />
       )}
     </section>
