@@ -2,11 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
 import {
   availableFinishes,
-  getCardByFuzzyName,
   getCardsBySetAndCollectorNumbers,
   getSets,
   normalizeCard,
-  type ScryfallCard,
   type ScryfallSet
 } from "../scryfall";
 import { download, parseCollectionCsv, toCsv } from "../importExport";
@@ -501,122 +499,115 @@ export default function CollectionPage({
           importedRows: 0,
           importedCopies: 0,
           issues: [
-            "Keine gültigen CSV-Zeilen gefunden. Erwartet werden mindestens die Spalten name und count."
+            "Keine gültigen CSV-Zeilen gefunden. Erwartet werden ausschließlich die Spalten set und collectorNumber."
           ]
         });
         return;
       }
 
-      const working = new Map(
-        cards.map(card => [
-          card.id,
-          {
-            ...card,
-            ...(card.finishCounts
-              ? { finishCounts: { ...card.finishCounts } }
-              : {})
-          }
-        ])
-      );
+      const working = cards.map(card => ({
+        ...card,
+        ...(card.finishCounts
+          ? { finishCounts: { ...card.finishCounts } }
+          : {})
+      }));
       const changed = new Map<string, CardRecord>();
       const issues: string[] = [];
       let importedRows = 0;
       let importedCopies = 0;
 
+      // Doppelte Zeilen bedeuten mehrere Exemplare derselben Karte.
+      const groupedBySet = new Map<string, Map<string, number>>();
+
       for (const row of rows) {
+        const setCode = row.set.toLowerCase();
+        const collectorNumber = row.collectorNumber.toLowerCase();
+        const counts = groupedBySet.get(setCode) ?? new Map<string, number>();
+        counts.set(collectorNumber, (counts.get(collectorNumber) ?? 0) + 1);
+        groupedBySet.set(setCode, counts);
+      }
+
+      for (const [setCode, counts] of groupedBySet) {
         try {
-          let chosen: ScryfallCard | null = null;
-
-          if (row.set && row.collectorNumber) {
-            const lookup = await getCardsBySetAndCollectorNumbers(
-              row.set,
-              [row.collectorNumber]
-            );
-            chosen = lookup.cards[0] ?? null;
-          }
-
-          if (!chosen) {
-            chosen = await getCardByFuzzyName(row.name);
-          }
-
-          if (!chosen) {
-            issues.push(
-              `${row.count}× ${row.name}: nicht bei Scryfall gefunden.`
-            );
-            continue;
-          }
-
-          const finishes = availableFinishes(chosen);
-          let finish: CardFinish;
-
-          if (row.foil === true) {
-            if (!finishes.includes("foil")) {
-              issues.push(
-                `${row.count}× ${row.name}: diese Druckversion ist nicht als Foil verfügbar.`
-              );
-              continue;
-            }
-            finish = "foil";
-          } else if (row.foil === false) {
-            if (!finishes.includes("nonfoil")) {
-              issues.push(
-                `${row.count}× ${row.name}: diese Druckversion ist nicht als Non-Foil verfügbar.`
-              );
-              continue;
-            }
-            finish = "nonfoil";
-          } else {
-            finish = finishes.includes("nonfoil")
-              ? "nonfoil"
-              : "foil";
-          }
-
-          const normalized = normalizeCard(
-            chosen,
-            row.count,
-            finish === "foil"
+          const lookup = await getCardsBySetAndCollectorNumbers(
+            setCode,
+            Array.from(counts.keys())
           );
 
-          if (row.condition) {
-            normalized.condition = row.condition;
+          const byCollectorNumber = new Map(
+            lookup.cards.map(card => [
+              card.collector_number.toLowerCase(),
+              card
+            ] as const)
+          );
+
+          for (const [collectorNumber, count] of counts) {
+            const chosen = byCollectorNumber.get(collectorNumber);
+
+            if (!chosen) {
+              issues.push(
+                `${setCode.toUpperCase()} #${collectorNumber}: in diesem Set nicht gefunden.`
+              );
+              continue;
+            }
+
+            const finishes = availableFinishes(chosen);
+            const finish: CardFinish | undefined = finishes.includes("nonfoil")
+              ? "nonfoil"
+              : finishes.includes("foil")
+                ? "foil"
+                : undefined;
+
+            if (!finish) {
+              issues.push(
+                `${setCode.toUpperCase()} #${collectorNumber} ${chosen.name}: kein unterstütztes Finish.`
+              );
+              continue;
+            }
+
+            const normalized = normalizeCard(
+              chosen,
+              count,
+              finish === "foil"
+            );
+
+            const existing = working.find(card =>
+              card.id === normalized.id ||
+              (
+                card.oracleId === normalized.oracleId &&
+                card.set.toLowerCase() === normalized.set.toLowerCase() &&
+                card.collectorNumber.toLowerCase() === normalized.collectorNumber.toLowerCase()
+              )
+            );
+
+            if (existing) {
+              const currentCounts = finishCountsFor(existing);
+              const nextCounts = {
+                ...currentCounts,
+                [finish]: currentCounts[finish] + count
+              };
+
+              existing.count += count;
+              existing.finishCounts = nextCounts;
+              existing.availableFinishes = normalized.availableFinishes;
+              existing.priceEur = normalized.priceEur ?? existing.priceEur;
+              existing.priceEurFoil = normalized.priceEurFoil ?? existing.priceEurFoil;
+              existing.priceUpdatedAt = normalized.priceUpdatedAt;
+              existing.gameChanger = normalized.gameChanger ?? existing.gameChanger;
+              existing.foil = nextCounts.foil > 0 && nextCounts.nonfoil === 0;
+              existing.updatedAt = Date.now();
+              changed.set(existing.id, { ...existing });
+            } else {
+              working.push(normalized);
+              changed.set(normalized.id, normalized);
+            }
+
+            importedRows += count;
+            importedCopies += count;
           }
-          if (row.location) {
-            normalized.location = row.location;
-          }
-
-          const existing = working.get(normalized.id);
-
-          if (existing) {
-            const counts = finishCountsFor(existing);
-            const nextCounts = {
-              ...counts,
-              [finish]: counts[finish] + row.count
-            };
-
-            const updated: CardRecord = {
-              ...existing,
-              ...normalized,
-              count: existing.count + row.count,
-              finishCounts: nextCounts,
-              foil: nextCounts.foil > 0 && nextCounts.nonfoil === 0,
-              addedAt: existing.addedAt,
-              updatedAt: Date.now(),
-              condition: row.condition ?? existing.condition,
-              location: row.location ?? existing.location
-            };
-
-            working.set(updated.id, updated);
-            changed.set(updated.id, updated);
-          } else {
-            working.set(normalized.id, normalized);
-            changed.set(normalized.id, normalized);
-          }
-
-          importedRows += 1;
-          importedCopies += row.count;
         } catch {
           issues.push(
-            `${row.count}× ${row.name}: Import konnte nicht aufgelöst werden.`
+            `${setCode.toUpperCase()}: Collector Numbers konnten nicht bei Scryfall geprüft werden.`
           );
         }
       }
@@ -682,18 +673,6 @@ export default function CollectionPage({
             }
           >
             CSV export
-          </button>
-          <button
-            className="secondary"
-            type="button"
-            onClick={() => {
-              const anchor = document.createElement("a");
-              anchor.href = "/collection-import-template.xlsx";
-              anchor.download = "arcane-decksmith-collection-import-template.xlsx";
-              anchor.click();
-            }}
-          >
-            XLSX Vorlage
           </button>
         </div>
       </div>

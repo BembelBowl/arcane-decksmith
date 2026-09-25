@@ -306,200 +306,74 @@ function parseCsvLine(
 }
 
 export interface CollectionCsvRow {
-  name: string;
-  count: number;
-  set?: string;
-  collectorNumber?: string;
-  foil?: boolean;
-  condition?: string;
-  location?: string;
+  set: string;
+  collectorNumber: string;
 }
 
 /*
- * Liest CSV-Daten der Sammlung ein.
+ * Minimaler Sammlungs-CSV-Import analog zum Bulk-Workflow.
  *
- * Mindestens benötigt:
+ * Erwartete Spalten:
  *
- * name,count
+ * set,collectorNumber
  *
- * Optional können zusätzlich vorhanden sein:
- *
- * set
- * collectorNumber
+ * Jede Datenzeile entspricht genau einem Exemplar. Soll eine Karte
+ * mehrfach importiert werden, wird ihre Collector Number entsprechend
+ * mehrfach aufgeführt.
  */
 export function parseCollectionCsv(
   text: string
 ): CollectionCsvRow[] {
   const lines = text
     .split(/\r?\n/)
-    .filter(
-      line =>
-        line.trim().length > 0
-    );
+    .filter(line => line.trim().length > 0);
 
-  /*
-   * Eine CSV-Datei benötigt mindestens
-   * Kopfzeile + eine Datenzeile.
-   */
   if (lines.length < 2) {
     return [];
   }
 
-  const firstLine =
-    lines[0].replace(/^\uFEFF/, "");
+  const firstLine = lines[0].replace(/^\uFEFF/, "");
 
   // Excel nutzt in deutschen Regionen häufig Semikolon statt Komma.
   const delimiter =
-    firstLine.includes(";") &&
-    !firstLine.includes(",")
+    firstLine.includes(";") && !firstLine.includes(",")
       ? ";"
       : ",";
 
-  const headers = parseCsvLine(
-    firstLine,
-    delimiter
-  ).map(
-    header =>
-      header.toLowerCase()
+  const headers = parseCsvLine(firstLine, delimiter).map(header =>
+    header.trim().toLowerCase()
   );
 
-  const nameIndex =
-    headers.indexOf("name");
+  const setIndex = headers.findIndex(header =>
+    ["set", "setcode", "set_code", "set code"].includes(header)
+  );
 
-  const countIndex =
-    headers.indexOf("count");
+  const collectorIndex = headers.findIndex(header =>
+    [
+      "collectornumber",
+      "collector_number",
+      "collector number",
+      "number",
+      "nummer"
+    ].includes(header)
+  );
 
-  /*
-   * Ohne Name und Anzahl behandeln wir den Text
-   * nicht als Collection-CSV.
-   */
-  if (
-    nameIndex === -1 ||
-    countIndex === -1
-  ) {
+  if (setIndex === -1 || collectorIndex === -1) {
     return [];
   }
 
-  const setIndex =
-    headers.indexOf("set");
-
-  const collectorIndex =
-    headers.findIndex(
-      header =>
-        header === "collectornumber" ||
-        header === "collector_number" ||
-        header === "collector number"
-    );
-
-  const foilIndex =
-    headers.indexOf("foil");
-
-  const conditionIndex =
-    headers.indexOf("condition");
-
-  const locationIndex =
-    headers.indexOf("location");
-
-  const parseFoilValue = (
-    value: string | undefined
-  ): boolean | undefined => {
-    if (value === undefined) {
-      return undefined;
-    }
-
-    const normalized =
-      value.trim().toLowerCase();
-
-    if (!normalized) {
-      return undefined;
-    }
-
-    if ([
-      "true",
-      "1",
-      "yes",
-      "ja",
-      "foil"
-    ].includes(normalized)) {
-      return true;
-    }
-
-    if ([
-      "false",
-      "0",
-      "no",
-      "nein",
-      "nonfoil",
-      "non-foil"
-    ].includes(normalized)) {
-      return false;
-    }
-
-    return undefined;
-  };
-
   const rows: CollectionCsvRow[] = [];
 
-  for (
-    const line of lines.slice(1)
-  ) {
-    const cells =
-      parseCsvLine(
-        line,
-        delimiter
-      );
+  for (const line of lines.slice(1)) {
+    const cells = parseCsvLine(line, delimiter);
+    const set = cells[setIndex]?.trim();
+    const collectorNumber = cells[collectorIndex]?.trim();
 
-    const name =
-      cells[nameIndex]?.trim();
-
-    const count =
-      Number(cells[countIndex]);
-
-    if (
-      !name ||
-      !Number.isFinite(count) ||
-      count <= 0
-    ) {
+    if (!set || !collectorNumber) {
       continue;
     }
 
-    rows.push({
-      name,
-      count,
-
-      set:
-        setIndex >= 0
-          ? cells[setIndex]?.trim() ||
-            undefined
-          : undefined,
-
-      collectorNumber:
-        collectorIndex >= 0
-          ? cells[
-              collectorIndex
-            ]?.trim() ||
-            undefined
-          : undefined,
-
-      foil:
-        foilIndex >= 0
-          ? parseFoilValue(
-              cells[foilIndex]
-            )
-          : undefined,
-
-      condition:
-        conditionIndex >= 0
-          ? cells[conditionIndex]?.trim() ||
-            undefined
-          : undefined,
-
-      location:
-        locationIndex >= 0
-          ? cells[locationIndex]?.trim() ||
-            undefined
-          : undefined
-    });
+    rows.push({ set, collectorNumber });
   }
 
   return rows;
