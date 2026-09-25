@@ -53,16 +53,42 @@ function importKey(set: string, collectorNumber: string): string {
   return `${set.trim().toLowerCase()}::${collectorNumber.trim().toLowerCase()}`;
 }
 
-function namesEqual(left: string, right: string): boolean {
-  const normalize = (value: string) =>
-    value
-      .normalize("NFKD")
-      .replace(/[’']/g, "'")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
+function normalizeImportedCardName(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[’']/g, "'")
+    .replace(/\s*\/\/\s*/g, " // ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 
-  return normalize(left) === normalize(right);
+function cardNameLookupCandidates(value: string): string[] {
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (!clean) return [];
+
+  // Doppelseitige Karten werden in Exporten üblicherweise als
+  // "Vorderseite // Rückseite" geschrieben. Scryfalls fuzzy endpoint kann
+  // bei rebalanced A-Karten auf die nicht-rebalanced Variante springen,
+  // wenn der zusammengesetzte Name als Ganzes übergeben wird. Deshalb wird
+  // die Vorderseite zuerst separat versucht. Set + Collector Number bleiben
+  // weiterhin die autoritative Identifikation.
+  const faces = clean
+    .split(/\s*\/\/\s*/)
+    .map(face => face.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set([faces[0], clean, ...faces.slice(1)].filter(Boolean)));
+}
+
+function namesEqual(left: string, right: string): boolean {
+  const normalizedLeft = normalizeImportedCardName(left);
+  const normalizedRight = normalizeImportedCardName(right);
+  if (normalizedLeft === normalizedRight) return true;
+
+  const leftFaces = normalizedLeft.split(" // ");
+  const rightFaces = normalizedRight.split(" // ");
+  return leftFaces.length > 0 && rightFaces.length > 0 && leftFaces[0] === rightFaces[0];
 }
 
 async function resolveImportRows(
@@ -110,19 +136,37 @@ async function resolveImportRows(
     }
 
     if (!card) {
-      const fuzzy = await getCardByFuzzyName(row.name);
+      // DFC-/MDFC-sicherer Namens-Fallback. Besonders bei rebalanced
+      // Arena-Karten wie "A-Mischievous Catgeist // A-Catlike Curiosity"
+      // ist die Vorderseite ein zuverlässigerer fuzzy lookup als der
+      // zusammengesetzte Name. Ein vorhandenes Set/Collector-Paar wird
+      // anschließend weiterhin strikt geprüft.
+      for (const lookupName of cardNameLookupCandidates(row.name)) {
+        const fuzzy = await getCardByFuzzyName(lookupName);
+        if (!fuzzy) continue;
 
-      if (fuzzy && row.edition) {
-        const printings = await getPrintings(fuzzy);
-        const edition = row.edition.trim().toLowerCase();
-        card =
-          printings.find(candidate =>
+        if (row.edition) {
+          const printings = await getPrintings(fuzzy);
+          const edition = row.edition.trim().toLowerCase();
+          const collectorNumber = row.collectorNumber?.trim().toLowerCase();
+          const matchingPrinting = printings.find(candidate =>
             candidate.set.toLowerCase() === edition &&
-            (!row.collectorNumber ||
-              candidate.collector_number.toLowerCase() === row.collectorNumber.toLowerCase())
-          ) ?? null;
-      } else {
+            (!collectorNumber ||
+              candidate.collector_number.trim().toLowerCase() === collectorNumber)
+          );
+
+          if (matchingPrinting) {
+            card = matchingPrinting;
+            break;
+          }
+
+          // Wenn Edition/Collector Number angegeben wurden, darf ein fuzzy
+          // Treffer niemals still auf eine andere Druckversion ausweichen.
+          continue;
+        }
+
         card = fuzzy;
+        break;
       }
     }
 
