@@ -741,6 +741,29 @@ export async function autocomplete(
 }
 
 // Bleibt nur als Kompatibilitäts-Export für die aktuelle App.tsx bestehen.
+export async function getCardByFuzzyName(
+  name: string
+): Promise<ScryfallCard | null> {
+  const clean = name.trim();
+  if (!clean) return null;
+
+  const params = new URLSearchParams({ fuzzy: clean });
+
+  try {
+    const card = await getJson<ScryfallCard>(
+      `${API}/cards/named?${params.toString()}`
+    );
+    rawCardCache.set(card.id, card);
+    cache.set(card.id, normalizeCard(card));
+    return card;
+  } catch (error) {
+    if (error instanceof Error && /Scryfall-Fehler 404/.test(error.message)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function canonicalEnglishCard(
   card: ScryfallCard
 ): Promise<ScryfallCard> {
