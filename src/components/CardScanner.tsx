@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   getCardByFuzzyName,
   getCardsBySetAndCollectorNumbers,
@@ -167,6 +168,15 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
     const options = finishOptions(selected.card);
     if (!options.includes(finish)) setFinish(options[0]);
   }, [finish, selected]);
+
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -406,20 +416,12 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
     if (await setTorch(stream, next)) setTorchOn(next);
   };
 
-  return (
+  return createPortal(
     <div className="scanner-backdrop" role="dialog" aria-modal="true" aria-label="Kartenscanner">
       <div className="scanner-shell">
         <div className="scanner-camera">
           <video ref={videoRef} playsInline muted autoPlay />
           <button className="scanner-close" type="button" onClick={onClose} aria-label="Scanner schließen">×</button>
-          {!error && (
-            <div className="scanner-status-badge">
-              <strong>{status}</strong>
-              <div className="scanner-progress" aria-hidden="true">
-                <span style={{ width: `${Math.round(progress * 100)}%` }} />
-              </div>
-            </div>
-          )}
           <div className="scanner-card-guide" aria-hidden="true">
             <span className="scanner-guide-title">Name</span>
             <span className="scanner-guide-bottom">Set / Collector Number</span>
@@ -508,6 +510,7 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
