@@ -1,7 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
-import { getSets, type ScryfallSet } from "../scryfall";
-import { download, toCsv } from "../importExport";
+import {
+  availableFinishes,
+  getCardByFuzzyName,
+  getCardsBySetAndCollectorNumbers,
+  getSets,
+  normalizeCard,
+  type ScryfallCard,
+  type ScryfallSet
+} from "../scryfall";
+import { download, parseCollectionCsv, toCsv } from "../importExport";
 import type {
   CardFinish,
   CardRecord,
@@ -194,6 +202,13 @@ export default function CollectionPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    importedRows: number;
+    importedCopies: number;
+    issues: string[];
+  } | null>(null);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
@@ -470,6 +485,165 @@ export default function CollectionPage({
     setManaFilters(new Set());
   };
 
+  const importCollectionCsv = async (file: File | undefined) => {
+    if (!file || importBusy) {
+      return;
+    }
+
+    setImportBusy(true);
+    setImportResult(null);
+
+    try {
+      const rows = parseCollectionCsv(await file.text());
+
+      if (rows.length === 0) {
+        setImportResult({
+          importedRows: 0,
+          importedCopies: 0,
+          issues: [
+            "Keine gültigen CSV-Zeilen gefunden. Erwartet werden mindestens die Spalten name und count."
+          ]
+        });
+        return;
+      }
+
+      const working = new Map(
+        cards.map(card => [
+          card.id,
+          {
+            ...card,
+            ...(card.finishCounts
+              ? { finishCounts: { ...card.finishCounts } }
+              : {})
+          }
+        ])
+      );
+      const changed = new Map<string, CardRecord>();
+      const issues: string[] = [];
+      let importedRows = 0;
+      let importedCopies = 0;
+
+      for (const row of rows) {
+        try {
+          let chosen: ScryfallCard | null = null;
+
+          if (row.set && row.collectorNumber) {
+            const lookup = await getCardsBySetAndCollectorNumbers(
+              row.set,
+              [row.collectorNumber]
+            );
+            chosen = lookup.cards[0] ?? null;
+          }
+
+          if (!chosen) {
+            chosen = await getCardByFuzzyName(row.name);
+          }
+
+          if (!chosen) {
+            issues.push(
+              `${row.count}× ${row.name}: nicht bei Scryfall gefunden.`
+            );
+            continue;
+          }
+
+          const finishes = availableFinishes(chosen);
+          let finish: CardFinish;
+
+          if (row.foil === true) {
+            if (!finishes.includes("foil")) {
+              issues.push(
+                `${row.count}× ${row.name}: diese Druckversion ist nicht als Foil verfügbar.`
+              );
+              continue;
+            }
+            finish = "foil";
+          } else if (row.foil === false) {
+            if (!finishes.includes("nonfoil")) {
+              issues.push(
+                `${row.count}× ${row.name}: diese Druckversion ist nicht als Non-Foil verfügbar.`
+              );
+              continue;
+            }
+            finish = "nonfoil";
+          } else {
+            finish = finishes.includes("nonfoil")
+              ? "nonfoil"
+              : "foil";
+          }
+
+          const normalized = normalizeCard(
+            chosen,
+            row.count,
+            finish === "foil"
+          );
+
+          if (row.condition) {
+            normalized.condition = row.condition;
+          }
+          if (row.location) {
+            normalized.location = row.location;
+          }
+
+          const existing = working.get(normalized.id);
+
+          if (existing) {
+            const counts = finishCountsFor(existing);
+            const nextCounts = {
+              ...counts,
+              [finish]: counts[finish] + row.count
+            };
+
+            const updated: CardRecord = {
+              ...existing,
+              ...normalized,
+              count: existing.count + row.count,
+              finishCounts: nextCounts,
+              foil: nextCounts.foil > 0 && nextCounts.nonfoil === 0,
+              addedAt: existing.addedAt,
+              updatedAt: Date.now(),
+              condition: row.condition ?? existing.condition,
+              location: row.location ?? existing.location
+            };
+
+            working.set(updated.id, updated);
+            changed.set(updated.id, updated);
+          } else {
+            working.set(normalized.id, normalized);
+            changed.set(normalized.id, normalized);
+          }
+
+          importedRows += 1;
+          importedCopies += row.count;
+        } catch {
+          issues.push(
+            `${row.count}× ${row.name}: Import konnte nicht aufgelöst werden.`
+          );
+        }
+      }
+
+      for (const card of changed.values()) {
+        await onChange(card);
+      }
+
+      setImportResult({
+        importedRows,
+        importedCopies,
+        issues
+      });
+    } catch {
+      setImportResult({
+        importedRows: 0,
+        importedCopies: 0,
+        issues: ["Die CSV-Datei konnte nicht gelesen werden."]
+      });
+    } finally {
+      setImportBusy(false);
+      if (importInputRef.current) {
+        importInputRef.current.value = "";
+      }
+    }
+  };
+
   return (
     <section className="collection-page">
       <div className="pagehead">
@@ -480,16 +654,67 @@ export default function CollectionPage({
           </p>
         </div>
 
-        <button
-          className="secondary"
-          type="button"
-          onClick={() =>
-            download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
-          }
-        >
-          CSV export
-        </button>
+        <div className="row">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            hidden
+            onChange={event =>
+              void importCollectionCsv(
+                event.target.files?.[0]
+              )
+            }
+          />
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importBusy}
+          >
+            {importBusy ? "CSV Import…" : "CSV Import"}
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() =>
+              download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
+            }
+          >
+            CSV export
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => {
+              const anchor = document.createElement("a");
+              anchor.href = "/collection-import-template.xlsx";
+              anchor.download = "arcane-decksmith-collection-import-template.xlsx";
+              anchor.click();
+            }}
+          >
+            XLSX Vorlage
+          </button>
+        </div>
       </div>
+
+      {importResult && (
+        <div className="notice">
+          <strong>CSV Import:</strong>{" "}
+          {importResult.importedRows > 0
+            ? `${importResult.importedRows} Zeilen / ${importResult.importedCopies} Karten importiert.`
+            : "Keine Karten importiert."}
+          {importResult.issues.length > 0 && (
+            <div className="deck-list">
+              {importResult.issues.map((issue, index) => (
+                <div key={`${issue}-${index}`}>
+                  <span>{issue}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="collection-summary-strip" aria-label="Sammlungsstatistiken">
         <div>

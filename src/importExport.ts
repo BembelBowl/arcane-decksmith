@@ -258,7 +258,8 @@ export function parseList(
  * ein Komma vorkommt.
  */
 function parseCsvLine(
-  line: string
+  line: string,
+  delimiter = ","
 ) {
   const cells: string[] = [];
 
@@ -287,7 +288,7 @@ function parseCsvLine(
         quoted = !quoted;
       }
     } else if (
-      char === "," &&
+      char === delimiter &&
       !quoted
     ) {
       cells.push(value);
@@ -309,6 +310,9 @@ export interface CollectionCsvRow {
   count: number;
   set?: string;
   collectorNumber?: string;
+  foil?: boolean;
+  condition?: string;
+  location?: string;
 }
 
 /*
@@ -341,8 +345,19 @@ export function parseCollectionCsv(
     return [];
   }
 
+  const firstLine =
+    lines[0].replace(/^\uFEFF/, "");
+
+  // Excel nutzt in deutschen Regionen häufig Semikolon statt Komma.
+  const delimiter =
+    firstLine.includes(";") &&
+    !firstLine.includes(",")
+      ? ";"
+      : ",";
+
   const headers = parseCsvLine(
-    lines[0]
+    firstLine,
+    delimiter
   ).map(
     header =>
       header.toLowerCase()
@@ -376,13 +391,63 @@ export function parseCollectionCsv(
         header === "collector number"
     );
 
+  const foilIndex =
+    headers.indexOf("foil");
+
+  const conditionIndex =
+    headers.indexOf("condition");
+
+  const locationIndex =
+    headers.indexOf("location");
+
+  const parseFoilValue = (
+    value: string | undefined
+  ): boolean | undefined => {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    const normalized =
+      value.trim().toLowerCase();
+
+    if (!normalized) {
+      return undefined;
+    }
+
+    if ([
+      "true",
+      "1",
+      "yes",
+      "ja",
+      "foil"
+    ].includes(normalized)) {
+      return true;
+    }
+
+    if ([
+      "false",
+      "0",
+      "no",
+      "nein",
+      "nonfoil",
+      "non-foil"
+    ].includes(normalized)) {
+      return false;
+    }
+
+    return undefined;
+  };
+
   const rows: CollectionCsvRow[] = [];
 
   for (
     const line of lines.slice(1)
   ) {
     const cells =
-      parseCsvLine(line);
+      parseCsvLine(
+        line,
+        delimiter
+      );
 
     const name =
       cells[nameIndex]?.trim();
@@ -413,6 +478,25 @@ export function parseCollectionCsv(
           ? cells[
               collectorIndex
             ]?.trim() ||
+            undefined
+          : undefined,
+
+      foil:
+        foilIndex >= 0
+          ? parseFoilValue(
+              cells[foilIndex]
+            )
+          : undefined,
+
+      condition:
+        conditionIndex >= 0
+          ? cells[conditionIndex]?.trim() ||
+            undefined
+          : undefined,
+
+      location:
+        locationIndex >= 0
+          ? cells[locationIndex]?.trim() ||
             undefined
           : undefined
     });
