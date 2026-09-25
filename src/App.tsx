@@ -107,7 +107,6 @@ import CollectionPage from "./pages/CollectionPage";
 import DeckLibrary from "./components/DeckLibrary";
 import DeckBoard from "./components/DeckBoard";
 import CardDetailsModal from "./components/CardDetailsModal";
-import CardScanner from "./components/CardScanner";
 import { useAppNavigation } from "./navigation";
 
 const COLORS = ["W", "U", "B", "R", "G"];
@@ -1752,7 +1751,6 @@ function Search({
     <SearchCollectionTools
       cards={cards}
       onImport={onImport}
-      onAdd={onAdd}
     />
 
     {busy
@@ -1775,50 +1773,17 @@ function Search({
   </section>
 );
 }
-function isSmartphoneOrTablet(): boolean {
-  if (typeof window === "undefined" || typeof navigator === "undefined") {
-    return false;
-  }
-
-  const userAgent = navigator.userAgent ?? "";
-  const isMobileUserAgent =
-    /Android|iPhone|iPad|iPod|Mobile|Tablet|Silk|Kindle/i.test(userAgent);
-  const isIPadDesktopMode =
-    navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
-  const isCoarseTouchDevice =
-    navigator.maxTouchPoints > 0 &&
-    window.matchMedia("(pointer: coarse)").matches &&
-    window.matchMedia("(hover: none)").matches;
-  const shorterScreenSide = Math.min(window.screen.width, window.screen.height);
-  const hasPhoneOrTabletScreen = shorterScreenSide <= 1024;
-
-  return (
-    isMobileUserAgent ||
-    isIPadDesktopMode ||
-    (isCoarseTouchDevice && hasPhoneOrTabletScreen)
-  );
-}
-
 function SearchCollectionTools({
   cards,
-  onImport,
-  onAdd
+  onImport
 }: {
   cards: CardRecord[];
   onImport: (
     c: CardRecord[]
   ) => Promise<void>;
-  onAdd: (
-    c: ScryfallCard,
-    finish: CardFinish
-  ) => Promise<void>;
 }) {
   const [showImport, setShowImport] =
     useState(false);
-  const [scannerOpen, setScannerOpen] =
-    useState(false);
-  const [scannerAvailable] =
-    useState(() => isSmartphoneOrTablet());
   const [importText, setImportText] =
     useState("");
   const [importBusy, setImportBusy] =
@@ -2207,9 +2172,21 @@ function SearchCollectionTools({
             importText
           );
 
+        /*
+         * CSV-Import folgt demselben Prinzip wie "Bulk hinzufügen":
+         * Eine Zeile besteht ausschließlich aus Set + Collector Number
+         * und entspricht genau einem Exemplar. Für den bestehenden
+         * Textlisten-Import behalten wir Name + Anzahl separat bei.
+         */
         const rows =
           source === "csv"
-            ? csvRows
+            ? csvRows.map(row => ({
+                name: "",
+                count: 1,
+                set: row.set,
+                collectorNumber:
+                  row.collectorNumber
+              }))
             : parsedTextRows.flatMap(
                 row =>
                   row.kind === "card"
@@ -2245,47 +2222,73 @@ function SearchCollectionTools({
 
         for (const row of rows) {
           try {
-            const matches =
-              await searchCards(
-                row.name
-              );
+            let chosen: ScryfallCard | undefined;
 
-            const exactNameMatches =
-              matches.filter(
-                card =>
-                  card.name.toLowerCase() ===
-                  row.name.toLowerCase()
-              );
-
-            let candidates =
-              exactNameMatches.length > 0
-                ? exactNameMatches
-                : matches;
-
-            if (row.set) {
-              candidates =
-                candidates.filter(
-                  card =>
-                    card.set.toLowerCase() ===
-                    row.set!.toLowerCase()
+            if (
+              source === "csv" &&
+              row.set &&
+              row.collectorNumber
+            ) {
+              const lookup =
+                await getCardsBySetAndCollectorNumbers(
+                  row.set,
+                  [row.collectorNumber]
                 );
-            }
 
-            if (row.collectorNumber) {
-              candidates =
-                candidates.filter(
+              chosen =
+                lookup.cards.find(
                   card =>
                     card.collector_number.toLowerCase() ===
                     row.collectorNumber!.toLowerCase()
                 );
+            } else {
+              const matches =
+                await searchCards(
+                  row.name
+                );
+
+              const exactNameMatches =
+                matches.filter(
+                  card =>
+                    card.name.toLowerCase() ===
+                    row.name.toLowerCase()
+                );
+
+              let candidates =
+                exactNameMatches.length > 0
+                  ? exactNameMatches
+                  : matches;
+
+              if (row.set) {
+                candidates =
+                  candidates.filter(
+                    card =>
+                      card.set.toLowerCase() ===
+                      row.set!.toLowerCase()
+                  );
+              }
+
+              if (row.collectorNumber) {
+                candidates =
+                  candidates.filter(
+                    card =>
+                      card.collector_number.toLowerCase() ===
+                      row.collectorNumber!.toLowerCase()
+                  );
+              }
+
+              chosen =
+                candidates[0];
             }
 
-            const chosen =
-              candidates[0];
-
             if (!chosen) {
+              const rowLabel =
+                source === "csv"
+                  ? `${row.set?.toUpperCase() ?? "?"} #${row.collectorNumber ?? "?"}`
+                  : `${row.count}× ${row.name}`;
+
               issues.push(
-                `${row.count}× ${row.name}: nicht bei Scryfall gefunden${row.set ? ` (Set ${row.set.toUpperCase()})` : ""}.`
+                `${rowLabel}: nicht bei Scryfall gefunden.`
               );
               continue;
             }
@@ -2366,8 +2369,13 @@ function SearchCollectionTools({
             addedCopies +=
               row.count;
           } catch {
+            const rowLabel =
+              source === "csv"
+                ? `${row.set?.toUpperCase() ?? "?"} #${row.collectorNumber ?? "?"}`
+                : `${row.count}× ${row.name}`;
+
             issues.push(
-              `${row.count}× ${row.name}: Scryfall-Abfrage fehlgeschlagen.`
+              `${rowLabel}: Scryfall-Abfrage fehlgeschlagen.`
             );
           }
         }
@@ -2416,15 +2424,6 @@ function SearchCollectionTools({
         >
           Bulk hinzufügen
         </button>
-        {scannerAvailable && (
-          <button
-            className="secondary"
-            type="button"
-            onClick={() => setScannerOpen(true)}
-          >
-            Karte scannen
-          </button>
-        )}
       </div>
 
       {showBulkAdd && (
@@ -2686,13 +2685,6 @@ function SearchCollectionTools({
             </div>
           )}
         </div>
-      )}
-      {scannerAvailable && (
-        <CardScanner
-          open={scannerOpen}
-          onClose={() => setScannerOpen(false)}
-          onAdd={onAdd}
-        />
       )}
     </>
   );
