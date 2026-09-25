@@ -5258,27 +5258,37 @@ footer {
 .deck-detail-stats .budget-stat input {
   width: 100%;
   min-width: 0;
+  min-height: 44px;
   margin: 0;
-  padding: 0;
-  border: 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(139, 170, 210, 0.32);
+  border-radius: 10px;
   outline: 0;
-  background: transparent;
-  box-shadow: none;
+  background: rgba(3, 10, 19, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   color: var(--gold-bright);
   font: inherit;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 650;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
 .deck-detail-stats .budget-stat input::placeholder {
-  color: var(--gold-bright);
-  opacity: 0.72;
+  color: var(--muted);
+  opacity: 0.85;
+  font-weight: 500;
+}
+
+.deck-detail-stats .budget-stat input:hover {
+  border-color: rgba(139, 170, 210, 0.5);
+  background: rgba(3, 10, 19, 0.72);
 }
 
 .deck-detail-stats .budget-stat input:focus {
-  border: 0;
+  border-color: var(--gold-bright);
   outline: 0;
-  box-shadow: none;
+  background: rgba(3, 10, 19, 0.82);
+  box-shadow: 0 0 0 3px rgba(220, 184, 96, 0.12);
 }
 
 .deck-detail-summary .deck-score-explanation {
