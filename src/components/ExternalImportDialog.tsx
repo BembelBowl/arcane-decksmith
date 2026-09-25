@@ -77,14 +77,20 @@ async function resolveImportRows(rows: ExternalImportCardRow[]): Promise<Resolve
     bySet.set(set, numbers);
   }
 
-  await Promise.all(
-    [...bySet].map(async ([set, numbers]) => {
-      const result = await getCardsBySetAndCollectorNumbers(set, [...new Set(numbers)]);
-      for (const card of result.cards) {
-        exactMap.set(importKey(card.set, card.collector_number), card);
-      }
-    })
-  );
+  // Absichtlich sequenziell: große CSV-Dateien können viele verschiedene
+  // Sets enthalten. Parallele Gruppen würden im Browser zahlreiche
+  // Scryfall-Requests gleichzeitig starten und können als "Failed to fetch"
+  // bzw. Rate-Limit-Fehler enden.
+  for (const [set, numbers] of bySet) {
+    const result = await getCardsBySetAndCollectorNumbers(
+      set,
+      [...new Set(numbers)]
+    );
+
+    for (const card of result.cards) {
+      exactMap.set(importKey(card.set, card.collector_number), card);
+    }
+  }
 
   const resolved: ResolvedRow[] = [];
   const unresolved: UnresolvedRow[] = [];
