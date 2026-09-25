@@ -5,6 +5,7 @@ import {
   getCardsBySetAndCollectorNumbers,
   getPrintings,
   getSets,
+  imageFor,
   type ScryfallCard,
   type ScryfallSet
 } from "../scryfall";
@@ -445,9 +446,14 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
             {selected ? (
               <div className="scanner-result">
                 <div className="scanner-result-main">
+                  {imageFor(selected.card) && (
+                    <img src={imageFor(selected.card)} alt={selected.card.name} />
+                  )}
                   <div>
                     <h3>{selected.card.name}</h3>
-                    <p><strong>Set:</strong> {selected.card.set.toUpperCase()}</p>
+                    <p>
+                      <strong>Set:</strong> {selected.card.set_name ?? selected.card.set.toUpperCase()} ({selected.card.set.toUpperCase()})
+                    </p>
                     <p><strong>Nummer:</strong> {selected.card.collector_number}</p>
                   </div>
                 </div>
@@ -461,7 +467,7 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
                     >
                       {candidates.map(candidate => (
                         <option key={candidate.card.id} value={candidate.card.id}>
-                          {candidate.card.set.toUpperCase()} #{candidate.card.collector_number}
+                          {candidate.card.set_name ?? candidate.card.set.toUpperCase()} ({candidate.card.set.toUpperCase()}) · #{candidate.card.collector_number}
                         </option>
                       ))}
                     </select>
