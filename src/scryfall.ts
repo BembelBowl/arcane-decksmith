@@ -120,11 +120,20 @@ async function getJson<T>(url: string): Promise<T> {
 
   lastRequest = Date.now();
 
-  const res = await fetch(url, {
-    headers: {
-      Accept: "application/json;q=0.9,*/*;q=0.8"
-    }
-  });
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      headers: {
+        Accept: "application/json;q=0.9,*/*;q=0.8"
+      }
+    });
+  } catch (cause) {
+    console.error("Scryfall request failed", cause);
+    throw new Error(
+      "Scryfall konnte nicht erreicht werden. Bitte Netzwerkverbindung prüfen und den Import erneut versuchen."
+    );
+  }
 
   if (!res.ok) {
     throw new Error(
@@ -574,98 +583,76 @@ export async function getSets(): Promise<ScryfallSet[]> {
   return setsCache;
 }
 
+export async function getCardBySetAndCollectorNumber(
+  setCode: string,
+  collectorNumber: string
+): Promise<ScryfallCard | null> {
+  const cleanSet = setCode.trim().toLowerCase();
+  const cleanNumber = collectorNumber.trim();
+
+  if (!cleanSet || !cleanNumber) return null;
+
+  for (const cached of rawCardCache.values()) {
+    if (
+      cached.set.toLowerCase() === cleanSet &&
+      cached.collector_number.toLowerCase() === cleanNumber.toLowerCase()
+    ) {
+      return cached;
+    }
+  }
+
+  try {
+    const card = await getJson<ScryfallCard>(
+      `${API}/cards/${encodeURIComponent(cleanSet)}/${encodeURIComponent(cleanNumber)}`
+    );
+
+    rawCardCache.set(card.id, card);
+    cache.set(card.id, normalizeCard(card));
+    return card;
+  } catch (error) {
+    if (error instanceof Error && /Scryfall-Fehler 404/.test(error.message)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function getCardsBySetAndCollectorNumbers(
   setCode: string,
   collectorNumbers: string[]
 ): Promise<CollectorNumberLookupResult> {
-  const cleanSet =
-    setCode.trim().toLowerCase();
+  const cleanSet = setCode.trim().toLowerCase();
+  const uniqueNumbers = Array.from(
+    new Set(
+      collectorNumbers
+        .map(number => number.trim())
+        .filter(Boolean)
+    )
+  );
 
-  const uniqueNumbers =
-    Array.from(
-      new Set(
-        collectorNumbers
-          .map(number =>
-            number.trim()
-          )
-          .filter(Boolean)
-      )
-    );
-
-  if (
-    !cleanSet ||
-    uniqueNumbers.length === 0
-  ) {
-    return {
-      cards: [],
-      notFound: []
-    };
+  if (!cleanSet || uniqueNumbers.length === 0) {
+    return { cards: [], notFound: [] };
   }
 
-  const cards:
-    ScryfallCard[] = [];
+  const cards: ScryfallCard[] = [];
+  const notFound: string[] = [];
 
-  const notFound:
-    string[] = [];
-
-  for (
-    let index = 0;
-    index < uniqueNumbers.length;
-    index += 75
-  ) {
-    const batch =
-      uniqueNumbers.slice(
-        index,
-        index + 75
-      );
-
-    const response =
-      await postJson<CollectionResponse>(
-        `${API}/cards/collection`,
-        {
-          identifiers:
-            batch.map(
-              collectorNumber => ({
-                set:
-                  cleanSet,
-                collector_number:
-                  collectorNumber
-              })
-            )
-        }
-      );
-
-    cards.push(
-      ...response.data
+  // Browserfreundlicher Importpfad: einzelne GET-Requests statt
+  // POST /cards/collection. Der POST-Endpunkt kann auf statisch
+  // gehosteten Apps durch CORS/Preflight als "Failed to fetch"
+  // abbrechen. GET /cards/:set/:number funktioniert ohne diesen
+  // zusätzlichen Preflight und ist für Scanner/Import eindeutig.
+  for (const collectorNumber of uniqueNumbers) {
+    const card = await getCardBySetAndCollectorNumber(
+      cleanSet,
+      collectorNumber
     );
 
-    for (
-      const missing
-      of response.not_found ?? []
-    ) {
-      if (
-        typeof missing.collector_number ===
-        "string"
-      ) {
-        notFound.push(
-          missing.collector_number
-        );
-      }
-    }
+    if (card) cards.push(card);
+    else notFound.push(collectorNumber);
   }
 
-  cards.forEach(card => {
-    rawCardCache.set(card.id, card);
-    cache.set(
-      card.id,
-      normalizeCard(card)
-    );
-  });
-
-  return {
-    cards,
-    notFound
-  };
+  return { cards, notFound };
 }
 
 export async function getPrintings(
