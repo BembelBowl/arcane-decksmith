@@ -5259,6 +5259,30 @@ footer {
   width: 100%;
   min-width: 0;
   margin: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--gold-bright);
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.deck-detail-stats .budget-stat input::placeholder {
+  color: var(--gold-bright);
+  opacity: 0.72;
+}
+
+.deck-detail-stats .budget-stat input:focus {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.deck-detail-summary .deck-score-explanation {
+  margin-top: 18px;
 }
 
 /* Mobile live card scanner */
