@@ -1,13 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
-import {
-  availableFinishes,
-  getCardsBySetAndCollectorNumbers,
-  getSets,
-  normalizeCard,
-  type ScryfallSet
-} from "../scryfall";
-import { download, parseCollectionCsv, toCsv } from "../importExport";
+import { getSets, type ScryfallSet } from "../scryfall";
+import { download, toCsv } from "../importExport";
 import type {
   CardFinish,
   CardRecord,
@@ -200,13 +194,6 @@ export default function CollectionPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
-  const importInputRef = useRef<HTMLInputElement | null>(null);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importResult, setImportResult] = useState<{
-    importedRows: number;
-    importedCopies: number;
-    issues: string[];
-  } | null>(null);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
@@ -483,158 +470,6 @@ export default function CollectionPage({
     setManaFilters(new Set());
   };
 
-  const importCollectionCsv = async (file: File | undefined) => {
-    if (!file || importBusy) {
-      return;
-    }
-
-    setImportBusy(true);
-    setImportResult(null);
-
-    try {
-      const rows = parseCollectionCsv(await file.text());
-
-      if (rows.length === 0) {
-        setImportResult({
-          importedRows: 0,
-          importedCopies: 0,
-          issues: [
-            "Keine gültigen CSV-Zeilen gefunden. Erwartet werden ausschließlich die Spalten set und collectorNumber."
-          ]
-        });
-        return;
-      }
-
-      const working = cards.map(card => ({
-        ...card,
-        ...(card.finishCounts
-          ? { finishCounts: { ...card.finishCounts } }
-          : {})
-      }));
-      const changed = new Map<string, CardRecord>();
-      const issues: string[] = [];
-      let importedRows = 0;
-      let importedCopies = 0;
-
-      // Doppelte Zeilen bedeuten mehrere Exemplare derselben Karte.
-      const groupedBySet = new Map<string, Map<string, number>>();
-
-      for (const row of rows) {
-        const setCode = row.set.toLowerCase();
-        const collectorNumber = row.collectorNumber.toLowerCase();
-        const counts = groupedBySet.get(setCode) ?? new Map<string, number>();
-        counts.set(collectorNumber, (counts.get(collectorNumber) ?? 0) + 1);
-        groupedBySet.set(setCode, counts);
-      }
-
-      for (const [setCode, counts] of groupedBySet) {
-        try {
-          const lookup = await getCardsBySetAndCollectorNumbers(
-            setCode,
-            Array.from(counts.keys())
-          );
-
-          const byCollectorNumber = new Map(
-            lookup.cards.map(card => [
-              card.collector_number.toLowerCase(),
-              card
-            ] as const)
-          );
-
-          for (const [collectorNumber, count] of counts) {
-            const chosen = byCollectorNumber.get(collectorNumber);
-
-            if (!chosen) {
-              issues.push(
-                `${setCode.toUpperCase()} #${collectorNumber}: in diesem Set nicht gefunden.`
-              );
-              continue;
-            }
-
-            const finishes = availableFinishes(chosen);
-            const finish: CardFinish | undefined = finishes.includes("nonfoil")
-              ? "nonfoil"
-              : finishes.includes("foil")
-                ? "foil"
-                : undefined;
-
-            if (!finish) {
-              issues.push(
-                `${setCode.toUpperCase()} #${collectorNumber} ${chosen.name}: kein unterstütztes Finish.`
-              );
-              continue;
-            }
-
-            const normalized = normalizeCard(
-              chosen,
-              count,
-              finish === "foil"
-            );
-
-            const existing = working.find(card =>
-              card.id === normalized.id ||
-              (
-                card.oracleId === normalized.oracleId &&
-                card.set.toLowerCase() === normalized.set.toLowerCase() &&
-                card.collectorNumber.toLowerCase() === normalized.collectorNumber.toLowerCase()
-              )
-            );
-
-            if (existing) {
-              const currentCounts = finishCountsFor(existing);
-              const nextCounts = {
-                ...currentCounts,
-                [finish]: currentCounts[finish] + count
-              };
-
-              existing.count += count;
-              existing.finishCounts = nextCounts;
-              existing.availableFinishes = normalized.availableFinishes;
-              existing.priceEur = normalized.priceEur ?? existing.priceEur;
-              existing.priceEurFoil = normalized.priceEurFoil ?? existing.priceEurFoil;
-              existing.priceUpdatedAt = normalized.priceUpdatedAt;
-              existing.gameChanger = normalized.gameChanger ?? existing.gameChanger;
-              existing.foil = nextCounts.foil > 0 && nextCounts.nonfoil === 0;
-              existing.updatedAt = Date.now();
-              changed.set(existing.id, { ...existing });
-            } else {
-              working.push(normalized);
-              changed.set(normalized.id, normalized);
-            }
-
-            importedRows += count;
-            importedCopies += count;
-          }
-        } catch {
-          issues.push(
-            `${setCode.toUpperCase()}: Collector Numbers konnten nicht bei Scryfall geprüft werden.`
-          );
-        }
-      }
-
-      for (const card of changed.values()) {
-        await onChange(card);
-      }
-
-      setImportResult({
-        importedRows,
-        importedCopies,
-        issues
-      });
-    } catch {
-      setImportResult({
-        importedRows: 0,
-        importedCopies: 0,
-        issues: ["Die CSV-Datei konnte nicht gelesen werden."]
-      });
-    } finally {
-      setImportBusy(false);
-      if (importInputRef.current) {
-        importInputRef.current.value = "";
-      }
-    }
-  };
-
   return (
     <section className="collection-page">
       <div className="pagehead">
@@ -645,55 +480,16 @@ export default function CollectionPage({
           </p>
         </div>
 
-        <div className="row">
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            hidden
-            onChange={event =>
-              void importCollectionCsv(
-                event.target.files?.[0]
-              )
-            }
-          />
-          <button
-            className="secondary"
-            type="button"
-            onClick={() => importInputRef.current?.click()}
-            disabled={importBusy}
-          >
-            {importBusy ? "CSV Import…" : "CSV Import"}
-          </button>
-          <button
-            className="secondary"
-            type="button"
-            onClick={() =>
-              download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
-            }
-          >
-            CSV export
-          </button>
-        </div>
+        <button
+          className="secondary"
+          type="button"
+          onClick={() =>
+            download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
+          }
+        >
+          CSV export
+        </button>
       </div>
-
-      {importResult && (
-        <div className="notice">
-          <strong>CSV Import:</strong>{" "}
-          {importResult.importedRows > 0
-            ? `${importResult.importedRows} Zeilen / ${importResult.importedCopies} Karten importiert.`
-            : "Keine Karten importiert."}
-          {importResult.issues.length > 0 && (
-            <div className="deck-list">
-              {importResult.issues.map((issue, index) => (
-                <div key={`${issue}-${index}`}>
-                  <span>{issue}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="collection-summary-strip" aria-label="Sammlungsstatistiken">
         <div>
