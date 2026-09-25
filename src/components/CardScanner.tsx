@@ -5,7 +5,6 @@ import {
   getCardsBySetAndCollectorNumbers,
   getPrintings,
   getSets,
-  imageFor,
   type ScryfallCard,
   type ScryfallSet
 } from "../scryfall";
@@ -62,17 +61,6 @@ function finishOptions(card: ScryfallCard): CardFinish[] {
   if (card.nonfoil || finishes.has("nonfoil") || card.prices?.eur) result.push("nonfoil");
   if (card.foil || finishes.has("foil") || card.prices?.eur_foil) result.push("foil");
   return result.length > 0 ? result : ["nonfoil"];
-}
-
-function candidateLabel(candidate: RecognitionCandidate): string {
-  const card = candidate.card;
-  return `${card.set_name ?? card.set.toUpperCase()} · #${card.collector_number}`;
-}
-
-function confidenceLabel(score: number): string {
-  if (score >= HIGH_CONFIDENCE) return "Sehr sicher";
-  if (score >= MEDIUM_CONFIDENCE) return "Wahrscheinlich";
-  return "Bitte prüfen";
 }
 
 function getLoadedTesseract(): TesseractModule | null {
@@ -475,19 +463,10 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
             {selected ? (
               <div className="scanner-result">
                 <div className="scanner-result-main">
-                  {imageFor(selected.card) && (
-                    <img src={imageFor(selected.card)} alt="" />
-                  )}
                   <div>
-                    <div className="scanner-confidence">
-                      <strong>{confidenceLabel(selected.score)}</strong>
-                      <span>{selected.score}%</span>
-                    </div>
                     <h3>{selected.card.name}</h3>
-                    <p>{candidateLabel(selected)}</p>
-                    {selected.reasons.length > 0 && (
-                      <small>{selected.reasons.join(" · ")}</small>
-                    )}
+                    <p><strong>Set:</strong> {selected.card.set.toUpperCase()}</p>
+                    <p><strong>Nummer:</strong> {selected.card.collector_number}</p>
                   </div>
                 </div>
 
@@ -500,7 +479,7 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
                     >
                       {candidates.map(candidate => (
                         <option key={candidate.card.id} value={candidate.card.id}>
-                          {candidate.card.set.toUpperCase()} #{candidate.card.collector_number} · {candidate.card.set_name ?? candidate.card.set}
+                          {candidate.card.set.toUpperCase()} #{candidate.card.collector_number}
                         </option>
                       ))}
                     </select>

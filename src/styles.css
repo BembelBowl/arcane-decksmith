@@ -5437,36 +5437,24 @@ footer {
 }
 
 .scanner-result-main {
-  display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
-  gap: 13px;
-  align-items: start;
+  display: block;
 }
 
-.scanner-result-main img {
-  width: 78px;
-  aspect-ratio: 63 / 88;
-  object-fit: cover;
-  border-radius: 7px;
+.scanner-result-main h3 {
+  margin: 0 0 8px;
 }
 
-.scanner-result-main h3,
 .scanner-result-main p {
-  margin: 0;
-}
-
-.scanner-result-main p,
-.scanner-result-main small,
-.scanner-hint {
+  margin: 3px 0 0;
   color: var(--muted, #98a4b5);
 }
 
-.scanner-confidence {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 5px;
-  font-size: 0.8rem;
+.scanner-result-main p strong {
+  color: inherit;
+}
+
+.scanner-hint {
+  color: var(--muted, #98a4b5);
 }
 
 .scanner-version-select {
