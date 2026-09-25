@@ -1,0 +1,649 @@
+import { useMemo, useState, type ChangeEvent } from "react";
+import {
+  getCardByFuzzyName,
+  getCardsBySetAndCollectorNumbers,
+  getPrintings,
+  imageFor,
+  normalizeCard,
+  type ScryfallCard
+} from "../scryfall";
+import { roleOf } from "../deckBuilder";
+import {
+  parseExternalImport,
+  type ExternalImportCardRow,
+  type ExternalImportResult
+} from "../importExport";
+import { importExternalDeckUrl } from "../externalImportUrl";
+import type {
+  CardFinishCounts,
+  CardRecord,
+  DeckCard,
+  DeckRecord,
+  Format
+} from "../types";
+import "../importDialog.css";
+
+type ImportMethod = "url" | "file" | "text";
+
+type ResolvedRow = {
+  index: number;
+  row: ExternalImportCardRow;
+  card: ScryfallCard;
+};
+
+type UnresolvedRow = {
+  index: number;
+  row: ExternalImportCardRow;
+};
+
+type ResolveResult = {
+  resolved: ResolvedRow[];
+  unresolved: UnresolvedRow[];
+};
+
+type ExternalImportDialogProps = {
+  mode: "collection" | "deck";
+  pool: CardRecord[];
+  onClose: () => void;
+  onImportCollection?: (cards: CardRecord[]) => Promise<void>;
+  onImportDeck?: (deck: DeckRecord) => Promise<void>;
+};
+
+function importKey(set: string, collectorNumber: string): string {
+  return `${set.trim().toLowerCase()}::${collectorNumber.trim().toLowerCase()}`;
+}
+
+function namesEqual(left: string, right: string): boolean {
+  const normalize = (value: string) =>
+    value
+      .normalize("NFKD")
+      .replace(/[’']/g, "'")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+
+  return normalize(left) === normalize(right);
+}
+
+async function resolveImportRows(rows: ExternalImportCardRow[]): Promise<ResolveResult> {
+  const exactMap = new Map<string, ScryfallCard>();
+  const bySet = new Map<string, string[]>();
+
+  for (const row of rows) {
+    if (!row.edition || !row.collectorNumber) continue;
+    const set = row.edition.trim().toLowerCase();
+    const numbers = bySet.get(set) ?? [];
+    numbers.push(row.collectorNumber.trim());
+    bySet.set(set, numbers);
+  }
+
+  await Promise.all(
+    [...bySet].map(async ([set, numbers]) => {
+      const result = await getCardsBySetAndCollectorNumbers(set, [...new Set(numbers)]);
+      for (const card of result.cards) {
+        exactMap.set(importKey(card.set, card.collector_number), card);
+      }
+    })
+  );
+
+  const resolved: ResolvedRow[] = [];
+  const unresolved: UnresolvedRow[] = [];
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    let card: ScryfallCard | null = null;
+
+    if (row.edition && row.collectorNumber) {
+      card = exactMap.get(importKey(row.edition, row.collectorNumber)) ?? null;
+    }
+
+    if (!card) {
+      const fuzzy = await getCardByFuzzyName(row.name);
+
+      if (fuzzy && row.edition) {
+        const printings = await getPrintings(fuzzy);
+        const edition = row.edition.trim().toLowerCase();
+        card =
+          printings.find(candidate =>
+            candidate.set.toLowerCase() === edition &&
+            (!row.collectorNumber ||
+              candidate.collector_number.toLowerCase() === row.collectorNumber.toLowerCase())
+          ) ?? null;
+      } else {
+        card = fuzzy;
+      }
+    }
+
+    if (!card) {
+      unresolved.push({ index, row });
+      continue;
+    }
+
+    // Wenn Edition/Collector Number fehlen, darf Fuzzy nicht still auf eine andere Karte springen.
+    if ((!row.edition || !row.collectorNumber) && !namesEqual(card.name, row.name)) {
+      unresolved.push({ index, row });
+      continue;
+    }
+
+    resolved.push({ index, row, card });
+  }
+
+  return { resolved, unresolved };
+}
+
+function mergeFinishCounts(
+  current: CardFinishCounts | undefined,
+  count: number,
+  foil: boolean
+): CardFinishCounts {
+  return {
+    nonfoil: Math.max(0, current?.nonfoil ?? 0) + (foil ? 0 : count),
+    foil: Math.max(0, current?.foil ?? 0) + (foil ? count : 0)
+  };
+}
+
+function collectionCardsFromResolved(rows: ResolvedRow[]): CardRecord[] {
+  const byId = new Map<string, CardRecord>();
+
+  for (const { row, card } of rows) {
+    const existing = byId.get(card.id);
+
+    if (!existing) {
+      byId.set(card.id, normalizeCard(card, row.count, row.foil));
+      continue;
+    }
+
+    const finishCounts = mergeFinishCounts(existing.finishCounts, row.count, row.foil);
+    byId.set(card.id, {
+      ...existing,
+      count: existing.count + row.count,
+      foil: finishCounts.foil > 0 && finishCounts.nonfoil === 0,
+      finishCounts,
+      updatedAt: Date.now()
+    });
+  }
+
+  return [...byId.values()];
+}
+
+function deckFromResolved(
+  rows: ResolvedRow[],
+  pool: CardRecord[],
+  name: string,
+  format: Format,
+  provider: string,
+  commanderOverrideId?: string
+): DeckRecord {
+  const sourceCards = collectionCardsFromResolved(rows);
+  const sourceById = new Map(sourceCards.map(card => [card.id, card]));
+  const deckCardsByKey = new Map<string, DeckCard>();
+  const commanderIds: string[] = [];
+  const sideboardKeys = new Set<string>();
+
+  for (const { row, card } of rows) {
+    const source = sourceById.get(card.id) ?? normalizeCard(card, row.count, row.foil);
+    const key = card.id;
+    const current = deckCardsByKey.get(key);
+    const finishCounts = mergeFinishCounts(current?.finishCounts, row.count, row.foil);
+
+    deckCardsByKey.set(key, {
+      id: card.id,
+      name: card.name,
+      count: (current?.count ?? 0) + row.count,
+      manaValue: source.manaValue,
+      typeLine: source.typeLine,
+      role: roleOf(source),
+      reason: `Importiert aus ${provider}`,
+      available: pool.find(item => item.id === card.id)?.count ?? 0,
+      set: card.set,
+      setName: card.set_name,
+      collectorNumber: card.collector_number,
+      foil: finishCounts.foil > 0 && finishCounts.nonfoil === 0,
+      finishCounts
+    });
+
+    if (row.section === "commander") {
+      if (!commanderIds.includes(card.id)) commanderIds.push(card.id);
+    } else if (row.section === "sideboard") {
+      sideboardKeys.add(key);
+    }
+  }
+
+  const allDeckCards = [...deckCardsByKey.values()];
+  const commanders = format === "commander"
+    ? (commanderIds.length > 0
+        ? commanderIds.slice(0, 2)
+        : commanderOverrideId
+          ? [commanderOverrideId]
+          : [])
+    : [];
+  const commanderSet = new Set(commanders);
+  const sideboard = allDeckCards.filter(card => sideboardKeys.has(card.id) && !commanderSet.has(card.id));
+  const cards = allDeckCards.filter(card => !sideboardKeys.has(card.id) && !commanderSet.has(card.id));
+
+  const colorSource = commanders.length > 0
+    ? sourceCards.filter(card => commanders.includes(card.id))
+    : sourceCards;
+  const colors = Array.from(new Set(colorSource.flatMap(card => card.colorIdentity ?? [])));
+  const now = Date.now();
+
+  return {
+    id: crypto.randomUUID(),
+    name: name.trim() || "Importiertes Deck",
+    format,
+    commanderIds: commanders,
+    cards,
+    sideboard,
+    colors,
+    createdAt: now,
+    updatedAt: now,
+    notes: `Importiert aus ${provider}.`,
+    sourceCards,
+    importSource: provider
+  };
+}
+
+function fileBaseName(filename: string): string {
+  return filename.replace(/\.[^.]+$/, "").trim() || "Importiertes Deck";
+}
+
+function sectionLabel(section: ExternalImportCardRow["section"]): string {
+  if (section === "commander") return "Commander";
+  if (section === "sideboard") return "Sideboard";
+  return "Mainboard";
+}
+
+function inferredFormat(result: ExternalImportResult): Format {
+  if (result.format) return result.format;
+  if (result.rows.some(row => row.section === "commander")) return "commander";
+  const mainCopies = result.rows
+    .filter(row => row.section !== "sideboard")
+    .reduce((sum, row) => sum + row.count, 0);
+  return mainCopies >= 90 && mainCopies <= 110 ? "commander" : "standard";
+}
+
+export default function ExternalImportDialog({
+  mode,
+  pool,
+  onClose,
+  onImportCollection,
+  onImportDeck
+}: ExternalImportDialogProps) {
+  const [method, setMethod] = useState<ImportMethod>("url");
+  const [url, setUrl] = useState("");
+  const [text, setText] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("");
+  const [parsed, setParsed] = useState<ExternalImportResult | null>(null);
+  const [deckName, setDeckName] = useState("Importiertes Deck");
+  const [format, setFormat] = useState<Format>("commander");
+  const [commanderOverrideId, setCommanderOverrideId] = useState("");
+  const [resolveResult, setResolveResult] = useState<ResolveResult | null>(null);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const totalCopies = useMemo(
+    () => parsed?.rows.reduce((sum, row) => sum + row.count, 0) ?? 0,
+    [parsed]
+  );
+
+  const selectedResolved = useMemo(
+    () => resolveResult?.resolved.filter(item => selectedRows.has(item.index)) ?? [],
+    [resolveResult, selectedRows]
+  );
+
+  const selectedCopies = useMemo(
+    () => selectedResolved.reduce((sum, item) => sum + item.row.count, 0),
+    [selectedResolved]
+  );
+
+  const commanderCandidates = useMemo(() => {
+    const seen = new Set<string>();
+    return selectedResolved
+      .filter(({ row, card }) => {
+        if (row.section === "sideboard" || seen.has(card.id)) return false;
+        const commanderLike =
+          /\bLegendary\b.*\bCreature\b/i.test(card.type_line ?? "") ||
+          /can be your commander/i.test(card.oracle_text ?? "");
+        if (commanderLike) seen.add(card.id);
+        return commanderLike;
+      })
+      .map(({ card }) => card);
+  }, [selectedResolved]);
+
+  const hasExplicitCommander = useMemo(
+    () => selectedResolved.some(item => item.row.section === "commander"),
+    [selectedResolved]
+  );
+
+  const resetPreview = () => {
+    setParsed(null);
+    setResolveResult(null);
+    setSelectedRows(new Set());
+    setConfirmed(false);
+    setCommanderOverrideId("");
+    setError("");
+  };
+
+  const changeMethod = (next: ImportMethod) => {
+    setMethod(next);
+    resetPreview();
+  };
+
+  const resolveParsed = async (
+    next: ExternalImportResult,
+    label: string,
+    suggestedDeckName?: string
+  ) => {
+    setBusy(true);
+    setError("");
+    setParsed(next);
+    setSourceLabel(label);
+    setFormat(inferredFormat(next));
+    if (suggestedDeckName) setDeckName(suggestedDeckName);
+
+    try {
+      const resolved = await resolveImportRows(next.rows);
+      setResolveResult(resolved);
+      setSelectedRows(new Set(resolved.resolved.map(item => item.index)));
+      setConfirmed(false);
+
+      const explicitCommander = resolved.resolved.find(item => item.row.section === "commander");
+      if (explicitCommander) setCommanderOverrideId(explicitCommander.card.id);
+    } catch (cause) {
+      setResolveResult(null);
+      setError(cause instanceof Error ? cause.message : "Karten konnten nicht geprüft werden.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadUrl = async () => {
+    if (!url.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    setResolveResult(null);
+
+    try {
+      const result = await importExternalDeckUrl(url);
+      await resolveParsed(result, result.provider, result.deckName || "Importiertes Deck");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Deck-URL konnte nicht geladen werden.");
+      setBusy(false);
+    }
+  };
+
+  const loadFile = async (file: File | undefined) => {
+    if (!file || busy) return;
+    setBusy(true);
+    setError("");
+
+    try {
+      const content = await file.text();
+      const result = parseExternalImport(file.name, content);
+      setText(content);
+      await resolveParsed(result, file.name, mode === "deck" ? fileBaseName(file.name) : undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Datei konnte nicht gelesen werden.");
+      setBusy(false);
+    }
+  };
+
+  const loadText = async () => {
+    if (!text.trim() || busy) return;
+    try {
+      const result = parseExternalImport("eingabe.txt", text);
+      await resolveParsed(result, "Eingefügte Liste");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Liste konnte nicht gelesen werden.");
+    }
+  };
+
+  const toggleRow = (index: number) => {
+    setSelectedRows(current => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+    setConfirmed(false);
+  };
+
+  const applyImport = async () => {
+    if (!parsed || selectedResolved.length === 0 || !confirmed || busy) return;
+
+    setBusy(true);
+    setError("");
+
+    try {
+      if (mode === "collection") {
+        if (!onImportCollection) throw new Error("Sammlungsimport ist nicht konfiguriert.");
+        await onImportCollection(collectionCardsFromResolved(selectedResolved));
+      } else {
+        if (!onImportDeck) throw new Error("Deckimport ist nicht konfiguriert.");
+        await onImportDeck(
+          deckFromResolved(
+            selectedResolved,
+            pool,
+            deckName,
+            format,
+            parsed.provider,
+            commanderOverrideId || undefined
+          )
+        );
+      }
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Import konnte nicht gespeichert werden.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="external-import-backdrop" role="dialog" aria-modal="true" aria-label="Importieren">
+      <div className="external-import-dialog panel">
+        <div className="external-import-head">
+          <div>
+            <h2>{mode === "collection" ? "Karten importieren" : "Deck importieren"}</h2>
+            <p className="muted">
+              Importiere per öffentlicher Deck-URL, CSV/TXT-Datei oder eingefügter Kartenliste. Vor dem Speichern wird jede Karte aufgelöst und zur Kontrolle angezeigt.
+            </p>
+          </div>
+          <button className="secondary" type="button" onClick={onClose} aria-label="Import schließen">×</button>
+        </div>
+
+        <div className="external-import-tabs" role="tablist" aria-label="Importquelle">
+          <button type="button" className={method === "url" ? "active" : "secondary"} onClick={() => changeMethod("url")}>URL</button>
+          <button type="button" className={method === "file" ? "active" : "secondary"} onClick={() => changeMethod("file")}>CSV / Datei</button>
+          <button type="button" className={method === "text" ? "active" : "secondary"} onClick={() => changeMethod("text")}>Liste einfügen</button>
+        </div>
+
+        {!resolveResult && method === "url" && (
+          <div className="external-import-source">
+            <label>
+              <span>Öffentliche Deck-URL</span>
+              <input
+                type="url"
+                value={url}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setUrl(event.target.value)}
+                placeholder="https://www.moxfield.com/decks/…"
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+            </label>
+            <p className="muted external-import-help">
+              Direkt unterstützt werden öffentliche Moxfield-, Archidekt- und Deckstats-Links. Private Decks benötigen weiterhin einen Datei-Export.
+            </p>
+            <button type="button" onClick={() => void loadUrl()} disabled={!url.trim() || busy}>
+              {busy ? "URL wird geprüft…" : "URL laden & prüfen"}
+            </button>
+          </div>
+        )}
+
+        {!resolveResult && method === "file" && (
+          <div className="external-import-source">
+            <label className="external-import-file">
+              <span>CSV-, TSV-, TXT- oder DEC-Datei</span>
+              <input
+                type="file"
+                accept=".csv,.tsv,.txt,.dec,text/csv,text/tab-separated-values,text/plain"
+                onChange={(event: ChangeEvent<HTMLInputElement>) => void loadFile(event.target.files?.[0])}
+                disabled={busy}
+              />
+            </label>
+            <p className="muted external-import-help">
+              Die Spaltenreihenfolge ist egal. Erkannte Felder sind u. a. Count/Quantity, Name/Card Name, Edition/Set, Foil/Finish und Collector Number/Card Number.
+            </p>
+          </div>
+        )}
+
+        {!resolveResult && method === "text" && (
+          <div className="external-import-source">
+            <label>
+              <span>Kartenliste</span>
+              <textarea
+                rows={9}
+                value={text}
+                onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value)}
+                placeholder={"1 Sol Ring [CMM:396]\n1 Command Tower (CMM) 1006\n1 Atraxa, Praetors' Voice *F*"}
+              />
+            </label>
+            <button type="button" onClick={() => void loadText()} disabled={!text.trim() || busy}>
+              {busy ? "Liste wird geprüft…" : "Liste prüfen"}
+            </button>
+          </div>
+        )}
+
+        {resolveResult && parsed && (
+          <>
+            {mode === "deck" && (
+              <div className="external-import-deck-fields">
+                <label>
+                  <span>Deckname</span>
+                  <input value={deckName} onChange={(event: ChangeEvent<HTMLInputElement>) => setDeckName(event.target.value)} />
+                </label>
+                <label>
+                  <span>Format</span>
+                  <select value={format} onChange={(event: ChangeEvent<HTMLSelectElement>) => setFormat(event.target.value as Format)}>
+                    <option value="commander">Commander</option>
+                    <option value="standard">Standard</option>
+                  </select>
+                </label>
+              </div>
+            )}
+
+            {mode === "deck" && format === "commander" && !hasExplicitCommander && (
+              <label className="external-import-commander">
+                <span>Commander</span>
+                <select
+                  value={commanderOverrideId}
+                  onChange={(event: ChangeEvent<HTMLSelectElement>) => setCommanderOverrideId(event.target.value)}
+                >
+                  <option value="">Noch nicht festlegen</option>
+                  {commanderCandidates.map(card => (
+                    <option key={card.id} value={card.id}>{card.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <div className="external-import-summary">
+              <div><span>Quelle</span><strong>{parsed.provider}</strong></div>
+              <div><span>Erkannt</span><strong>{resolveResult.resolved.length}/{parsed.rows.length} Zeilen</strong></div>
+              <div><span>Karten</span><strong>{selectedCopies}/{totalCopies}</strong></div>
+              <div><span>Import</span><strong>{sourceLabel || "—"}</strong></div>
+            </div>
+
+            <div className="external-import-preview-head">
+              <div>
+                <h3>Import vor Übernahme prüfen</h3>
+                <p className="muted">Nur markierte, eindeutig erkannte Zeilen werden übernommen.</p>
+              </div>
+              <button className="secondary" type="button" onClick={resetPreview} disabled={busy}>Quelle ändern</button>
+            </div>
+
+            <div className="external-import-card-list">
+              {resolveResult.resolved.map(({ index, row, card }) => (
+                <label className="external-import-card" key={`${index}-${card.id}`}>
+                  <input
+                    className="external-import-card-check"
+                    type="checkbox"
+                    checked={selectedRows.has(index)}
+                    onChange={() => toggleRow(index)}
+                  />
+                  <div className="external-import-card-image">
+                    {imageFor(card) ? <img src={imageFor(card)} alt={card.name} loading="lazy" /> : <span>Kein Bild</span>}
+                  </div>
+                  <div className="external-import-card-copy">
+                    <div className="external-import-card-title">
+                      <strong>{row.count}× {card.name}</strong>
+                      <span className="external-import-ok">Erkannt</span>
+                    </div>
+                    <div className="external-import-imported-data">
+                      <span><b>Import:</b> {row.name}</span>
+                      <span><b>Edition:</b> {row.edition?.toUpperCase() || "—"}</span>
+                      <span><b>Nr.:</b> {row.collectorNumber || "—"}</span>
+                      <span><b>Finish:</b> {row.foil ? "Foil" : "Non-Foil"}</span>
+                      {mode === "deck" && <span><b>Bereich:</b> {sectionLabel(row.section)}</span>}
+                    </div>
+                    <small className="muted">
+                      Scryfall: {card.set_name ?? card.set.toUpperCase()} ({card.set.toUpperCase()}) · #{card.collector_number}
+                    </small>
+                  </div>
+                </label>
+              ))}
+
+              {resolveResult.unresolved.map(({ index, row }) => (
+                <div className="external-import-card external-import-card-unresolved" key={`unresolved-${index}`}>
+                  <input className="external-import-card-check" type="checkbox" disabled />
+                  <div className="external-import-card-image"><span>?</span></div>
+                  <div className="external-import-card-copy">
+                    <div className="external-import-card-title">
+                      <strong>{row.count}× {row.name}</strong>
+                      <span className="external-import-missing">Nicht erkannt</span>
+                    </div>
+                    <div className="external-import-imported-data">
+                      <span><b>Edition:</b> {row.edition?.toUpperCase() || "—"}</span>
+                      <span><b>Nr.:</b> {row.collectorNumber || "—"}</span>
+                      <span><b>Finish:</b> {row.foil ? "Foil" : "Non-Foil"}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <label className="external-import-confirm">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setConfirmed(event.target.checked)}
+              />
+              <span>Ich habe die Importliste geprüft und möchte die ausgewählten Karten übernehmen.</span>
+            </label>
+          </>
+        )}
+
+        {error && <div className="external-import-error">{error}</div>}
+
+        <div className="external-import-actions">
+          <button className="secondary" type="button" onClick={onClose} disabled={busy}>Abbrechen</button>
+          {resolveResult && (
+            <button
+              type="button"
+              onClick={() => void applyImport()}
+              disabled={busy || !confirmed || selectedResolved.length === 0}
+            >
+              {busy
+                ? "Übernehme…"
+                : mode === "collection"
+                  ? `${selectedCopies} Karte(n) übernehmen`
+                  : "Deck übernehmen"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

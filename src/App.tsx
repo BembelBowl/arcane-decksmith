@@ -106,6 +106,7 @@ import DeckLibrary from "./components/DeckLibrary";
 import DeckBoard from "./components/DeckBoard";
 import CardDetailsModal from "./components/CardDetailsModal";
 import CardScanner from "./components/CardScanner";
+import ExternalImportDialog from "./components/ExternalImportDialog";
 import { useAppNavigation } from "./navigation";
 
 const COLORS = ["W", "U", "B", "R", "G"];
@@ -177,6 +178,15 @@ function officialColorCombinationName(colors: string[]): string | undefined {
     ? "C"
     : order.filter(color => colors.includes(color)).join("");
   return OFFICIAL_COLOR_COMBINATION_NAMES[normalized];
+}
+
+function poolForDeck(deck: DeckRecord, pool: CardRecord[]): CardRecord[] {
+  if (!deck.sourceCards?.length) return pool;
+
+  const merged = new Map<string, CardRecord>();
+  for (const card of deck.sourceCards) merged.set(card.id, card);
+  for (const card of pool) merged.set(card.id, card);
+  return [...merged.values()];
 }
 
 
@@ -1428,6 +1438,42 @@ for (
                 cards={collection}
                 onChange={persistCard}
                 onDelete={delCard}
+                onImportCards={async importedCards => {
+                  const byId = new Map<string, CardRecord>(collection.map((card: CardRecord) => [card.id, card]));
+
+                  for (const incoming of importedCards) {
+                    const existing = byId.get(incoming.id);
+
+                    if (!existing) {
+                      await saveCard(uid, incoming);
+                      byId.set(incoming.id, incoming);
+                      continue;
+                    }
+
+                    const current = finishCountsFor(existing);
+                    const added = finishCountsFor(incoming);
+                    const nextCounts = {
+                      nonfoil: current.nonfoil + added.nonfoil,
+                      foil: current.foil + added.foil
+                    };
+
+                    const merged: CardRecord = {
+                      ...existing,
+                      ...incoming,
+                      count: existing.count + incoming.count,
+                      addedAt: existing.addedAt,
+                      updatedAt: Date.now(),
+                      finishCounts: nextCounts,
+                      foil: legacyFoilFlag(nextCounts)
+                    };
+
+                    await saveCard(uid, merged);
+                    byId.set(merged.id, merged);
+                  }
+
+                  setCollection(await loadCollection(uid));
+                  setToast(`${importedCards.reduce((sum, card) => sum + card.count, 0)} Karte(n) importiert.`);
+                }}
               />
             )
             : page === "search"
@@ -4015,6 +4061,7 @@ function Decks({
   const [selectedCard, setSelectedCard] = useState<CardRecord | null>(null);
   const [maxSuggestionCardPrice, setMaxSuggestionCardPrice] = useState("");
   const [maxSuggestionDeckPrice, setMaxSuggestionDeckPrice] = useState("");
+  const [importDeckOpen, setImportDeckOpen] = useState(false);
 
   const purchaseBudget: PurchaseSuggestionBudget = {
     maxPricePerCardEur: optionalEuroLimit(maxSuggestionCardPrice),
@@ -4033,7 +4080,7 @@ function Decks({
     setAiBusyDeckId(deck.id);
     setAnalysisByDeckId(current => ({ ...current, [deck.id]: "" }));
 
-    const deckForAnalysis = deckForAiAnalysis(deck, pool);
+    const deckForAnalysis = deckForAiAnalysis(deck, poolForDeck(deck, pool));
 
     try {
       const text = await generateAiDeckExplanation(
@@ -4068,7 +4115,7 @@ function Decks({
     return (
       <DeckEditor
         deck={editing}
-        pool={pool}
+        pool={poolForDeck(editing, pool)}
         demoMode={demoMode}
         onBack={() => setEditing(null)}
         onSave={async deck => {
@@ -4080,7 +4127,24 @@ function Decks({
   }
 
   if (!selectedDeckId) {
-    return <DeckLibrary decks={decks} pool={pool} onOpenDeck={onOpenDeck} />;
+    return (
+      <>
+        <DeckLibrary
+          decks={decks}
+          pool={pool}
+          onOpenDeck={onOpenDeck}
+          onImportDeck={() => setImportDeckOpen(true)}
+        />
+        {importDeckOpen && (
+          <ExternalImportDialog
+            mode="deck"
+            pool={pool}
+            onClose={() => setImportDeckOpen(false)}
+            onImportDeck={onSave}
+          />
+        )}
+      </>
+    );
   }
 
   if (!selectedDeck) {
@@ -4101,15 +4165,16 @@ function Decks({
     );
   }
 
+  const selectedDeckPool = poolForDeck(selectedDeck, pool);
   const stats = deckStats(selectedDeck);
   const totalMain = selectedDeck.cards.reduce((sum, card) => sum + card.count, 0);
   const totalCards =
     totalMain +
     (selectedDeck.format === "commander" ? selectedDeck.commanderIds.length : 0);
   const commanders = selectedDeck.commanderIds
-    .map(id => pool.find(card => card.id === id))
+    .map(id => selectedDeckPool.find(card => card.id === id))
     .filter((card): card is CardRecord => Boolean(card));
-  const bracketEstimate = commanderBracketEstimate(selectedDeck, pool);
+  const bracketEstimate = commanderBracketEstimate(selectedDeck, selectedDeckPool);
   const analysis = analysisByDeckId[selectedDeck.id];
   const colorCombinationName = officialColorCombinationName(selectedDeck.colors);
 
@@ -4170,7 +4235,7 @@ function Decks({
           <button
             className="secondary"
             type="button"
-            onClick={() => download(`${selectedDeck.name}.txt`, deckText(selectedDeck, pool))}
+            onClick={() => download(`${selectedDeck.name}.txt`, deckText(selectedDeck, selectedDeckPool))}
           >
             Export
           </button>
@@ -4262,7 +4327,7 @@ function Decks({
         )}
       </div>
 
-      <DeckBoard deck={selectedDeck} pool={pool} onCardClick={setSelectedCard} />
+      <DeckBoard deck={selectedDeck} pool={selectedDeckPool} onCardClick={setSelectedCard} />
 
       {analysis && (
         <div className="ai-box analysis-box markdown-content deck-detail-analysis">

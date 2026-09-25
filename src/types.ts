@@ -52,6 +52,11 @@ export interface DeckCard {
   role: string;
   reason: string;
   available: number;
+  set?: string;
+  setName?: string;
+  collectorNumber?: string;
+  foil?: boolean;
+  finishCounts?: CardFinishCounts;
 }
 
 export interface DeckRecord {
@@ -70,4 +75,6 @@ export interface DeckRecord {
   notes?: string;
   score?: number;
   cedh?: boolean;
+  sourceCards?: CardRecord[];
+  importSource?: string;
 }

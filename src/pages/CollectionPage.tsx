@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
+import ExternalImportDialog from "../components/ExternalImportDialog";
 import { getSets, type ScryfallSet } from "../scryfall";
 import { download, toCsv } from "../importExport";
 import type {
@@ -180,12 +181,14 @@ type CollectionPageProps = {
   cards: CardRecord[];
   onChange: (card: CardRecord) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onImportCards: (cards: CardRecord[]) => Promise<void>;
 };
 
 export default function CollectionPage({
   cards,
   onChange,
-  onDelete
+  onDelete,
+  onImportCards
 }: CollectionPageProps) {
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<GroupBy>("none");
@@ -194,6 +197,7 @@ export default function CollectionPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
@@ -480,15 +484,24 @@ export default function CollectionPage({
           </p>
         </div>
 
-        <button
-          className="secondary"
-          type="button"
-          onClick={() =>
-            download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
-          }
-        >
-          CSV export
-        </button>
+        <div className="row">
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => setImportOpen(true)}
+          >
+            Importieren
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() =>
+              download("collection.csv", toCsv(cards), "text/csv;charset=utf-8")
+            }
+          >
+            CSV export
+          </button>
+        </div>
       </div>
 
       <div className="collection-summary-strip" aria-label="Sammlungsstatistiken">
@@ -853,6 +866,15 @@ export default function CollectionPage({
             Ausgewählte löschen
           </button>
         </div>
+      )}
+
+      {importOpen && (
+        <ExternalImportDialog
+          mode="collection"
+          pool={cards}
+          onClose={() => setImportOpen(false)}
+          onImportCollection={onImportCards}
+        />
       )}
 
       {selectedCard && (

@@ -4,6 +4,7 @@ type DeckLibraryProps = {
   decks: DeckRecord[];
   pool: CardRecord[];
   onOpenDeck: (deckId: string) => void;
+  onImportDeck?: () => void;
 };
 
 
@@ -18,6 +19,14 @@ function cardImage(card: CardRecord | undefined): string | undefined {
     card?.imageUris?.normal ??
     card?.imageUris?.small
   );
+}
+
+function deckPool(deck: DeckRecord, pool: CardRecord[]): CardRecord[] {
+  if (!deck.sourceCards?.length) return pool;
+  const merged = new Map<string, CardRecord>();
+  for (const card of deck.sourceCards) merged.set(card.id, card);
+  for (const card of pool) merged.set(card.id, card);
+  return [...merged.values()];
 }
 
 function deckArtwork(deck: DeckRecord, pool: CardRecord[]): string | undefined {
@@ -62,7 +71,7 @@ function colorIdentity(deck: DeckRecord): string[] {
   return deck.format === "commander" ? ["C"] : [];
 }
 
-export default function DeckLibrary({ decks, pool, onOpenDeck }: DeckLibraryProps) {
+export default function DeckLibrary({ decks, pool, onOpenDeck, onImportDeck }: DeckLibraryProps) {
   return (
     <section>
       <div className="pagehead deck-library-pagehead">
@@ -72,6 +81,11 @@ export default function DeckLibrary({ decks, pool, onOpenDeck }: DeckLibraryProp
             {decks.length === 1 ? "1 gespeichertes Deck" : `${decks.length} gespeicherte Decks`}
           </p>
         </div>
+        {onImportDeck && (
+          <button className="secondary" type="button" onClick={onImportDeck}>
+            Deck importieren
+          </button>
+        )}
       </div>
 
       {decks.length === 0 ? (
@@ -84,8 +98,9 @@ export default function DeckLibrary({ decks, pool, onOpenDeck }: DeckLibraryProp
       ) : (
         <div className="deck-library-grid">
           {decks.map(deck => {
-            const art = deckArtwork(deck, pool);
-            const commanders = commanderNames(deck, pool);
+            const effectivePool = deckPool(deck, pool);
+            const art = deckArtwork(deck, effectivePool);
+            const commanders = commanderNames(deck, effectivePool);
             const colors = colorIdentity(deck);
             const commanderText = commanders.join(" + ");
 
