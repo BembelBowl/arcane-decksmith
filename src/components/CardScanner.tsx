@@ -409,16 +409,17 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
   return (
     <div className="scanner-backdrop" role="dialog" aria-modal="true" aria-label="Kartenscanner">
       <div className="scanner-shell">
-        <div className="scanner-header">
-          <div>
-            <h2>Karte scannen</h2>
-            <p>{status}</p>
-          </div>
-          <button className="scanner-close" type="button" onClick={onClose} aria-label="Scanner schließen">×</button>
-        </div>
-
         <div className="scanner-camera">
           <video ref={videoRef} playsInline muted autoPlay />
+          <button className="scanner-close" type="button" onClick={onClose} aria-label="Scanner schließen">×</button>
+          {!error && (
+            <div className="scanner-status-badge">
+              <strong>{status}</strong>
+              <div className="scanner-progress" aria-hidden="true">
+                <span style={{ width: `${Math.round(progress * 100)}%` }} />
+              </div>
+            </div>
+          )}
           <div className="scanner-card-guide" aria-hidden="true">
             <span className="scanner-guide-title">Name</span>
             <span className="scanner-guide-bottom">Set / Collector Number</span>
@@ -432,20 +433,16 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
         </div>
 
         {error ? (
-          <div className="scanner-error">
+          <div className="scanner-panel scanner-error">
             <strong>Scanner nicht verfügbar</strong>
             <p>{error}</p>
             <button className="secondary" type="button" onClick={onClose}>Schließen</button>
           </div>
         ) : (
-          <>
-            <div className="scanner-progress" aria-hidden="true">
-              <span style={{ width: `${Math.round(progress * 100)}%` }} />
-            </div>
-
+          <div className="scanner-panel">
             {addedMessage && <div className="scanner-success">✓ {addedMessage}</div>}
 
-            {selected && (
+            {selected ? (
               <div className="scanner-result">
                 <div className="scanner-result-main">
                   {imageFor(selected.card) && (
@@ -502,29 +499,14 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
                   </button>
                 </div>
               </div>
-            )}
-
-            {!selected && (
+            ) : (
               <div className="scanner-hint">
                 <strong>Karte vollständig in den Rahmen halten.</strong>
-                <span>Für die genaue Version liest der Scanner zusätzlich Set und Collector Number am unteren Kartenrand.</span>
+                <span>Die erkannte Karte erscheint unten. Für die genaue Version liest der Scanner zusätzlich Set und Collector Number am unteren Kartenrand.</span>
               </div>
             )}
-
-            {(ocrName || metadata?.raw) && (
-              <details className="scanner-debug">
-                <summary>Erkannte Merkmale</summary>
-                <div><strong>Name:</strong> {ocrName || "—"}</div>
-                <div><strong>Set:</strong> {metadata?.setCode?.toUpperCase() || "—"}</div>
-                <div><strong>Collector Number:</strong> {metadata?.collectorNumber || "—"}</div>
-              </details>
-            )}
-          </>
+          </div>
         )}
-
-        <p className="scanner-privacy">
-          Das Kamerabild wird lokal im Browser ausgewertet und nicht hochgeladen. Für das Matching werden nur erkannte Kartendaten bei Scryfall abgefragt.
-        </p>
       </div>
     </div>
   );
