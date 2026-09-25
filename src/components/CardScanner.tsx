@@ -38,13 +38,16 @@ type TesseractWorker = {
 };
 type TesseractModule = {
   createWorker: (
-    langs?: string,
+    langs?: string | string[],
     oem?: number,
     options?: { logger?: (message: { status?: string; progress?: number }) => void }
   ) => Promise<TesseractWorker>;
 };
 
-const TESSERACT_ESM = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.esm.min.js";
+type TesseractWindow = Window & { Tesseract?: TesseractModule };
+
+const TESSERACT_SCRIPT = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
+let tesseractModulePromise: Promise<TesseractModule> | null = null;
 const SCAN_DELAY_MS = 900;
 const HIGH_CONFIDENCE = 92;
 const MEDIUM_CONFIDENCE = 60;
@@ -68,12 +71,60 @@ function confidenceLabel(score: number): string {
   return "Bitte prüfen";
 }
 
+function getLoadedTesseract(): TesseractModule | null {
+  const api = (window as TesseractWindow).Tesseract;
+  return api && typeof api.createWorker === "function" ? api : null;
+}
+
+function loadTesseractModule(): Promise<TesseractModule> {
+  const loaded = getLoadedTesseract();
+  if (loaded) return Promise.resolve(loaded);
+  if (tesseractModulePromise) return tesseractModulePromise;
+
+  tesseractModulePromise = new Promise<TesseractModule>((resolve, reject) => {
+    const finish = () => {
+      const api = getLoadedTesseract();
+      if (api) {
+        resolve(api);
+      } else {
+        reject(new Error("Tesseract wurde geladen, stellt aber createWorker nicht bereit."));
+      }
+    };
+
+    const existing = document.querySelector<HTMLScriptElement>(
+      `script[src="${TESSERACT_SCRIPT}"]`
+    );
+
+    // Wenn ein früherer Ladevorgang ein Script-Element hinterlassen hat, aber
+    // keine globale Tesseract-API verfügbar ist, laden wir sauber neu.
+    existing?.remove();
+
+    const script = document.createElement("script");
+    script.src = TESSERACT_SCRIPT;
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    script.addEventListener("load", finish, { once: true });
+    script.addEventListener(
+      "error",
+      () => reject(new Error("Texterkennung konnte nicht geladen werden.")),
+      { once: true }
+    );
+    document.head.appendChild(script);
+  }).catch(error => {
+    // Nach einem temporären Netzwerkfehler darf ein erneuter Scanner-Start
+    // einen neuen Ladeversuch unternehmen.
+    tesseractModulePromise = null;
+    throw error;
+  });
+
+  return tesseractModulePromise;
+}
+
 async function loadTesseract(
   onProgress: (value: number, label: string) => void
 ): Promise<TesseractWorker> {
-  const url = TESSERACT_ESM;
-  const mod = (await import(/* @vite-ignore */ url)) as TesseractModule;
-  return mod.createWorker("eng+deu", undefined, {
+  const tesseract = await loadTesseractModule();
+  return tesseract.createWorker(["eng", "deu"], 1, {
     logger(message) {
       const progress = typeof message.progress === "number" ? message.progress : 0;
       const label = message.status === "recognizing text" ? "Karte lesen…" : "Scanner vorbereiten…";
