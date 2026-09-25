@@ -78,8 +78,6 @@ import {
 import {
   deckText,
   download,
-  parseCollectionCsv,
-  parseDeckList,
   toCsv
 } from "./importExport";
 import {
@@ -1436,7 +1434,7 @@ for (
               ? (
 <Search
   cards={collection}
-  onImport={async next => {
+  onBulkApply={async next => {
     for (const c of next) {
       await saveCard(uid, c);
     }
@@ -1590,14 +1588,14 @@ for (
 function Search({
   cards,
   onAdd,
-  onImport
+  onBulkApply
 }: {
   cards: CardRecord[];
   onAdd: (
     c: ScryfallCard,
     finish: CardFinish
   ) => Promise<void>;
-  onImport: (
+  onBulkApply: (
     c: CardRecord[]
   ) => Promise<void>;
 }) {
@@ -1685,7 +1683,7 @@ function Search({
           <h2>Kartensuche</h2>
 
           <p className="muted">
-            Scryfall-Suche, Import und Bulk-Hinzufügen.
+            Scryfall-Suche, Bulk-Hinzufügen und mobiler Kartenscanner.
           </p>
         </div>
       </div>
@@ -1751,7 +1749,7 @@ function Search({
 
     <SearchCollectionTools
       cards={cards}
-      onImport={onImport}
+      onBulkApply={onBulkApply}
       onAdd={onAdd}
     />
 
@@ -1801,11 +1799,11 @@ function isSmartphoneOrTablet(): boolean {
 
 function SearchCollectionTools({
   cards,
-  onImport,
+  onBulkApply,
   onAdd
 }: {
   cards: CardRecord[];
-  onImport: (
+  onBulkApply: (
     c: CardRecord[]
   ) => Promise<void>;
   onAdd: (
@@ -1813,25 +1811,10 @@ function SearchCollectionTools({
     finish: CardFinish
   ) => Promise<void>;
 }) {
-  const [showImport, setShowImport] =
-    useState(false);
   const [scannerOpen, setScannerOpen] =
     useState(false);
   const [scannerAvailable] =
     useState(() => isSmartphoneOrTablet());
-  const [importText, setImportText] =
-    useState("");
-  const [importBusy, setImportBusy] =
-    useState(false);
-  const [importPreview, setImportPreview] =
-    useState<{
-      cards: CardRecord[];
-      requestedRows: number;
-      resolvedRows: number;
-      addedCopies: number;
-      source: "csv" | "text";
-      issues: string[];
-    } | null>(null);
 
   const [showBulkAdd, setShowBulkAdd] =
     useState(false);
@@ -1859,16 +1842,6 @@ function SearchCollectionTools({
       resolvedCopies: number;
       issues: string[];
     } | null>(null);
-
-  const resetImport = () => {
-    setImportText("");
-    setImportPreview(null);
-  };
-
-  const closeImport = () => {
-    resetImport();
-    setShowImport(false);
-  };
 
   const resetBulkAdd = () => {
     setBulkNumbers("");
@@ -1911,7 +1884,6 @@ function SearchCollectionTools({
     const next = !showBulkAdd;
 
     if (next) {
-      closeImport();
       void ensureBulkSets();
     }
 
@@ -2144,7 +2116,7 @@ function SearchCollectionTools({
     setBulkBusy(true);
 
     try {
-      await onImport(
+      await onBulkApply(
         bulkPreview.cards
       );
       closeBulkAdd();
@@ -2152,260 +2124,6 @@ function SearchCollectionTools({
       setBulkBusy(false);
     }
   };
-
-  const readImportFile = async (
-    file: File | undefined
-  ) => {
-    if (!file) {
-      return;
-    }
-
-    try {
-      setImportText(
-        await file.text()
-      );
-      setImportPreview(null);
-    } catch {
-      setImportPreview({
-        cards: cards.map(
-          card => ({ ...card })
-        ),
-        requestedRows: 0,
-        resolvedRows: 0,
-        addedCopies: 0,
-        source: "text",
-        issues: [
-          "Die ausgewählte Datei konnte nicht gelesen werden."
-        ]
-      });
-    }
-  };
-
-  const previewCollectionImport =
-    async () => {
-      if (!importText.trim()) {
-        return;
-      }
-
-      setImportBusy(true);
-      setImportPreview(null);
-
-      try {
-        const csvRows =
-          parseCollectionCsv(
-            importText
-          );
-
-        const source:
-          "csv" | "text" =
-            csvRows.length > 0
-              ? "csv"
-              : "text";
-
-        const parsedTextRows =
-          parseDeckList(
-            importText
-          );
-
-        const rows =
-          source === "csv"
-            ? csvRows
-            : parsedTextRows.flatMap(
-                row =>
-                  row.kind === "card"
-                    ? [
-                        {
-                          name: row.name,
-                          count: row.count,
-                          set: row.set,
-                          collectorNumber:
-                            row.collectorNumber
-                        }
-                      ]
-                    : []
-              );
-
-        const next =
-          cards.map(
-            card => ({
-              ...card,
-              ...(card.finishCounts
-                ? {
-                    finishCounts: {
-                      ...card.finishCounts
-                    }
-                  }
-                : {})
-            })
-          );
-
-        const issues: string[] = [];
-        let resolvedRows = 0;
-        let addedCopies = 0;
-
-        for (const row of rows) {
-          try {
-            const matches =
-              await searchCards(
-                row.name
-              );
-
-            const exactNameMatches =
-              matches.filter(
-                card =>
-                  card.name.toLowerCase() ===
-                  row.name.toLowerCase()
-              );
-
-            let candidates =
-              exactNameMatches.length > 0
-                ? exactNameMatches
-                : matches;
-
-            if (row.set) {
-              candidates =
-                candidates.filter(
-                  card =>
-                    card.set.toLowerCase() ===
-                    row.set!.toLowerCase()
-                );
-            }
-
-            if (row.collectorNumber) {
-              candidates =
-                candidates.filter(
-                  card =>
-                    card.collector_number.toLowerCase() ===
-                    row.collectorNumber!.toLowerCase()
-                );
-            }
-
-            const chosen =
-              candidates[0];
-
-            if (!chosen) {
-              issues.push(
-                `${row.count}× ${row.name}: nicht bei Scryfall gefunden${row.set ? ` (Set ${row.set.toUpperCase()})` : ""}.`
-              );
-              continue;
-            }
-
-            const finishes =
-              availableFinishes(
-                chosen
-              );
-            const isFoilOnly =
-              !finishes.includes(
-                "nonfoil"
-              ) &&
-              finishes.includes(
-                "foil"
-              );
-
-            const normalized =
-              normalizeCard(
-                chosen,
-                row.count,
-                isFoilOnly
-              );
-
-            const existing =
-              next.find(
-                card =>
-                  card.id ===
-                    normalized.id
-              );
-
-            if (existing) {
-              const counts =
-                finishCountsFor(
-                  existing
-                );
-              const finish:
-                CardFinish =
-                  isFoilOnly
-                    ? "foil"
-                    : "nonfoil";
-              const nextCounts = {
-                ...counts,
-                [finish]:
-                  counts[finish] +
-                  row.count
-              };
-
-              existing.count +=
-                row.count;
-              existing.finishCounts =
-                nextCounts;
-              existing.availableFinishes =
-                normalized.availableFinishes;
-              existing.priceEur =
-                normalized.priceEur ??
-                existing.priceEur;
-              existing.priceEurFoil =
-                normalized.priceEurFoil ??
-                existing.priceEurFoil;
-              existing.priceUpdatedAt =
-                normalized.priceUpdatedAt;
-              existing.gameChanger =
-                normalized.gameChanger ??
-                existing.gameChanger;
-              existing.foil =
-                legacyFoilFlag(
-                  nextCounts
-                );
-              existing.updatedAt =
-                Date.now();
-            } else {
-              next.push(
-                normalized
-              );
-            }
-
-            resolvedRows += 1;
-            addedCopies +=
-              row.count;
-          } catch {
-            issues.push(
-              `${row.count}× ${row.name}: Scryfall-Abfrage fehlgeschlagen.`
-            );
-          }
-        }
-
-        setImportPreview({
-          cards: next,
-          requestedRows:
-            rows.length,
-          resolvedRows,
-          addedCopies,
-          source,
-          issues
-        });
-      } finally {
-        setImportBusy(false);
-      }
-    };
-
-  const applyCollectionImport =
-    async () => {
-      if (
-        !importPreview ||
-        importPreview.resolvedRows === 0
-      ) {
-        return;
-      }
-
-      setImportBusy(true);
-
-      try {
-        await onImport(
-          importPreview.cards
-        );
-        closeImport();
-      } finally {
-        setImportBusy(false);
-      }
-    };
 
   return (
     <>
@@ -2585,108 +2303,6 @@ function SearchCollectionTools({
         </div>
       )}
 
-      {showImport && (
-        <div className="panel">
-          <h3>Sammlung importieren</h3>
-          <p className="muted">
-            Du kannst eine Textliste oder eine CSV-Datei importieren. CSV-Dateien aus Arcane Decksmith können Set und Collector Number zur genauen Zuordnung enthalten.
-          </p>
-
-          <label>
-            CSV- oder Textdatei auswählen
-            <input
-              type="file"
-              accept=".csv,text/csv,.txt,text/plain"
-              onChange={e =>
-                void readImportFile(
-                  e.target.files?.[0]
-                )
-              }
-            />
-          </label>
-
-          <textarea
-            value={importText}
-            onChange={e => {
-              setImportText(
-                e.target.value
-              );
-              setImportPreview(null);
-            }}
-            placeholder={
-              "4 Lightning Bolt\n2x Counterspell\n1 Sol Ring"
-            }
-            rows={7}
-          />
-
-          <div className="row">
-            <button
-              className="primary"
-              onClick={() =>
-                void previewCollectionImport()
-              }
-              disabled={
-                importBusy ||
-                !importText.trim()
-              }
-            >
-              {importBusy
-                ? "Import wird geprüft…"
-                : "Import prüfen"}
-            </button>
-            <button
-              className="secondary"
-              onClick={closeImport}
-              disabled={importBusy}
-            >
-              Abbrechen
-            </button>
-          </div>
-
-          {importPreview && (
-            <div className="ai-box">
-              <h3>Import-Zusammenfassung</h3>
-              <p>
-                Quelle: <strong>{importPreview.source === "csv" ? "CSV" : "Textliste"}</strong>
-                <br />
-                Zeilen erkannt: <strong>{importPreview.requestedRows}</strong>
-                <br />
-                Erfolgreich aufgelöst: <strong>{importPreview.resolvedRows}</strong>
-                <br />
-                Hinzugefügte Karten: <strong>{importPreview.addedCopies}</strong>
-              </p>
-
-              {importPreview.issues.length > 0 && (
-                <div className="notice">
-                  <strong>Hinweise vor dem Übernehmen:</strong>
-                  <div className="deck-list">
-                    {importPreview.issues.map(
-                      (issue, index) => (
-                        <div key={`${issue}-${index}`}>
-                          <span>{issue}</span>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <button
-                className="primary"
-                onClick={() =>
-                  void applyCollectionImport()
-                }
-                disabled={
-                  importBusy ||
-                  importPreview.resolvedRows === 0
-                }
-              >
-                Import übernehmen
-              </button>
-            </div>
-          )}
-        </div>
-      )}
       {scannerAvailable && (
         <CardScanner
           open={scannerOpen}

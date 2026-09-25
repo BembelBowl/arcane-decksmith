@@ -66,7 +66,7 @@ export default function HomePage({
         "Durchsuche Scryfall, wähle Drucke und Finishes oder füge ganze Sets per Bulk hinzu.",
       cta: "Karten suchen",
       meta:
-        "Scryfall · Bulk · Import"
+        "Scryfall · Bulk · Scanner"
     },
     {
       key: "builder" as const,
