@@ -258,8 +258,7 @@ export function parseList(
  * ein Komma vorkommt.
  */
 function parseCsvLine(
-  line: string,
-  delimiter = ","
+  line: string
 ) {
   const cells: string[] = [];
 
@@ -288,7 +287,7 @@ function parseCsvLine(
         quoted = !quoted;
       }
     } else if (
-      char === delimiter &&
+      char === "," &&
       !quoted
     ) {
       cells.push(value);
@@ -306,74 +305,117 @@ function parseCsvLine(
 }
 
 export interface CollectionCsvRow {
-  set: string;
-  collectorNumber: string;
+  name: string;
+  count: number;
+  set?: string;
+  collectorNumber?: string;
 }
 
 /*
- * Minimaler Sammlungs-CSV-Import analog zum Bulk-Workflow.
+ * Liest CSV-Daten der Sammlung ein.
  *
- * Erwartete Spalten:
+ * Mindestens benötigt:
  *
- * set,collectorNumber
+ * name,count
  *
- * Jede Datenzeile entspricht genau einem Exemplar. Soll eine Karte
- * mehrfach importiert werden, wird ihre Collector Number entsprechend
- * mehrfach aufgeführt.
+ * Optional können zusätzlich vorhanden sein:
+ *
+ * set
+ * collectorNumber
  */
 export function parseCollectionCsv(
   text: string
 ): CollectionCsvRow[] {
   const lines = text
     .split(/\r?\n/)
-    .filter(line => line.trim().length > 0);
+    .filter(
+      line =>
+        line.trim().length > 0
+    );
 
+  /*
+   * Eine CSV-Datei benötigt mindestens
+   * Kopfzeile + eine Datenzeile.
+   */
   if (lines.length < 2) {
     return [];
   }
 
-  const firstLine = lines[0].replace(/^\uFEFF/, "");
-
-  // Excel nutzt in deutschen Regionen häufig Semikolon statt Komma.
-  const delimiter =
-    firstLine.includes(";") && !firstLine.includes(",")
-      ? ";"
-      : ",";
-
-  const headers = parseCsvLine(firstLine, delimiter).map(header =>
-    header.trim().toLowerCase()
+  const headers = parseCsvLine(
+    lines[0]
+  ).map(
+    header =>
+      header.toLowerCase()
   );
 
-  const setIndex = headers.findIndex(header =>
-    ["set", "setcode", "set_code", "set code"].includes(header)
-  );
+  const nameIndex =
+    headers.indexOf("name");
 
-  const collectorIndex = headers.findIndex(header =>
-    [
-      "collectornumber",
-      "collector_number",
-      "collector number",
-      "number",
-      "nummer"
-    ].includes(header)
-  );
+  const countIndex =
+    headers.indexOf("count");
 
-  if (setIndex === -1 || collectorIndex === -1) {
+  /*
+   * Ohne Name und Anzahl behandeln wir den Text
+   * nicht als Collection-CSV.
+   */
+  if (
+    nameIndex === -1 ||
+    countIndex === -1
+  ) {
     return [];
   }
 
+  const setIndex =
+    headers.indexOf("set");
+
+  const collectorIndex =
+    headers.findIndex(
+      header =>
+        header === "collectornumber" ||
+        header === "collector_number" ||
+        header === "collector number"
+    );
+
   const rows: CollectionCsvRow[] = [];
 
-  for (const line of lines.slice(1)) {
-    const cells = parseCsvLine(line, delimiter);
-    const set = cells[setIndex]?.trim();
-    const collectorNumber = cells[collectorIndex]?.trim();
+  for (
+    const line of lines.slice(1)
+  ) {
+    const cells =
+      parseCsvLine(line);
 
-    if (!set || !collectorNumber) {
+    const name =
+      cells[nameIndex]?.trim();
+
+    const count =
+      Number(cells[countIndex]);
+
+    if (
+      !name ||
+      !Number.isFinite(count) ||
+      count <= 0
+    ) {
       continue;
     }
 
-    rows.push({ set, collectorNumber });
+    rows.push({
+      name,
+      count,
+
+      set:
+        setIndex >= 0
+          ? cells[setIndex]?.trim() ||
+            undefined
+          : undefined,
+
+      collectorNumber:
+        collectorIndex >= 0
+          ? cells[
+              collectorIndex
+            ]?.trim() ||
+            undefined
+          : undefined
+    });
   }
 
   return rows;
