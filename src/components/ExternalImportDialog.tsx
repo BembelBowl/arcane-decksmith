@@ -65,9 +65,15 @@ function namesEqual(left: string, right: string): boolean {
   return normalize(left) === normalize(right);
 }
 
-async function resolveImportRows(rows: ExternalImportCardRow[]): Promise<ResolveResult> {
+async function resolveImportRows(
+  rows: ExternalImportCardRow[],
+  onProgress?: (processed: number, total: number) => void
+): Promise<ResolveResult> {
   const exactMap = new Map<string, ScryfallCard>();
   const bySet = new Map<string, string[]>();
+  const total = rows.length;
+  let processed = 0;
+  onProgress?.(0, total);
 
   for (const row of rows) {
     if (!row.edition || !row.collectorNumber) continue;
@@ -122,16 +128,22 @@ async function resolveImportRows(rows: ExternalImportCardRow[]): Promise<Resolve
 
     if (!card) {
       unresolved.push({ index, row });
+      processed += 1;
+      onProgress?.(processed, total);
       continue;
     }
 
     // Wenn Edition/Collector Number fehlen, darf Fuzzy nicht still auf eine andere Karte springen.
     if ((!row.edition || !row.collectorNumber) && !namesEqual(card.name, row.name)) {
       unresolved.push({ index, row });
+      processed += 1;
+      onProgress?.(processed, total);
       continue;
     }
 
     resolved.push({ index, row, card });
+    processed += 1;
+    onProgress?.(processed, total);
   }
 
   return { resolved, unresolved };
@@ -287,6 +299,7 @@ export default function ExternalImportDialog({
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [resolveProgress, setResolveProgress] = useState({ processed: 0, total: 0 });
   const [error, setError] = useState("");
 
   const totalCopies = useMemo(
@@ -330,6 +343,7 @@ export default function ExternalImportDialog({
     setConfirmed(false);
     setCommanderOverrideId("");
     setError("");
+    setResolveProgress({ processed: 0, total: 0 });
   };
 
   const changeMethod = (next: ImportMethod) => {
@@ -344,13 +358,16 @@ export default function ExternalImportDialog({
   ) => {
     setBusy(true);
     setError("");
+    setResolveProgress({ processed: 0, total: next.rows.length });
     setParsed(next);
     setSourceLabel(label);
     setFormat(inferredFormat(next));
     if (suggestedDeckName) setDeckName(suggestedDeckName);
 
     try {
-      const resolved = await resolveImportRows(next.rows);
+      const resolved = await resolveImportRows(next.rows, (processed, total) => {
+        setResolveProgress({ processed, total });
+      });
       setResolveResult(resolved);
       setSelectedRows(new Set(resolved.resolved.map(item => item.index)));
       setConfirmed(false);
@@ -522,6 +539,30 @@ export default function ExternalImportDialog({
           </div>
         )}
 
+
+        {busy && !resolveResult && parsed && (
+          <div className="external-import-loading" role="status" aria-live="polite">
+            <div className="external-import-loading-spinner" aria-hidden="true" />
+            <div className="external-import-loading-copy">
+              <strong>Karten werden geprüft…</strong>
+              <span>
+                {resolveProgress.total > 0
+                  ? `${resolveProgress.processed}/${resolveProgress.total} Karten aufgelöst`
+                  : "Import wird vorbereitet…"}
+              </span>
+              <div className="external-import-loading-bar" aria-hidden="true">
+                <span
+                  style={{
+                    width: resolveProgress.total > 0
+                      ? `${Math.round((resolveProgress.processed / resolveProgress.total) * 100)}%`
+                      : "8%"
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         {resolveResult && parsed && (
           <>
             {mode === "deck" && (
@@ -573,46 +614,44 @@ export default function ExternalImportDialog({
             <div className="external-import-card-list">
               {resolveResult.resolved.map(({ index, row, card }) => (
                 <label className="external-import-card" key={`${index}-${card.id}`}>
-                  <input
-                    className="external-import-card-check"
-                    type="checkbox"
-                    checked={selectedRows.has(index)}
-                    onChange={() => toggleRow(index)}
-                  />
+                  <div className="external-import-card-select">
+                    <input
+                      className="external-import-card-check"
+                      type="checkbox"
+                      checked={selectedRows.has(index)}
+                      onChange={() => toggleRow(index)}
+                      aria-label={`${card.name} importieren`}
+                    />
+                  </div>
                   <div className="external-import-card-image">
                     {imageFor(card) ? <img src={imageFor(card)} alt={card.name} loading="lazy" /> : <span>Kein Bild</span>}
                   </div>
                   <div className="external-import-card-copy">
-                    <div className="external-import-card-title">
-                      <strong>{row.count}× {card.name}</strong>
-                      <span className="external-import-ok">Erkannt</span>
-                    </div>
+                    <strong className="external-import-card-name">{card.name}</strong>
                     <div className="external-import-imported-data">
-                      <span><b>Import:</b> {row.name}</span>
-                      <span><b>Edition:</b> {row.edition?.toUpperCase() || "—"}</span>
-                      <span><b>Nr.:</b> {row.collectorNumber || "—"}</span>
+                      <span><b>Anzahl:</b> {row.count}</span>
+                      <span><b>Set:</b> {card.set_name ?? row.edition ?? card.set.toUpperCase()} ({card.set.toUpperCase()})</span>
+                      <span><b>Nummer:</b> {card.collector_number || row.collectorNumber || "—"}</span>
                       <span><b>Finish:</b> {row.foil ? "Foil" : "Non-Foil"}</span>
                       {mode === "deck" && <span><b>Bereich:</b> {sectionLabel(row.section)}</span>}
                     </div>
-                    <small className="muted">
-                      Scryfall: {card.set_name ?? card.set.toUpperCase()} ({card.set.toUpperCase()}) · #{card.collector_number}
-                    </small>
                   </div>
                 </label>
               ))}
 
               {resolveResult.unresolved.map(({ index, row }) => (
                 <div className="external-import-card external-import-card-unresolved" key={`unresolved-${index}`}>
-                  <input className="external-import-card-check" type="checkbox" disabled />
-                  <div className="external-import-card-image"><span>?</span></div>
+                  <div className="external-import-card-select">
+                    <input className="external-import-card-check" type="checkbox" disabled />
+                  </div>
+                  <div className="external-import-card-image external-import-card-image-missing"><span>?</span></div>
                   <div className="external-import-card-copy">
-                    <div className="external-import-card-title">
-                      <strong>{row.count}× {row.name}</strong>
-                      <span className="external-import-missing">Nicht erkannt</span>
-                    </div>
+                    <strong className="external-import-card-name">{row.name}</strong>
+                    <span className="external-import-missing">Nicht erkannt</span>
                     <div className="external-import-imported-data">
+                      <span><b>Anzahl:</b> {row.count}</span>
                       <span><b>Edition:</b> {row.edition?.toUpperCase() || "—"}</span>
-                      <span><b>Nr.:</b> {row.collectorNumber || "—"}</span>
+                      <span><b>Nummer:</b> {row.collectorNumber || "—"}</span>
                       <span><b>Finish:</b> {row.foil ? "Foil" : "Non-Foil"}</span>
                     </div>
                   </div>
