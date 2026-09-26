@@ -41,6 +41,34 @@ type ResolveResult = {
   unresolved: UnresolvedRow[];
 };
 
+type ImportSummaryRow = {
+  name: string;
+  count: number;
+};
+
+const DETAILED_PREVIEW_MAX_COPIES = 100;
+
+function summarizeRows(
+  rows: Array<{ row: ExternalImportCardRow; card?: ScryfallCard }>
+): ImportSummaryRow[] {
+  const byName = new Map<string, ImportSummaryRow>();
+
+  for (const item of rows) {
+    const name = (item.card?.name || item.row.name || "Unbekannte Karte").trim();
+    const key = name.toLocaleLowerCase();
+    const existing = byName.get(key);
+    if (existing) {
+      existing.count += item.row.count;
+    } else {
+      byName.set(key, { name, count: item.row.count });
+    }
+  }
+
+  return [...byName.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, "de", { sensitivity: "base" })
+  );
+}
+
 type ExternalImportDialogProps = {
   mode: "collection" | "deck";
   pool: CardRecord[];
@@ -93,13 +121,10 @@ function namesEqual(left: string, right: string): boolean {
 
 async function resolveImportRows(
   rows: ExternalImportCardRow[],
-  onProgress?: (processed: number, total: number) => void
+  onProgress?: (processed: number, total: number, label: string) => void
 ): Promise<ResolveResult> {
   const exactMap = new Map<string, ScryfallCard>();
   const bySet = new Map<string, string[]>();
-  const total = rows.length;
-  let processed = 0;
-  onProgress?.(0, total);
 
   for (const row of rows) {
     if (!row.edition || !row.collectorNumber) continue;
@@ -109,88 +134,116 @@ async function resolveImportRows(
     bySet.set(set, numbers);
   }
 
-  // Absichtlich sequenziell: große CSV-Dateien können viele verschiedene
-  // Sets enthalten. Parallele Gruppen würden im Browser zahlreiche
-  // Scryfall-Requests gleichzeitig starten und können als "Failed to fetch"
-  // bzw. Rate-Limit-Fehler enden.
-  for (const [set, numbers] of bySet) {
+  const uniqueBySet = Array.from(bySet, ([set, numbers]) => [
+    set,
+    Array.from(new Set(numbers))
+  ] as const);
+  const exactTotal = uniqueBySet.reduce((sum, [, numbers]) => sum + numbers.length, 0);
+  let exactProcessed = 0;
+
+  onProgress?.(0, exactTotal || rows.length, exactTotal > 0
+    ? "Druckversionen werden geprüft…"
+    : "Kartennamen werden geprüft…");
+
+  // Set + Collector Number sind der schnelle und eindeutige Importpfad.
+  // Die Scryfall-Hilfsfunktion bündelt große Mengen in GET-Suchbatches,
+  // dedupliziert identische Druckversionen und meldet Batch-Fortschritt.
+  for (const [set, numbers] of uniqueBySet) {
+    const baseProcessed = exactProcessed;
     const result = await getCardsBySetAndCollectorNumbers(
       set,
-      [...new Set(numbers)]
+      numbers,
+      (setProcessed) => {
+        onProgress?.(
+          Math.min(exactTotal, baseProcessed + setProcessed),
+          exactTotal,
+          "Druckversionen werden geprüft…"
+        );
+      }
     );
 
     for (const card of result.cards) {
       exactMap.set(importKey(card.set, card.collector_number), card);
     }
+
+    exactProcessed += numbers.length;
+    onProgress?.(exactProcessed, exactTotal, "Druckversionen werden geprüft…");
   }
 
-  const resolved: ResolvedRow[] = [];
-  const unresolved: UnresolvedRow[] = [];
+  const resolvedByIndex = new Map<number, ResolvedRow>();
+  const fallbackIndexes: number[] = [];
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    let card: ScryfallCard | null = null;
+    const exact = row.edition && row.collectorNumber
+      ? exactMap.get(importKey(row.edition, row.collectorNumber)) ?? null
+      : null;
 
-    if (row.edition && row.collectorNumber) {
-      card = exactMap.get(importKey(row.edition, row.collectorNumber)) ?? null;
+    if (exact) {
+      resolvedByIndex.set(index, { index, row, card: exact });
+    } else {
+      fallbackIndexes.push(index);
     }
-
-    if (!card) {
-      // DFC-/MDFC-sicherer Namens-Fallback. Besonders bei rebalanced
-      // Arena-Karten wie "A-Mischievous Catgeist // A-Catlike Curiosity"
-      // ist die Vorderseite ein zuverlässigerer fuzzy lookup als der
-      // zusammengesetzte Name. Ein vorhandenes Set/Collector-Paar wird
-      // anschließend weiterhin strikt geprüft.
-      for (const lookupName of cardNameLookupCandidates(row.name)) {
-        const fuzzy = await getCardByFuzzyName(lookupName);
-        if (!fuzzy) continue;
-
-        if (row.edition) {
-          const printings = await getPrintings(fuzzy);
-          const edition = row.edition.trim().toLowerCase();
-          const collectorNumber = row.collectorNumber?.trim().toLowerCase();
-          const matchingPrinting = printings.find(candidate =>
-            candidate.set.toLowerCase() === edition &&
-            (!collectorNumber ||
-              candidate.collector_number.trim().toLowerCase() === collectorNumber)
-          );
-
-          if (matchingPrinting) {
-            card = matchingPrinting;
-            break;
-          }
-
-          // Wenn Edition/Collector Number angegeben wurden, darf ein fuzzy
-          // Treffer niemals still auf eine andere Druckversion ausweichen.
-          continue;
-        }
-
-        card = fuzzy;
-        break;
-      }
-    }
-
-    if (!card) {
-      unresolved.push({ index, row });
-      processed += 1;
-      onProgress?.(processed, total);
-      continue;
-    }
-
-    // Wenn Edition/Collector Number fehlen, darf Fuzzy nicht still auf eine andere Karte springen.
-    if ((!row.edition || !row.collectorNumber) && !namesEqual(card.name, row.name)) {
-      unresolved.push({ index, row });
-      processed += 1;
-      onProgress?.(processed, total);
-      continue;
-    }
-
-    resolved.push({ index, row, card });
-    processed += 1;
-    onProgress?.(processed, total);
   }
 
-  return { resolved, unresolved };
+  const unresolved: UnresolvedRow[] = [];
+
+  if (fallbackIndexes.length > 0) {
+    onProgress?.(0, fallbackIndexes.length, "Nicht eindeutige Karten werden per Name geprüft…");
+  }
+
+  for (let fallbackPosition = 0; fallbackPosition < fallbackIndexes.length; fallbackPosition += 1) {
+    const index = fallbackIndexes[fallbackPosition];
+    const row = rows[index];
+    let card: ScryfallCard | null = null;
+
+    // DFC-/MDFC-sicherer Namens-Fallback. Besonders bei rebalanced
+    // Arena-Karten wie "A-Mischievous Catgeist // A-Catlike Curiosity"
+    // wird zuerst die Vorderseite probiert. Ein vorhandenes Set/Collector-Paar
+    // bleibt dabei immer autoritativ.
+    for (const lookupName of cardNameLookupCandidates(row.name)) {
+      const fuzzy = await getCardByFuzzyName(lookupName);
+      if (!fuzzy) continue;
+
+      if (row.edition) {
+        const printings = await getPrintings(fuzzy);
+        const edition = row.edition.trim().toLowerCase();
+        const collectorNumber = row.collectorNumber?.trim().toLowerCase();
+        const matchingPrinting = printings.find(candidate =>
+          candidate.set.toLowerCase() === edition &&
+          (!collectorNumber ||
+            candidate.collector_number.trim().toLowerCase() === collectorNumber)
+        );
+
+        if (matchingPrinting) {
+          card = matchingPrinting;
+          break;
+        }
+
+        continue;
+      }
+
+      card = fuzzy;
+      break;
+    }
+
+    if (!card || ((!row.edition || !row.collectorNumber) && !namesEqual(card.name, row.name))) {
+      unresolved.push({ index, row });
+    } else {
+      resolvedByIndex.set(index, { index, row, card });
+    }
+
+    onProgress?.(
+      fallbackPosition + 1,
+      fallbackIndexes.length,
+      "Nicht eindeutige Karten werden per Name geprüft…"
+    );
+  }
+
+  return {
+    resolved: Array.from(resolvedByIndex.values()).sort((a, b) => a.index - b.index),
+    unresolved: unresolved.sort((a, b) => a.index - b.index)
+  };
 }
 
 function mergeFinishCounts(
@@ -343,7 +396,8 @@ export default function ExternalImportDialog({
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [resolveProgress, setResolveProgress] = useState({ processed: 0, total: 0 });
+  const [resolveProgress, setResolveProgress] = useState({ processed: 0, total: 0, label: "Import wird vorbereitet…" });
+  const [previewLimit, setPreviewLimit] = useState(90);
   const [error, setError] = useState("");
 
   const totalCopies = useMemo(
@@ -359,6 +413,41 @@ export default function ExternalImportDialog({
   const selectedCopies = useMemo(
     () => selectedResolved.reduce((sum, item) => sum + item.row.count, 0),
     [selectedResolved]
+  );
+
+  const isLargeImport = totalCopies > DETAILED_PREVIEW_MAX_COPIES;
+
+  const resolvedCopies = useMemo(
+    () => resolveResult?.resolved.reduce((sum, item) => sum + item.row.count, 0) ?? 0,
+    [resolveResult]
+  );
+
+  const unresolvedCopies = useMemo(
+    () => resolveResult?.unresolved.reduce((sum, item) => sum + item.row.count, 0) ?? 0,
+    [resolveResult]
+  );
+
+  const resolvedSummaryRows = useMemo(
+    () => summarizeRows(resolveResult?.resolved ?? []),
+    [resolveResult]
+  );
+
+  const unresolvedSummaryRows = useMemo(
+    () => summarizeRows(resolveResult?.unresolved ?? []),
+    [resolveResult]
+  );
+
+  const previewItems = useMemo(() => {
+    if (!resolveResult) return [];
+    return [
+      ...resolveResult.resolved.map(item => ({ kind: "resolved" as const, ...item })),
+      ...resolveResult.unresolved.map(item => ({ kind: "unresolved" as const, ...item }))
+    ].sort((a, b) => a.index - b.index);
+  }, [resolveResult]);
+
+  const visiblePreviewItems = useMemo(
+    () => previewItems.slice(0, previewLimit),
+    [previewItems, previewLimit]
   );
 
   const commanderCandidates = useMemo(() => {
@@ -387,7 +476,8 @@ export default function ExternalImportDialog({
     setConfirmed(false);
     setCommanderOverrideId("");
     setError("");
-    setResolveProgress({ processed: 0, total: 0 });
+    setResolveProgress({ processed: 0, total: 0, label: "Import wird vorbereitet…" });
+    setPreviewLimit(90);
   };
 
   const changeMethod = (next: ImportMethod) => {
@@ -402,17 +492,24 @@ export default function ExternalImportDialog({
   ) => {
     setBusy(true);
     setError("");
-    setResolveProgress({ processed: 0, total: next.rows.length });
+    setResolveProgress({ processed: 0, total: next.rows.length, label: "Import wird vorbereitet…" });
     setParsed(next);
     setSourceLabel(label);
     setFormat(inferredFormat(next));
     if (suggestedDeckName) setDeckName(suggestedDeckName);
 
     try {
-      const resolved = await resolveImportRows(next.rows, (processed, total) => {
-        setResolveProgress({ processed, total });
+      // Einen Paint-Zyklus freigeben, damit Spinner und Fortschrittsanzeige
+      // sichtbar werden, bevor die Netzwerkarbeit startet.
+      await new Promise<void>(resolve => {
+        window.requestAnimationFrame(() => resolve());
+      });
+
+      const resolved = await resolveImportRows(next.rows, (processed, total, progressLabel) => {
+        setResolveProgress({ processed, total, label: progressLabel });
       });
       setResolveResult(resolved);
+      setPreviewLimit(90);
       setSelectedRows(new Set(resolved.resolved.map(item => item.index)));
       setConfirmed(false);
 
@@ -588,11 +685,11 @@ export default function ExternalImportDialog({
           <div className="external-import-loading" role="status" aria-live="polite">
             <div className="external-import-loading-spinner" aria-hidden="true" />
             <div className="external-import-loading-copy">
-              <strong>Karten werden geprüft…</strong>
+              <strong>{resolveProgress.label}</strong>
               <span>
                 {resolveProgress.total > 0
-                  ? `${resolveProgress.processed}/${resolveProgress.total} Karten aufgelöst`
-                  : "Import wird vorbereitet…"}
+                  ? `${resolveProgress.processed}/${resolveProgress.total}`
+                  : "CSV wird eingelesen…"}
               </span>
               <div className="external-import-loading-bar" aria-hidden="true">
                 <span
@@ -650,58 +747,139 @@ export default function ExternalImportDialog({
             <div className="external-import-preview-head">
               <div>
                 <h3>Import vor Übernahme prüfen</h3>
-                <p className="muted">Nur markierte, eindeutig erkannte Zeilen werden übernommen.</p>
+                <p className="muted">
+                  {isLargeImport
+                    ? "Bei Importen über 100 Karten wird eine kompakte Übersicht ohne Bilder angezeigt."
+                    : "Nur markierte, eindeutig erkannte Zeilen werden übernommen."}
+                </p>
               </div>
               <button className="secondary" type="button" onClick={resetPreview} disabled={busy}>Quelle ändern</button>
             </div>
 
-            <div className="external-import-card-list">
-              {resolveResult.resolved.map(({ index, row, card }) => (
-                <label className="external-import-card" key={`${index}-${card.id}`}>
-                  <div className="external-import-card-select">
-                    <input
-                      className="external-import-card-check"
-                      type="checkbox"
-                      checked={selectedRows.has(index)}
-                      onChange={() => toggleRow(index)}
-                      aria-label={`${card.name} importieren`}
-                    />
+            {isLargeImport ? (
+              <div className="external-import-large-review">
+                <div className="external-import-large-totals">
+                  <div className="external-import-large-total external-import-large-total-ok">
+                    <span>Eindeutig erkannt</span>
+                    <strong>{resolvedCopies} von {totalCopies} Karten</strong>
+                    <small>{resolvedSummaryRows.length} unterschiedliche Kartennamen</small>
                   </div>
-                  <div className="external-import-card-image">
-                    {imageFor(card) ? <img src={imageFor(card)} alt={card.name} loading="lazy" /> : <span>Kein Bild</span>}
-                  </div>
-                  <div className="external-import-card-copy">
-                    <strong className="external-import-card-name">{card.name}</strong>
-                    <div className="external-import-imported-data">
-                      <span><b>Anzahl:</b> {row.count}</span>
-                      <span><b>Set:</b> {card.set_name ?? row.edition ?? card.set.toUpperCase()} ({card.set.toUpperCase()})</span>
-                      <span><b>Nummer:</b> {card.collector_number || row.collectorNumber || "—"}</span>
-                      <span><b>Finish:</b> {row.foil ? "Foil" : "Non-Foil"}</span>
-                      {mode === "deck" && <span><b>Bereich:</b> {sectionLabel(row.section)}</span>}
-                    </div>
-                  </div>
-                </label>
-              ))}
-
-              {resolveResult.unresolved.map(({ index, row }) => (
-                <div className="external-import-card external-import-card-unresolved" key={`unresolved-${index}`}>
-                  <div className="external-import-card-select">
-                    <input className="external-import-card-check" type="checkbox" disabled />
-                  </div>
-                  <div className="external-import-card-image external-import-card-image-missing"><span>?</span></div>
-                  <div className="external-import-card-copy">
-                    <strong className="external-import-card-name">{row.name}</strong>
-                    <span className="external-import-missing">Nicht erkannt</span>
-                    <div className="external-import-imported-data">
-                      <span><b>Anzahl:</b> {row.count}</span>
-                      <span><b>Edition:</b> {row.edition?.toUpperCase() || "—"}</span>
-                      <span><b>Nummer:</b> {row.collectorNumber || "—"}</span>
-                      <span><b>Finish:</b> {row.foil ? "Foil" : "Non-Foil"}</span>
-                    </div>
+                  <div className="external-import-large-total external-import-large-total-warning">
+                    <span>Nicht eindeutig erkannt</span>
+                    <strong>{unresolvedCopies} Karten</strong>
+                    <small>{unresolvedSummaryRows.length} unterschiedliche Kartennamen</small>
                   </div>
                 </div>
-              ))}
-            </div>
+
+                <section className="external-import-summary-list-section">
+                  <div className="external-import-summary-list-head">
+                    <h4>Erkannte Karten</h4>
+                    <span>{resolvedCopies} Karten</span>
+                  </div>
+                  <div className="external-import-summary-list" role="list">
+                    {resolvedSummaryRows.map(item => (
+                      <div className="external-import-summary-row" role="listitem" key={`ok-${item.name}`}>
+                        <span>{item.name}</span>
+                        <strong>{item.count}×</strong>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="external-import-summary-list-section external-import-summary-list-section-warning">
+                  <div className="external-import-summary-list-head">
+                    <h4>Nicht eindeutig erkannt</h4>
+                    <span>{unresolvedCopies} Karten</span>
+                  </div>
+                  {unresolvedSummaryRows.length > 0 ? (
+                    <>
+                      <p className="external-import-summary-note">
+                        Diese Karten werden nicht übernommen. Bitte prüfe Name, Set und Collector Number in der Quelldatei.
+                      </p>
+                      <div className="external-import-summary-list" role="list">
+                        {unresolvedSummaryRows.map(item => (
+                          <div className="external-import-summary-row external-import-summary-row-warning" role="listitem" key={`missing-${item.name}`}>
+                            <span>{item.name}</span>
+                            <strong>{item.count}×</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="external-import-all-recognized">Alle Karten wurden eindeutig erkannt.</div>
+                  )}
+                </section>
+              </div>
+            ) : (
+              <>
+                <div className="external-import-card-list">
+                  {visiblePreviewItems.map(item => {
+                    if (item.kind === "resolved") {
+                      const { index, row, card } = item;
+                      return (
+                        <label className="external-import-card" key={`${index}-${card.id}`}>
+                          <div className="external-import-card-select">
+                            <input
+                              className="external-import-card-check"
+                              type="checkbox"
+                              checked={selectedRows.has(index)}
+                              onChange={() => toggleRow(index)}
+                              aria-label={`${card.name} importieren`}
+                            />
+                          </div>
+                          <div className="external-import-card-image">
+                            {imageFor(card) ? <img src={imageFor(card)} alt={card.name} loading="lazy" /> : <span>Kein Bild</span>}
+                          </div>
+                          <div className="external-import-card-copy">
+                            <strong className="external-import-card-name">{card.name}</strong>
+                            <div className="external-import-imported-data">
+                              <span><b>Anzahl:</b> {row.count}</span>
+                              <span><b>Set:</b> {card.set_name ?? row.edition ?? card.set.toUpperCase()} ({card.set.toUpperCase()})</span>
+                              <span><b>Nummer:</b> {card.collector_number || row.collectorNumber || "—"}</span>
+                              <span><b>Finish:</b> {row.foil ? "Foil" : "Non-Foil"}</span>
+                              {mode === "deck" && <span><b>Bereich:</b> {sectionLabel(row.section)}</span>}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    }
+
+                    const { index, row } = item;
+                    return (
+                      <div className="external-import-card external-import-card-unresolved" key={`unresolved-${index}`}>
+                        <div className="external-import-card-select">
+                          <input className="external-import-card-check" type="checkbox" disabled />
+                        </div>
+                        <div className="external-import-card-image external-import-card-image-missing"><span>?</span></div>
+                        <div className="external-import-card-copy">
+                          <strong className="external-import-card-name">{row.name}</strong>
+                          <span className="external-import-missing">Nicht erkannt</span>
+                          <div className="external-import-imported-data">
+                            <span><b>Anzahl:</b> {row.count}</span>
+                            <span><b>Edition:</b> {row.edition?.toUpperCase() || "—"}</span>
+                            <span><b>Nummer:</b> {row.collectorNumber || "—"}</span>
+                            <span><b>Finish:</b> {row.foil ? "Foil" : "Non-Foil"}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {previewLimit < previewItems.length && (
+                  <div className="external-import-load-more">
+                    <span>{previewLimit} von {previewItems.length} Zeilen angezeigt</span>
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => setPreviewLimit(limit => Math.min(limit + 90, previewItems.length))}
+                    >
+                      Weitere 90 anzeigen
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
 
             <label className="external-import-confirm">
               <input
@@ -709,7 +887,11 @@ export default function ExternalImportDialog({
                 checked={confirmed}
                 onChange={(event: ChangeEvent<HTMLInputElement>) => setConfirmed(event.target.checked)}
               />
-              <span>Ich habe die Importliste geprüft und möchte die ausgewählten Karten übernehmen.</span>
+              <span>
+                {isLargeImport
+                  ? "Ich habe die Übersicht geprüft und möchte alle eindeutig erkannten Karten übernehmen."
+                  : "Ich habe die Importliste geprüft und möchte die ausgewählten Karten übernehmen."}
+              </span>
             </label>
           </>
         )}

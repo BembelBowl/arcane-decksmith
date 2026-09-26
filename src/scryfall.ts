@@ -9,6 +9,7 @@ const cache = new Map<string, CardRecord>();
 const searchCache = new Map<string, ScryfallCard[]>();
 const printingsCache = new Map<string, ScryfallCard[]>();
 const rawCardCache = new Map<string, ScryfallCard>();
+const collectorCardCache = new Map<string, ScryfallCard>();
 let setsCache: ScryfallSet[] | null = null;
 
 let lastRequest = 0;
@@ -583,6 +584,14 @@ export async function getSets(): Promise<ScryfallSet[]> {
   return setsCache;
 }
 
+function collectorLookupKey(setCode: string, collectorNumber: string): string {
+  return `${setCode.trim().toLowerCase()}::${collectorNumber.trim().toLowerCase()}`;
+}
+
+function escapeScryfallSearchValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 export async function getCardBySetAndCollectorNumber(
   setCode: string,
   collectorNumber: string
@@ -592,11 +601,16 @@ export async function getCardBySetAndCollectorNumber(
 
   if (!cleanSet || !cleanNumber) return null;
 
+  const key = collectorLookupKey(cleanSet, cleanNumber);
+  const exactCached = collectorCardCache.get(key);
+  if (exactCached) return exactCached;
+
   for (const cached of rawCardCache.values()) {
     if (
       cached.set.toLowerCase() === cleanSet &&
       cached.collector_number.toLowerCase() === cleanNumber.toLowerCase()
     ) {
+      collectorCardCache.set(key, cached);
       return cached;
     }
   }
@@ -607,6 +621,7 @@ export async function getCardBySetAndCollectorNumber(
     );
 
     rawCardCache.set(card.id, card);
+    collectorCardCache.set(collectorLookupKey(card.set, card.collector_number), card);
     cache.set(card.id, normalizeCard(card));
     return card;
   } catch (error) {
@@ -619,7 +634,8 @@ export async function getCardBySetAndCollectorNumber(
 
 export async function getCardsBySetAndCollectorNumbers(
   setCode: string,
-  collectorNumbers: string[]
+  collectorNumbers: string[],
+  onProgress?: (processed: number, total: number) => void
 ): Promise<CollectorNumberLookupResult> {
   const cleanSet = setCode.trim().toLowerCase();
   const uniqueNumbers = Array.from(
@@ -631,23 +647,90 @@ export async function getCardsBySetAndCollectorNumbers(
   );
 
   if (!cleanSet || uniqueNumbers.length === 0) {
+    onProgress?.(0, 0);
     return { cards: [], notFound: [] };
+  }
+
+  const cardsByNumber = new Map<string, ScryfallCard>();
+  const pending: string[] = [];
+
+  for (const collectorNumber of uniqueNumbers) {
+    const key = collectorLookupKey(cleanSet, collectorNumber);
+    const cached = collectorCardCache.get(key);
+    if (cached) cardsByNumber.set(collectorNumber.toLowerCase(), cached);
+    else pending.push(collectorNumber);
+  }
+
+  let processed = uniqueNumbers.length - pending.length;
+  onProgress?.(processed, uniqueNumbers.length);
+
+  // Große Imports werden über GET-Suchanfragen gebündelt. Damit werden nicht
+  // tausende Einzelrequests erzeugt, gleichzeitig bleibt der Browserpfad frei
+  // von dem CORS/Preflight-Problem des POST-/cards/collection-Endpunkts.
+  const BATCH_SIZE = 25;
+
+  for (let offset = 0; offset < pending.length; offset += BATCH_SIZE) {
+    const batch = pending.slice(offset, offset + BATCH_SIZE);
+    const batchSet = new Set(batch.map(number => number.toLowerCase()));
+    let batchCards: ScryfallCard[] = [];
+    let batchSearchFailed = false;
+
+    try {
+      const collectorQuery = batch
+        .map(number => `cn:"${escapeScryfallSearchValue(number)}"`)
+        .join(" OR ");
+      const params = new URLSearchParams({
+        q: `set:${cleanSet} (${collectorQuery})`,
+        unique: "prints",
+        order: "set",
+        include_extras: "true"
+      });
+
+      const result = await getJson<SearchResponse>(
+        `${API}/cards/search?${params.toString()}`
+      );
+      batchCards = result.data;
+    } catch (error) {
+      // Eine leere Scryfall-Suche liefert 404. Auch bei unerwarteter
+      // Query-Syntax fallen wir für diesen kleinen Batch auf exakte GETs zurück.
+      batchSearchFailed = true;
+      if (!(error instanceof Error && /Scryfall-Fehler 404/.test(error.message))) {
+        console.warn("Scryfall batch lookup failed, falling back to exact GETs", error);
+      }
+    }
+
+    for (const card of batchCards) {
+      const number = card.collector_number.trim().toLowerCase();
+      if (card.set.toLowerCase() !== cleanSet || !batchSet.has(number)) continue;
+
+      rawCardCache.set(card.id, card);
+      collectorCardCache.set(collectorLookupKey(card.set, card.collector_number), card);
+      cache.set(card.id, normalizeCard(card));
+      cardsByNumber.set(number, card);
+    }
+
+    const missing = batch.filter(
+      number => !cardsByNumber.has(number.toLowerCase())
+    );
+
+    // Einzelne Sonderdrucke (z. B. Extras/Rebalanced) können von der Suche
+    // ausgeschlossen sein. Nur diese fehlenden Nummern werden exakt abgefragt.
+    if (batchSearchFailed || missing.length > 0) {
+      for (const collectorNumber of missing) {
+        const card = await getCardBySetAndCollectorNumber(cleanSet, collectorNumber);
+        if (card) cardsByNumber.set(collectorNumber.toLowerCase(), card);
+      }
+    }
+
+    processed += batch.length;
+    onProgress?.(Math.min(processed, uniqueNumbers.length), uniqueNumbers.length);
   }
 
   const cards: ScryfallCard[] = [];
   const notFound: string[] = [];
 
-  // Browserfreundlicher Importpfad: einzelne GET-Requests statt
-  // POST /cards/collection. Der POST-Endpunkt kann auf statisch
-  // gehosteten Apps durch CORS/Preflight als "Failed to fetch"
-  // abbrechen. GET /cards/:set/:number funktioniert ohne diesen
-  // zusätzlichen Preflight und ist für Scanner/Import eindeutig.
   for (const collectorNumber of uniqueNumbers) {
-    const card = await getCardBySetAndCollectorNumber(
-      cleanSet,
-      collectorNumber
-    );
-
+    const card = cardsByNumber.get(collectorNumber.toLowerCase());
     if (card) cards.push(card);
     else notFound.push(collectorNumber);
   }
