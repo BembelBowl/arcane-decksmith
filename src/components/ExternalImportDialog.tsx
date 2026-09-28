@@ -34,6 +34,7 @@ type ResolvedRow = {
 type UnresolvedRow = {
   index: number;
   row: ExternalImportCardRow;
+  reason: "not_found" | "network";
 };
 
 type ResolveResult = {
@@ -124,6 +125,7 @@ async function resolveImportRows(
   onProgress?: (processed: number, total: number, label: string) => void
 ): Promise<ResolveResult> {
   const exactMap = new Map<string, ScryfallCard>();
+  const temporaryFailureKeys = new Set<string>();
   const bySet = new Map<string, string[]>();
 
   for (const row of rows) {
@@ -165,6 +167,9 @@ async function resolveImportRows(
     for (const card of result.cards) {
       exactMap.set(importKey(card.set, card.collector_number), card);
     }
+    for (const collectorNumber of result.temporaryFailures) {
+      temporaryFailureKeys.add(importKey(set, collectorNumber));
+    }
 
     exactProcessed += numbers.length;
     onProgress?.(exactProcessed, exactTotal, "Druckversionen werden geprüft…");
@@ -172,21 +177,26 @@ async function resolveImportRows(
 
   const resolvedByIndex = new Map<number, ResolvedRow>();
   const fallbackIndexes: number[] = [];
+  const unresolved: UnresolvedRow[] = [];
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const exact = row.edition && row.collectorNumber
-      ? exactMap.get(importKey(row.edition, row.collectorNumber)) ?? null
+    const exactKey = row.edition && row.collectorNumber
+      ? importKey(row.edition, row.collectorNumber)
       : null;
+    const exact = exactKey ? exactMap.get(exactKey) ?? null : null;
 
     if (exact) {
       resolvedByIndex.set(index, { index, row, card: exact });
+    } else if (exactKey && temporaryFailureKeys.has(exactKey)) {
+      // Netzwerkfehler werden nicht als "Karte nicht gefunden" gewertet.
+      // So bleibt die erkannte Importmenge nachvollziehbar und der Nutzer
+      // kann die Prüfung wiederholen, ohne bereits erkannte Karten zu verlieren.
+      unresolved.push({ index, row, reason: "network" });
     } else {
       fallbackIndexes.push(index);
     }
   }
-
-  const unresolved: UnresolvedRow[] = [];
 
   if (fallbackIndexes.length > 0) {
     onProgress?.(0, fallbackIndexes.length, "Nicht eindeutige Karten werden per Name geprüft…");
@@ -196,39 +206,47 @@ async function resolveImportRows(
     const index = fallbackIndexes[fallbackPosition];
     const row = rows[index];
     let card: ScryfallCard | null = null;
+    let networkFailure = false;
 
     // DFC-/MDFC-sicherer Namens-Fallback. Besonders bei rebalanced
     // Arena-Karten wie "A-Mischievous Catgeist // A-Catlike Curiosity"
     // wird zuerst die Vorderseite probiert. Ein vorhandenes Set/Collector-Paar
     // bleibt dabei immer autoritativ.
-    for (const lookupName of cardNameLookupCandidates(row.name)) {
-      const fuzzy = await getCardByFuzzyName(lookupName);
-      if (!fuzzy) continue;
+    try {
+      for (const lookupName of cardNameLookupCandidates(row.name)) {
+        const fuzzy = await getCardByFuzzyName(lookupName);
+        if (!fuzzy) continue;
 
-      if (row.edition) {
-        const printings = await getPrintings(fuzzy);
-        const edition = row.edition.trim().toLowerCase();
-        const collectorNumber = row.collectorNumber?.trim().toLowerCase();
-        const matchingPrinting = printings.find(candidate =>
-          candidate.set.toLowerCase() === edition &&
-          (!collectorNumber ||
-            candidate.collector_number.trim().toLowerCase() === collectorNumber)
-        );
+        if (row.edition) {
+          const printings = await getPrintings(fuzzy);
+          const edition = row.edition.trim().toLowerCase();
+          const collectorNumber = row.collectorNumber?.trim().toLowerCase();
+          const matchingPrinting = printings.find(candidate =>
+            candidate.set.toLowerCase() === edition &&
+            (!collectorNumber ||
+              candidate.collector_number.trim().toLowerCase() === collectorNumber)
+          );
 
-        if (matchingPrinting) {
-          card = matchingPrinting;
-          break;
+          if (matchingPrinting) {
+            card = matchingPrinting;
+            break;
+          }
+
+          continue;
         }
 
-        continue;
+        card = fuzzy;
+        break;
       }
-
-      card = fuzzy;
-      break;
+    } catch (error) {
+      console.warn(`Scryfall fallback lookup failed for ${row.name}`, error);
+      networkFailure = true;
     }
 
-    if (!card || ((!row.edition || !row.collectorNumber) && !namesEqual(card.name, row.name))) {
-      unresolved.push({ index, row });
+    if (networkFailure) {
+      unresolved.push({ index, row, reason: "network" });
+    } else if (!card || ((!row.edition || !row.collectorNumber) && !namesEqual(card.name, row.name))) {
+      unresolved.push({ index, row, reason: "not_found" });
     } else {
       resolvedByIndex.set(index, { index, row, card });
     }
@@ -423,7 +441,16 @@ export default function ExternalImportDialog({
   );
 
   const unresolvedCopies = useMemo(
-    () => resolveResult?.unresolved.reduce((sum, item) => sum + item.row.count, 0) ?? 0,
+    () => resolveResult?.unresolved
+      .filter(item => item.reason === "not_found")
+      .reduce((sum, item) => sum + item.row.count, 0) ?? 0,
+    [resolveResult]
+  );
+
+  const technicalFailureCopies = useMemo(
+    () => resolveResult?.unresolved
+      .filter(item => item.reason === "network")
+      .reduce((sum, item) => sum + item.row.count, 0) ?? 0,
     [resolveResult]
   );
 
@@ -433,9 +460,16 @@ export default function ExternalImportDialog({
   );
 
   const unresolvedSummaryRows = useMemo(
-    () => summarizeRows(resolveResult?.unresolved ?? []),
+    () => summarizeRows(resolveResult?.unresolved.filter(item => item.reason === "not_found") ?? []),
     [resolveResult]
   );
+
+  const technicalFailureSummaryRows = useMemo(
+    () => summarizeRows(resolveResult?.unresolved.filter(item => item.reason === "network") ?? []),
+    [resolveResult]
+  );
+
+  const hasTechnicalFailures = technicalFailureCopies > 0;
 
   const previewItems = useMemo(() => {
     if (!resolveResult) return [];
@@ -574,8 +608,17 @@ export default function ExternalImportDialog({
     setConfirmed(false);
   };
 
+  const retryResolution = async () => {
+    if (!parsed || busy) return;
+    await resolveParsed(
+      parsed,
+      sourceLabel || parsed.provider,
+      mode === "deck" ? deckName : undefined
+    );
+  };
+
   const applyImport = async () => {
-    if (!parsed || selectedResolved.length === 0 || !confirmed || busy) return;
+    if (!parsed || selectedResolved.length === 0 || !confirmed || busy || hasTechnicalFailures) return;
 
     setBusy(true);
     setError("");
@@ -769,6 +812,13 @@ export default function ExternalImportDialog({
                     <strong>{unresolvedCopies} Karten</strong>
                     <small>{unresolvedSummaryRows.length} unterschiedliche Kartennamen</small>
                   </div>
+                  {hasTechnicalFailures && (
+                    <div className="external-import-large-total external-import-large-total-network">
+                      <span>Technisch noch nicht geprüft</span>
+                      <strong>{technicalFailureCopies} Karten</strong>
+                      <small>Scryfall-Abfrage nach mehreren Versuchen fehlgeschlagen</small>
+                    </div>
+                  )}
                 </div>
 
                 <section className="external-import-summary-list-section">
@@ -809,6 +859,29 @@ export default function ExternalImportDialog({
                     <div className="external-import-all-recognized">Alle Karten wurden eindeutig erkannt.</div>
                   )}
                 </section>
+
+                {hasTechnicalFailures && (
+                  <section className="external-import-summary-list-section external-import-summary-list-section-network">
+                    <div className="external-import-summary-list-head">
+                      <h4>Technisch nicht geprüft</h4>
+                      <span>{technicalFailureCopies} Karten</span>
+                    </div>
+                    <p className="external-import-summary-note">
+                      Diese Karten wurden nicht als falsch erkannt. Ihre Scryfall-Abfrage ist nach mehreren automatischen Wiederholungen fehlgeschlagen. Bitte die Prüfung erneut starten; bis dahin ist die Übernahme gesperrt.
+                    </p>
+                    <div className="external-import-summary-list" role="list">
+                      {technicalFailureSummaryRows.map(item => (
+                        <div className="external-import-summary-row external-import-summary-row-network" role="listitem" key={`network-${item.name}`}>
+                          <span>{item.name}</span>
+                          <strong>{item.count}×</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <button className="secondary external-import-retry" type="button" onClick={() => void retryResolution()} disabled={busy}>
+                      Prüfung erneut starten
+                    </button>
+                  </section>
+                )}
               </div>
             ) : (
               <>
@@ -853,7 +926,7 @@ export default function ExternalImportDialog({
                         <div className="external-import-card-image external-import-card-image-missing"><span>?</span></div>
                         <div className="external-import-card-copy">
                           <strong className="external-import-card-name">{row.name}</strong>
-                          <span className="external-import-missing">Nicht erkannt</span>
+                          <span className="external-import-missing">{item.reason === "network" ? "Technisch nicht geprüft" : "Nicht erkannt"}</span>
                           <div className="external-import-imported-data">
                             <span><b>Anzahl:</b> {row.count}</span>
                             <span><b>Edition:</b> {row.edition?.toUpperCase() || "—"}</span>
@@ -881,10 +954,21 @@ export default function ExternalImportDialog({
               </>
             )}
 
+            {hasTechnicalFailures && !isLargeImport && (
+              <div className="external-import-network-warning">
+                <strong>{technicalFailureCopies} Karte(n) konnten technisch noch nicht geprüft werden.</strong>
+                <span>Die Übernahme bleibt gesperrt, damit dieselbe Datei nicht je nach Netzwerkzustand unterschiedliche Ergebnisse liefert.</span>
+                <button className="secondary" type="button" onClick={() => void retryResolution()} disabled={busy}>
+                  Prüfung erneut starten
+                </button>
+              </div>
+            )}
+
             <label className="external-import-confirm">
               <input
                 type="checkbox"
                 checked={confirmed}
+                disabled={hasTechnicalFailures}
                 onChange={(event: ChangeEvent<HTMLInputElement>) => setConfirmed(event.target.checked)}
               />
               <span>
@@ -904,7 +988,7 @@ export default function ExternalImportDialog({
             <button
               type="button"
               onClick={() => void applyImport()}
-              disabled={busy || !confirmed || selectedResolved.length === 0}
+              disabled={busy || !confirmed || selectedResolved.length === 0 || hasTechnicalFailures}
             >
               {busy
                 ? "Übernehme…"

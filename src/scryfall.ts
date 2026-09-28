@@ -13,6 +13,7 @@ const collectorCardCache = new Map<string, ScryfallCard>();
 let setsCache: ScryfallSet[] | null = null;
 
 let lastRequest = 0;
+let temporarilyUnavailableUntil = 0;
 
 export interface ScryfallCard {
   id: string;
@@ -91,6 +92,7 @@ interface SetListResponse {
 export interface CollectorNumberLookupResult {
   cards: ScryfallCard[];
   notFound: string[];
+  temporaryFailures: string[];
 }
 
 interface SearchResponse {
@@ -112,39 +114,93 @@ interface CollectionResponse {
 const sleep = (ms: number) =>
   new Promise(resolve => setTimeout(resolve, ms));
 
+const SCRYFALL_MAX_ATTEMPTS = 5;
+
+function retryAfterMs(response: Response, attempt: number): number {
+  const retryAfter = response.headers.get("Retry-After");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(10_000, seconds * 1000);
+  }
+
+  return Math.min(6_000, 350 * (2 ** attempt));
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function temporaryScryfallError(message: string): Error {
+  const error = new Error(message);
+  error.name = "ScryfallTemporaryError";
+  return error;
+}
+
+function isTemporaryScryfallError(error: unknown): boolean {
+  return error instanceof Error && (
+    error.name === "ScryfallTemporaryError" ||
+    /zu viele Anfragen|Scryfall-Fehler 5\d\d|Scryfall konnte nach mehreren Versuchen/.test(error.message)
+  );
+}
+
 async function getJson<T>(url: string): Promise<T> {
-  const wait = Math.max(0, 110 - (Date.now() - lastRequest));
-
-  if (wait) {
-    await sleep(wait);
+  if (Date.now() < temporarilyUnavailableUntil) {
+    throw temporaryScryfallError(
+      "Scryfall konnte nach mehreren Versuchen nicht erreicht werden."
+    );
   }
 
-  lastRequest = Date.now();
+  let lastNetworkError: unknown = null;
 
-  let res: Response;
+  for (let attempt = 0; attempt < SCRYFALL_MAX_ATTEMPTS; attempt += 1) {
+    const wait = Math.max(0, 120 - (Date.now() - lastRequest));
+    if (wait) await sleep(wait);
+    lastRequest = Date.now();
 
-  try {
-    res = await fetch(url, {
-      headers: {
-        Accept: "application/json;q=0.9,*/*;q=0.8"
+    let res: Response;
+
+    try {
+      res = await fetch(url, {
+        headers: {
+          Accept: "application/json;q=0.9,*/*;q=0.8"
+        }
+      });
+    } catch (cause) {
+      lastNetworkError = cause;
+      if (attempt < SCRYFALL_MAX_ATTEMPTS - 1) {
+        await sleep(Math.min(6_000, 350 * (2 ** attempt)));
+        continue;
       }
-    });
-  } catch (cause) {
-    console.error("Scryfall request failed", cause);
-    throw new Error(
-      "Scryfall konnte nicht erreicht werden. Bitte Netzwerkverbindung prüfen und den Import erneut versuchen."
-    );
+
+      console.error("Scryfall request failed after retries", cause);
+      temporarilyUnavailableUntil = Date.now() + 8_000;
+      throw temporaryScryfallError(
+        "Scryfall konnte nach mehreren Versuchen nicht erreicht werden."
+      );
+    }
+
+    if (res.ok) return res.json() as Promise<T>;
+
+    if (isRetryableStatus(res.status) && attempt < SCRYFALL_MAX_ATTEMPTS - 1) {
+      await sleep(retryAfterMs(res, attempt));
+      continue;
+    }
+
+    if (isRetryableStatus(res.status)) {
+      temporarilyUnavailableUntil = Date.now() + 8_000;
+      throw temporaryScryfallError(
+        res.status === 429
+          ? "Scryfall: zu viele Anfragen. Bitte kurz warten."
+          : `Scryfall-Fehler ${res.status}.`
+      );
+    }
+
+    throw new Error(`Scryfall-Fehler ${res.status}.`);
   }
 
-  if (!res.ok) {
-    throw new Error(
-      res.status === 429
-        ? "Scryfall: zu viele Anfragen. Bitte kurz warten."
-        : `Scryfall-Fehler ${res.status}.`
-    );
-  }
-
-  return res.json() as Promise<T>;
+  console.error("Unexpected Scryfall retry exhaustion", lastNetworkError);
+  temporarilyUnavailableUntil = Date.now() + 8_000;
+  throw temporaryScryfallError("Scryfall konnte nach mehreren Versuchen nicht erreicht werden.");
 }
 
 async function postJson<T>(
@@ -648,10 +704,11 @@ export async function getCardsBySetAndCollectorNumbers(
 
   if (!cleanSet || uniqueNumbers.length === 0) {
     onProgress?.(0, 0);
-    return { cards: [], notFound: [] };
+    return { cards: [], notFound: [], temporaryFailures: [] };
   }
 
   const cardsByNumber = new Map<string, ScryfallCard>();
+  const temporaryFailures = new Set<string>();
   const pending: string[] = [];
 
   for (const collectorNumber of uniqueNumbers) {
@@ -674,6 +731,7 @@ export async function getCardsBySetAndCollectorNumbers(
     const batchSet = new Set(batch.map(number => number.toLowerCase()));
     let batchCards: ScryfallCard[] = [];
     let batchSearchFailed = false;
+    let batchTemporaryFailure = false;
 
     try {
       const collectorQuery = batch
@@ -691,11 +749,18 @@ export async function getCardsBySetAndCollectorNumbers(
       );
       batchCards = result.data;
     } catch (error) {
-      // Eine leere Scryfall-Suche liefert 404. Auch bei unerwarteter
-      // Query-Syntax fallen wir für diesen kleinen Batch auf exakte GETs zurück.
-      batchSearchFailed = true;
-      if (!(error instanceof Error && /Scryfall-Fehler 404/.test(error.message))) {
-        console.warn("Scryfall batch lookup failed, falling back to exact GETs", error);
+      // Eine leere Scryfall-Suche liefert 404 und darf exakt nachgeprüft werden.
+      // Ein echter Netzwerk-/Rate-Limit-/5xx-Ausfall wird dagegen nicht mit bis
+      // zu 25 weiteren Einzelrequests verschärft, sondern transparent als
+      // temporär ungeprüft zurückgegeben.
+      if (isTemporaryScryfallError(error)) {
+        batchTemporaryFailure = true;
+        console.warn("Scryfall batch lookup temporarily unavailable", error);
+      } else {
+        batchSearchFailed = true;
+        if (!(error instanceof Error && /Scryfall-Fehler 404/.test(error.message))) {
+          console.warn("Scryfall batch lookup failed, falling back to exact GETs", error);
+        }
       }
     }
 
@@ -713,12 +778,31 @@ export async function getCardsBySetAndCollectorNumbers(
       number => !cardsByNumber.has(number.toLowerCase())
     );
 
-    // Einzelne Sonderdrucke (z. B. Extras/Rebalanced) können von der Suche
-    // ausgeschlossen sein. Nur diese fehlenden Nummern werden exakt abgefragt.
-    if (batchSearchFailed || missing.length > 0) {
+    // Bei einer echten Scryfall-Störung werden die fehlenden Karten als
+    // technisch ungeprüft markiert. Das vermeidet tausende zusätzliche Requests
+    // und verhindert, dass ein Netzwerkfehler wie ein inhaltlicher Fehler wirkt.
+    if (batchTemporaryFailure) {
       for (const collectorNumber of missing) {
-        const card = await getCardBySetAndCollectorNumber(cleanSet, collectorNumber);
-        if (card) cardsByNumber.set(collectorNumber.toLowerCase(), card);
+        temporaryFailures.add(collectorNumber.toLowerCase());
+      }
+    } else if (batchSearchFailed || missing.length > 0) {
+      // Einzelne Sonderdrucke (z. B. Extras/Rebalanced) können von der Suche
+      // ausgeschlossen sein. Nur diese fehlenden Nummern werden exakt abgefragt.
+      for (const collectorNumber of missing) {
+        try {
+          const card = await getCardBySetAndCollectorNumber(cleanSet, collectorNumber);
+          if (card) cardsByNumber.set(collectorNumber.toLowerCase(), card);
+        } catch (error) {
+          // Ein einzelner nach mehreren Retries fehlgeschlagener Request darf
+          // einen großen Import nicht komplett verwerfen. Wir kennzeichnen die
+          // Druckversion als temporär ungeprüft und lassen den Dialog einen
+          // erneuten Prüflauf anbieten.
+          console.warn(
+            `Scryfall exact lookup failed for ${cleanSet} #${collectorNumber}`,
+            error
+          );
+          temporaryFailures.add(collectorNumber.toLowerCase());
+        }
       }
     }
 
@@ -728,14 +812,17 @@ export async function getCardsBySetAndCollectorNumbers(
 
   const cards: ScryfallCard[] = [];
   const notFound: string[] = [];
+  const failed: string[] = [];
 
   for (const collectorNumber of uniqueNumbers) {
-    const card = cardsByNumber.get(collectorNumber.toLowerCase());
+    const normalizedNumber = collectorNumber.toLowerCase();
+    const card = cardsByNumber.get(normalizedNumber);
     if (card) cards.push(card);
+    else if (temporaryFailures.has(normalizedNumber)) failed.push(collectorNumber);
     else notFound.push(collectorNumber);
   }
 
-  return { cards, notFound };
+  return { cards, notFound, temporaryFailures: failed };
 }
 
 export async function getPrintings(

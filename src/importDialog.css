@@ -331,3 +331,36 @@
     max-height: 300px;
   }
 }
+
+.external-import-large-total-network,
+.external-import-summary-list-section-network {
+  border-color: rgba(107, 180, 255, .34);
+  background: rgba(107, 180, 255, .055);
+}
+
+.external-import-summary-row-network {
+  background: rgba(107, 180, 255, .035);
+}
+
+.external-import-retry {
+  margin: 12px 14px 14px;
+}
+
+.external-import-network-warning {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(107, 180, 255, .34);
+  border-radius: 10px;
+  background: rgba(107, 180, 255, .055);
+}
+
+.external-import-network-warning > span {
+  color: var(--muted, #98a4b5);
+  line-height: 1.45;
+}
+
+.external-import-network-warning button {
+  justify-self: start;
+}
