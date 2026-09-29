@@ -769,7 +769,11 @@ async function consumeJsonlBulkResponse(
     if (typeof DecompressionStream === "undefined") {
       throw new Error("Dieser Browser kann die komprimierten Scryfall Bulk Data nicht lesen.");
     }
-    stream = stream.pipeThrough(new DecompressionStream("gzip"));
+    const gzipDecompressor = new DecompressionStream("gzip") as unknown as TransformStream<
+      Uint8Array,
+      Uint8Array
+    >;
+    stream = stream.pipeThrough(gzipDecompressor);
   }
 
   const reader = stream.getReader();
