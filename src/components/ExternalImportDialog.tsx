@@ -133,7 +133,8 @@ async function resolveImportRows(
         index,
         name: row.name,
         set: row.edition,
-        collectorNumber: row.collectorNumber
+        collectorNumber: row.collectorNumber,
+        count: row.count
       })),
       onProgress
     );
@@ -573,7 +574,8 @@ export default function ExternalImportDialog({
   ) => {
     setBusy(true);
     setError("");
-    setResolveProgress({ processed: 0, total: next.rows.length, label: "Import wird vorbereitet…" });
+    const importCardCount = next.rows.reduce((sum, row) => sum + row.count, 0);
+    setResolveProgress({ processed: 0, total: importCardCount, label: "Import wird vorbereitet…" });
     setParsed(next);
     setSourceLabel(label);
     setFormat(inferredFormat(next));
@@ -589,6 +591,15 @@ export default function ExternalImportDialog({
       const resolved = await resolveImportRows(next.rows, (processed, total, progressLabel) => {
         setResolveProgress({ processed, total, label: progressLabel });
       });
+
+      // Große Importe dürfen niemals in einen normalen API-/Netzwerk-Fallback
+      // geraten. Bulk Data liefert entweder ein vollständig klassifiziertes
+      // Ergebnis oder der gesamte Prüflauf schlägt fehl.
+      if (importCardCount > DETAILED_PREVIEW_MAX_COPIES && resolved.unresolved.some(item => item.reason === "network")) {
+        throw new Error("Interner Importfehler: Ein großer Import hat unerwartet die normale Scryfall-API verwendet.");
+      }
+
+      setResolveProgress({ processed: importCardCount, total: importCardCount, label: "Alle Karten wurden geprüft." });
       setResolveResult(resolved);
       setPreviewLimit(90);
       setSelectedRows(new Set(resolved.resolved.map(item => item.index)));
@@ -778,8 +789,8 @@ export default function ExternalImportDialog({
               <strong>{resolveProgress.label}</strong>
               <span>
                 {resolveProgress.total > 0
-                  ? `${resolveProgress.processed}/${resolveProgress.total}`
-                  : "CSV wird eingelesen…"}
+                  ? `${resolveProgress.processed}/${resolveProgress.total} Karten`
+                  : "Karten werden gezählt…"}
               </span>
               <div className="external-import-loading-bar" aria-hidden="true">
                 <span
@@ -829,8 +840,8 @@ export default function ExternalImportDialog({
 
             <div className="external-import-summary">
               <div><span>Quelle</span><strong>{parsed.provider}</strong></div>
-              <div><span>Erkannt</span><strong>{resolveResult.resolved.length}/{parsed.rows.length} Zeilen</strong></div>
-              <div><span>Karten</span><strong>{selectedCopies}/{totalCopies}</strong></div>
+              <div><span>Gesamt</span><strong>{totalCopies} Karten</strong></div>
+              <div><span>Erkannt</span><strong>{resolvedCopies} Karten</strong></div>
               <div><span>Import</span><strong>{sourceLabel || "—"}</strong></div>
             </div>
 
@@ -839,8 +850,8 @@ export default function ExternalImportDialog({
                 <h3>Import vor Übernahme prüfen</h3>
                 <p className="muted">
                   {isLargeImport
-                    ? "Bei Importen über 100 Karten werden Scryfall Bulk Data verwendet und eine kompakte Übersicht ohne Bilder angezeigt."
-                    : "Nur markierte, eindeutig erkannte Zeilen werden übernommen."}
+                    ? "Bei Importen über 100 Karten wird ausschließlich Scryfall Bulk Data verwendet. Die Gesamtzahl basiert auf Count und nicht auf CSV-Zeilen."
+                    : "Nur markierte, eindeutig erkannte Karten werden übernommen."}
                 </p>
               </div>
               <button className="secondary" type="button" onClick={resetPreview} disabled={busy}>Quelle ändern</button>
@@ -859,7 +870,7 @@ export default function ExternalImportDialog({
                     <strong>{unresolvedCopies} Karten</strong>
                     <small>{unresolvedSummaryRows.length} unterschiedliche Kartennamen</small>
                   </div>
-                  {hasTechnicalFailures && (
+                  {hasTechnicalFailures && !isLargeImport && (
                     <div className="external-import-large-total external-import-large-total-network">
                       <span>Technisch noch nicht geprüft</span>
                       <strong>{technicalFailureCopies} Karten</strong>
@@ -988,7 +999,7 @@ export default function ExternalImportDialog({
 
                 {previewLimit < previewItems.length && (
                   <div className="external-import-load-more">
-                    <span>{previewLimit} von {previewItems.length} Zeilen angezeigt</span>
+                    <span>{Math.min(previewLimit, previewItems.length)} Vorschau-Einträge angezeigt</span>
                     <button
                       className="secondary"
                       type="button"
