@@ -5,6 +5,7 @@ import {
   getPrintings,
   imageFor,
   normalizeCard,
+  resolveCardsFromDefaultBulkData,
   type ScryfallCard
 } from "../scryfall";
 import { roleOf } from "../deckBuilder";
@@ -124,6 +125,36 @@ async function resolveImportRows(
   rows: ExternalImportCardRow[],
   onProgress?: (processed: number, total: number, label: string) => void
 ): Promise<ResolveResult> {
+  const totalCopies = rows.reduce((sum, row) => sum + row.count, 0);
+
+  if (totalCopies > DETAILED_PREVIEW_MAX_COPIES) {
+    const bulkResult = await resolveCardsFromDefaultBulkData(
+      rows.map((row, index) => ({
+        index,
+        name: row.name,
+        set: row.edition,
+        collectorNumber: row.collectorNumber
+      })),
+      onProgress
+    );
+
+    const unresolvedSet = new Set(bulkResult.notFoundIndexes);
+    const resolved: ResolvedRow[] = [];
+    const unresolved: UnresolvedRow[] = [];
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const card = bulkResult.cardsByIndex.get(index);
+      if (card) {
+        resolved.push({ index, row, card });
+      } else if (unresolvedSet.has(index)) {
+        unresolved.push({ index, row, reason: "not_found" });
+      }
+    }
+
+    return { resolved, unresolved };
+  }
+
   const exactMap = new Map<string, ScryfallCard>();
   const temporaryFailureKeys = new Set<string>();
   const bySet = new Map<string, string[]>();
@@ -792,7 +823,7 @@ export default function ExternalImportDialog({
                 <h3>Import vor Übernahme prüfen</h3>
                 <p className="muted">
                   {isLargeImport
-                    ? "Bei Importen über 100 Karten wird eine kompakte Übersicht ohne Bilder angezeigt."
+                    ? "Bei Importen über 100 Karten werden Scryfall Bulk Data verwendet und eine kompakte Übersicht ohne Bilder angezeigt."
                     : "Nur markierte, eindeutig erkannte Zeilen werden übernommen."}
                 </p>
               </div>

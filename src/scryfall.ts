@@ -11,6 +11,7 @@ const printingsCache = new Map<string, ScryfallCard[]>();
 const rawCardCache = new Map<string, ScryfallCard>();
 const collectorCardCache = new Map<string, ScryfallCard>();
 let setsCache: ScryfallSet[] | null = null;
+let defaultCardsBulkDescriptorCache: ScryfallBulkDataDescriptor | null = null;
 
 let lastRequest = 0;
 let temporarilyUnavailableUntil = 0;
@@ -109,6 +110,29 @@ interface CollectionResponse {
     collector_number?: string;
     [key: string]: unknown;
   }>;
+}
+
+interface ScryfallBulkDataDescriptor {
+  type: string;
+  updated_at?: string;
+  download_uri?: string;
+  jsonl_download_uri?: string;
+  size?: number;
+  compressed_size?: number;
+  content_type?: string;
+  content_encoding?: string;
+}
+
+export interface BulkImportLookupIdentifier {
+  index: number;
+  name: string;
+  set?: string;
+  collectorNumber?: string;
+}
+
+export interface BulkImportLookupResult {
+  cardsByIndex: Map<number, ScryfallCard>;
+  notFoundIndexes: number[];
 }
 
 const sleep = (ms: number) =>
@@ -646,6 +670,300 @@ function collectorLookupKey(setCode: string, collectorNumber: string): string {
 
 function escapeScryfallSearchValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function normalizeBulkLookupName(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[’']/g, "'")
+    .replace(/\s*\/\/\s*/g, " // ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function bulkLookupNames(value: string): string[] {
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (!clean) return [];
+
+  const faces = clean
+    .split(/\s*\/\/\s*/)
+    .map(face => face.trim())
+    .filter(Boolean);
+
+  return Array.from(
+    new Set(
+      [clean, faces[0], ...faces.slice(1)]
+        .filter(Boolean)
+        .map(normalizeBulkLookupName)
+    )
+  );
+}
+
+function bulkSetNameKey(setCode: string, name: string): string {
+  return `${setCode.trim().toLowerCase()}::${normalizeBulkLookupName(name)}`;
+}
+
+function preferBulkCard(current: ScryfallCard | undefined, candidate: ScryfallCard): ScryfallCard {
+  if (!current) return candidate;
+
+  const currentEnglish = current.lang === "en" ? 1 : 0;
+  const candidateEnglish = candidate.lang === "en" ? 1 : 0;
+  if (candidateEnglish !== currentEnglish) {
+    return candidateEnglish > currentEnglish ? candidate : current;
+  }
+
+  const releaseCompare = (candidate.released_at ?? "").localeCompare(current.released_at ?? "");
+  if (releaseCompare !== 0) {
+    return releaseCompare > 0 ? candidate : current;
+  }
+
+  const setCompare = candidate.set.localeCompare(current.set);
+  if (setCompare !== 0) return setCompare > 0 ? candidate : current;
+
+  return candidate.collector_number.localeCompare(current.collector_number, undefined, { numeric: true }) > 0
+    ? candidate
+    : current;
+}
+
+async function getDefaultCardsBulkDescriptor(): Promise<ScryfallBulkDataDescriptor> {
+  if (defaultCardsBulkDescriptorCache) return defaultCardsBulkDescriptorCache;
+
+  const descriptor = await getJson<ScryfallBulkDataDescriptor>(
+    `${API}/bulk-data/default-cards`
+  );
+
+  if (!descriptor.download_uri && !descriptor.jsonl_download_uri) {
+    throw new Error("Scryfall Bulk Data stellt aktuell keine Download-URL bereit.");
+  }
+
+  defaultCardsBulkDescriptorCache = descriptor;
+  return descriptor;
+}
+
+function rememberBulkCard(card: ScryfallCard): void {
+  rawCardCache.set(card.id, card);
+  collectorCardCache.set(collectorLookupKey(card.set, card.collector_number), card);
+  cache.set(card.id, normalizeCard(card));
+}
+
+type BulkCardConsumer = (card: ScryfallCard) => void;
+
+async function consumeJsonlBulkResponse(
+  response: Response,
+  url: string,
+  consume: BulkCardConsumer,
+  onScanProgress?: (scannedRecords: number) => void
+): Promise<void> {
+  if (!response.body) {
+    throw new Error("Scryfall Bulk Data konnte nicht als Datenstrom gelesen werden.");
+  }
+
+  let stream: ReadableStream<Uint8Array> = response.body;
+  const contentEncoding = (response.headers.get("Content-Encoding") ?? "").toLowerCase();
+  const looksGzipped = /\.gz(?:$|\?)/i.test(url);
+
+  // Browser dekomprimieren Content-Encoding:gzip normalerweise selbst. Nur wenn
+  // die statische .gz-Datei roh ausgeliefert wird, wird explizit entpackt.
+  if (looksGzipped && !contentEncoding.includes("gzip")) {
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error("Dieser Browser kann die komprimierten Scryfall Bulk Data nicht lesen.");
+    }
+    stream = stream.pipeThrough(new DecompressionStream("gzip"));
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let scannedRecords = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIndex = buffer.indexOf("\n");
+
+    while (newlineIndex >= 0) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+
+      if (line) {
+        consume(JSON.parse(line) as ScryfallCard);
+        scannedRecords += 1;
+        if (scannedRecords % 2000 === 0) onScanProgress?.(scannedRecords);
+      }
+
+      newlineIndex = buffer.indexOf("\n");
+    }
+  }
+
+  buffer += decoder.decode();
+  const finalLine = buffer.trim();
+  if (finalLine) {
+    consume(JSON.parse(finalLine) as ScryfallCard);
+    scannedRecords += 1;
+  }
+  onScanProgress?.(scannedRecords);
+}
+
+async function consumeLegacyJsonBulkResponse(
+  response: Response,
+  consume: BulkCardConsumer,
+  onScanProgress?: (scannedRecords: number) => void
+): Promise<void> {
+  const cards = await response.json() as ScryfallCard[];
+  let scannedRecords = 0;
+
+  for (const card of cards) {
+    consume(card);
+    scannedRecords += 1;
+    if (scannedRecords % 2000 === 0) onScanProgress?.(scannedRecords);
+  }
+  onScanProgress?.(scannedRecords);
+}
+
+export async function resolveCardsFromDefaultBulkData(
+  identifiers: BulkImportLookupIdentifier[],
+  onProgress?: (processed: number, total: number, label: string) => void
+): Promise<BulkImportLookupResult> {
+  const cardsByIndex = new Map<number, ScryfallCard>();
+  const exactIndexes = new Map<string, number[]>();
+  const setNameIndexes = new Map<string, number[]>();
+  const nameIndexes = new Map<string, number[]>();
+
+  for (const identifier of identifiers) {
+    const cleanSet = identifier.set?.trim().toLowerCase();
+    const cleanCollector = identifier.collectorNumber?.trim().toLowerCase();
+
+    if (cleanSet && cleanCollector) {
+      const key = collectorLookupKey(cleanSet, cleanCollector);
+      const indexes = exactIndexes.get(key) ?? [];
+      indexes.push(identifier.index);
+      exactIndexes.set(key, indexes);
+      continue;
+    }
+
+    const lookupNames = bulkLookupNames(identifier.name);
+    if (cleanSet && lookupNames.length > 0) {
+      for (const name of lookupNames) {
+        const key = bulkSetNameKey(cleanSet, name);
+        const indexes = setNameIndexes.get(key) ?? [];
+        indexes.push(identifier.index);
+        setNameIndexes.set(key, indexes);
+      }
+      continue;
+    }
+
+    for (const name of lookupNames) {
+      const indexes = nameIndexes.get(name) ?? [];
+      indexes.push(identifier.index);
+      nameIndexes.set(name, indexes);
+    }
+  }
+
+  // Bereits im Session-Cache vorhandene exakte Druckversionen sofort verwenden.
+  for (const [key, indexes] of exactIndexes) {
+    const cached = collectorCardCache.get(key);
+    if (!cached) continue;
+    for (const index of indexes) cardsByIndex.set(index, cached);
+  }
+
+  const total = identifiers.length;
+  onProgress?.(cardsByIndex.size, total, "Scryfall Bulk Data wird vorbereitet…");
+
+  if (cardsByIndex.size === total) {
+    onProgress?.(total, total, "Scryfall Bulk Data wurde aus dem Cache aufgelöst.");
+    return { cardsByIndex, notFoundIndexes: [] };
+  }
+
+  const descriptor = await getDefaultCardsBulkDescriptor();
+  const canStreamGzip = typeof DecompressionStream !== "undefined";
+  const url = canStreamGzip && descriptor.jsonl_download_uri
+    ? descriptor.jsonl_download_uri
+    : descriptor.download_uri ?? descriptor.jsonl_download_uri;
+
+  if (!url) {
+    throw new Error("Scryfall Bulk Data konnte nicht geladen werden.");
+  }
+
+  onProgress?.(cardsByIndex.size, total, "Scryfall Bulk Data wird geladen und durchsucht…");
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json;q=0.9,*/*;q=0.8"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Scryfall Bulk Data konnte nicht geladen werden (${response.status}).`);
+  }
+
+  const bestBySetName = new Map<string, ScryfallCard>();
+  const bestByName = new Map<string, ScryfallCard>();
+  let lastProgressSize = cardsByIndex.size;
+
+  const consume = (card: ScryfallCard) => {
+    const exactKey = collectorLookupKey(card.set, card.collector_number);
+    const exactTargets = exactIndexes.get(exactKey);
+    if (exactTargets) {
+      rememberBulkCard(card);
+      for (const index of exactTargets) cardsByIndex.set(index, card);
+    }
+
+    const cardNames = bulkLookupNames(card.name);
+    for (const cardName of cardNames) {
+      const setNameKey = bulkSetNameKey(card.set, cardName);
+      if (setNameIndexes.has(setNameKey)) {
+        bestBySetName.set(setNameKey, preferBulkCard(bestBySetName.get(setNameKey), card));
+      }
+      if (nameIndexes.has(cardName)) {
+        bestByName.set(cardName, preferBulkCard(bestByName.get(cardName), card));
+      }
+    }
+
+    if (cardsByIndex.size !== lastProgressSize) {
+      lastProgressSize = cardsByIndex.size;
+      onProgress?.(
+        cardsByIndex.size,
+        total,
+        "Scryfall Bulk Data wird durchsucht…"
+      );
+    }
+  };
+
+  const isJsonl = /\.jsonl(?:\.gz)?(?:$|\?)/i.test(url) || Boolean(descriptor.jsonl_download_uri && url === descriptor.jsonl_download_uri);
+  if (isJsonl) {
+    await consumeJsonlBulkResponse(response, url, consume);
+  } else {
+    await consumeLegacyJsonBulkResponse(response, consume);
+  }
+
+  for (const [key, indexes] of setNameIndexes) {
+    const card = bestBySetName.get(key);
+    if (!card) continue;
+    rememberBulkCard(card);
+    for (const index of indexes) {
+      if (!cardsByIndex.has(index)) cardsByIndex.set(index, card);
+    }
+  }
+
+  for (const [name, indexes] of nameIndexes) {
+    const card = bestByName.get(name);
+    if (!card) continue;
+    rememberBulkCard(card);
+    for (const index of indexes) {
+      if (!cardsByIndex.has(index)) cardsByIndex.set(index, card);
+    }
+  }
+
+  onProgress?.(total, total, "Scryfall Bulk Data wurde ausgewertet.");
+
+  const notFoundIndexes = identifiers
+    .map(identifier => identifier.index)
+    .filter(index => !cardsByIndex.has(index));
+
+  return { cardsByIndex, notFoundIndexes };
 }
 
 export async function getCardBySetAndCollectorNumber(
