@@ -434,6 +434,79 @@ function sectionLabel(section: ExternalImportCardRow["section"]): string {
   return "Mainboard";
 }
 
+function csvCell(value: string | number): string {
+  const text = String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function safeDownloadBase(value: string): string {
+  const clean = value
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return clean || "import";
+}
+
+function triggerDownload(content: string, mimeType: string, fileName: string): void {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function unresolvedReasonLabel(reason: UnresolvedRow["reason"]): string {
+  return reason === "network" ? "Technisch nicht geprüft" : "Nicht eindeutig erkannt";
+}
+
+function downloadUnresolvedCsv(rows: UnresolvedRow[], sourceLabel: string): void {
+  const header = ["Count", "Name", "Edition", "Collector Number", "Finish", "Status"];
+  const body = rows
+    .slice()
+    .sort((a, b) => a.row.name.localeCompare(b.row.name, "de", { sensitivity: "base" }))
+    .map(({ row, reason }) => [
+      row.count,
+      row.name,
+      row.edition?.toUpperCase() ?? "",
+      row.collectorNumber ?? "",
+      row.foil ? "Foil" : "Non-Foil",
+      unresolvedReasonLabel(reason)
+    ]);
+
+  const csv = [header, ...body]
+    .map(columns => columns.map(csvCell).join(";"))
+    .join("\r\n");
+
+  triggerDownload(
+    `\uFEFF${csv}`,
+    "text/csv;charset=utf-8",
+    `${safeDownloadBase(sourceLabel)}-nicht-erkannt.csv`
+  );
+}
+
+function downloadUnresolvedTxt(rows: UnresolvedRow[], sourceLabel: string): void {
+  const lines = rows
+    .slice()
+    .sort((a, b) => a.row.name.localeCompare(b.row.name, "de", { sensitivity: "base" }))
+    .map(({ row, reason }) => {
+      const edition = row.edition ? row.edition.toUpperCase() : "—";
+      const number = row.collectorNumber || "—";
+      const finish = row.foil ? "Foil" : "Non-Foil";
+      return `${row.count}x ${row.name} | Set: ${edition} | Nr.: ${number} | ${finish} | ${unresolvedReasonLabel(reason)}`;
+    });
+
+  triggerDownload(
+    lines.join("\r\n"),
+    "text/plain;charset=utf-8",
+    `${safeDownloadBase(sourceLabel)}-nicht-erkannt.txt`
+  );
+}
+
 function inferredFormat(result: ExternalImportResult): Format {
   if (result.format) return result.format;
   if (result.rows.some(row => row.section === "commander")) return "commander";
@@ -509,6 +582,11 @@ export default function ExternalImportDialog({
 
   const unresolvedSummaryRows = useMemo(
     () => summarizeRows(resolveResult?.unresolved.filter(item => item.reason === "not_found") ?? []),
+    [resolveResult]
+  );
+
+  const unresolvedDownloadRows = useMemo(
+    () => resolveResult?.unresolved.filter(item => item.reason === "not_found") ?? [],
     [resolveResult]
   );
 
@@ -1010,6 +1088,31 @@ export default function ExternalImportDialog({
                   </div>
                 )}
               </>
+            )}
+
+            {unresolvedDownloadRows.length > 0 && (
+              <div className="external-import-unresolved-export">
+                <div>
+                  <strong>Nicht erkannte Karten exportieren</strong>
+                  <span>{unresolvedCopies} Karte(n) aus {unresolvedDownloadRows.length} Importzeile(n)</span>
+                </div>
+                <div className="external-import-unresolved-export-actions">
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => downloadUnresolvedCsv(unresolvedDownloadRows, sourceLabel)}
+                  >
+                    CSV herunterladen
+                  </button>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => downloadUnresolvedTxt(unresolvedDownloadRows, sourceLabel)}
+                  >
+                    TXT herunterladen
+                  </button>
+                </div>
+              </div>
             )}
 
             {hasTechnicalFailures && !isLargeImport && (
