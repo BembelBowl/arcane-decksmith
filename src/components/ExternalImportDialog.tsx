@@ -149,7 +149,23 @@ async function resolveImportRows(
         resolved.push({ index, row, card });
       } else if (unresolvedSet.has(index)) {
         unresolved.push({ index, row, reason: "not_found" });
+      } else {
+        // Jeder Eingabedatensatz muss nach dem atomaren Bulk-Lauf exakt einer
+        // Kategorie zugeordnet sein. Andernfalls zeigen wir bewusst kein
+        // Teilresultat an, weil dieses nicht reproduzierbar wäre.
+        throw new Error(`Interner Importfehler: Zeile ${index + 1} wurde nicht klassifiziert.`);
       }
+    }
+
+    const classifiedRows = resolved.length + unresolved.length;
+    const classifiedCopies = [...resolved, ...unresolved]
+      .reduce((sum, item) => sum + item.row.count, 0);
+
+    if (classifiedRows !== rows.length || classifiedCopies !== totalCopies) {
+      throw new Error(
+        `Importprüfung inkonsistent: erwartet ${rows.length} Zeilen / ${totalCopies} Karten, ` +
+        `klassifiziert ${classifiedRows} Zeilen / ${classifiedCopies} Karten.`
+      );
     }
 
     return { resolved, unresolved };
