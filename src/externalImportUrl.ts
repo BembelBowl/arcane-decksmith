@@ -51,6 +51,22 @@ export async function importExternalDeckUrl(url: string): Promise<ImportUrlRespo
 
   const functions = getFunctions(firebaseApp, "europe-west1");
   const call = httpsCallable<{ url: string }, ImportUrlResponse>(functions, "importExternalDeckUrl");
-  const result = await call({ url: value });
-  return result.data;
+  try {
+    const result = await call({ url: value });
+    return result.data;
+  } catch (error) {
+    const code = (error as { code?: string } | null)?.code ?? "";
+    if (code === "functions/unauthenticated") {
+      throw new Error("Der URL-Import ist nur mit Konto verfügbar. Im Demo-Modus bitte CSV/TXT importieren.");
+    }
+    if (code === "functions/resource-exhausted") {
+      throw new Error("Zu viele URL-Importe in kurzer Zeit. Bitte eine Minute warten.");
+    }
+    if (code === "functions/not-found" || code === "functions/internal") {
+      throw new Error(
+        "Die Import-Funktion ist nicht erreichbar (Cloud Functions/Blaze-Plan nötig). CSV/TXT-Import funktioniert weiterhin direkt im Browser."
+      );
+    }
+    throw error instanceof Error ? error : new Error("URL-Import fehlgeschlagen.");
+  }
 }

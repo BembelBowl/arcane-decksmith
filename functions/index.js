@@ -1,4 +1,8 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+
+initializeApp();
 
 const USER_AGENT =
   "Mozilla/5.0 (compatible; ArcaneDecksmith/1.0; +https://github.com/)";
@@ -31,38 +35,116 @@ function stripTags(value) {
     .trim();
 }
 
+// Nur diese Hosts dürfen abgerufen werden – auch nach Redirects.
+const ALLOWED_HOSTS = new Set([
+  "moxfield.com",
+  "www.moxfield.com",
+  "api.moxfield.com",
+  "api2.moxfield.com",
+  "archidekt.com",
+  "www.archidekt.com",
+  "deckstats.net",
+  "www.deckstats.net"
+]);
+const MAX_REDIRECTS = 3;
+
+function assertAllowedUrl(url) {
+  if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname.toLowerCase())) {
+    throw new Error("Weiterleitung auf einen nicht erlaubten Host wurde blockiert.");
+  }
+}
+
+async function readBodyLimited(response) {
+  const declared = Number(response.headers.get("content-length") || 0);
+  if (declared > MAX_RESPONSE_BYTES) throw new Error("Die Antwort des Anbieters ist zu groß.");
+  if (!response.body) return "";
+
+  // Body streamen und beim Limit sofort abbrechen, statt alles zu puffern.
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw new Error("Die Antwort des Anbieters ist zu groß.");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 async function fetchLimited(url, accept = "application/json, text/plain, text/html;q=0.9, */*;q=0.8") {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const response = await fetch(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        Accept: accept,
-        "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
-        "User-Agent": USER_AGENT
+    let current = new URL(url);
+    for (let redirects = 0; ; redirects += 1) {
+      assertAllowedUrl(current);
+      const response = await fetch(current, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: {
+          Accept: accept,
+          "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+          "User-Agent": USER_AGENT
+        }
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location || redirects >= MAX_REDIRECTS) {
+          throw new Error("Zu viele oder ungültige Weiterleitungen.");
+        }
+        current = new URL(location, current);
+        continue;
       }
-    });
 
-    if (!response.ok) {
-      throw new Error(`Remote server returned HTTP ${response.status}.`);
+      if (!response.ok) {
+        throw new Error(`Der Anbieter antwortete mit HTTP ${response.status}.`);
+      }
+
+      return {
+        url: current.toString(),
+        contentType: response.headers.get("content-type") || "",
+        text: await readBodyLimited(response)
+      };
     }
-
-    const declared = Number(response.headers.get("content-length") || 0);
-    if (declared > MAX_RESPONSE_BYTES) throw new Error("Remote response is too large.");
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.byteLength > MAX_RESPONSE_BYTES) throw new Error("Remote response is too large.");
-
-    return {
-      url: response.url,
-      contentType: response.headers.get("content-type") || "",
-      text: buffer.toString("utf8")
-    };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// Einfaches Rate-Limit pro Nutzer (Firestore, instanzübergreifend).
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_CALLS = 10;
+
+async function enforceRateLimit(uid) {
+  const ref = getFirestore().collection("rateLimits").doc(uid);
+  const allowed = await getFirestore().runTransaction(async transaction => {
+    const snap = await transaction.get(ref);
+    const now = Date.now();
+    const data = snap.exists ? snap.data() : {};
+    const windowStart = typeof data.windowStart === "number" ? data.windowStart : 0;
+    const count = typeof data.count === "number" ? data.count : 0;
+
+    if (now - windowStart > RATE_LIMIT_WINDOW_MS) {
+      transaction.set(ref, { windowStart: now, count: 1, updatedAt: FieldValue.serverTimestamp() });
+      return true;
+    }
+    if (count >= RATE_LIMIT_MAX_CALLS) return false;
+    transaction.update(ref, { count: count + 1, updatedAt: FieldValue.serverTimestamp() });
+    return true;
+  });
+
+  if (!allowed) {
+    throw new HttpsError(
+      "resource-exhausted",
+      "Zu viele URL-Importe in kurzer Zeit. Bitte eine Minute warten."
+    );
   }
 }
 
@@ -149,7 +231,13 @@ async function importMoxfield(sourceUrl) {
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error("Moxfield-Deck konnte nicht geladen werden.");
+  // Moxfield blockiert automatisierte Abrufe regelmäßig (Cloudflare). Klare
+  // Meldung mit Ausweichweg statt eines technischen Fehlers.
+  const detail = lastError instanceof Error ? ` (${lastError.message})` : "";
+  throw new Error(
+    `Moxfield hat den Abruf abgelehnt oder ist nicht erreichbar${detail}. ` +
+    "Bitte das Deck in Moxfield als CSV/TXT exportieren und die Datei hier importieren."
+  );
 }
 
 function archidektEdition(card) {
@@ -226,8 +314,9 @@ function parsePrintingSuffix(payload) {
 
   const patterns = [
     /^(.+?)\s+\[([a-z0-9]+):([^\]]+)\]\s*$/i,
-    /^(.+?)\s+\(([a-z0-9]+)\)\s+([a-z0-9][a-z0-9-]*)\s*$/i,
-    /^(.+?)\s+\[([a-z0-9]+)\]\s+([a-z0-9][a-z0-9-]*)\s*$/i
+    // Wie parseExternalText im Client: Collector Numbers mit Sonderzeichen (A-69, 123★).
+    /^(.+?)\s+\(([a-z0-9]+)\)\s+([a-z0-9][^\s]*)\s*$/i,
+    /^(.+?)\s+\[([a-z0-9]+)\]\s+([a-z0-9][^\s]*)\s*$/i
   ];
 
   for (const pattern of patterns) {
@@ -261,6 +350,8 @@ function rowsFromDeckText(text) {
 
     const match = cardLine.match(/^\s*(\d+)\s*x?\s+(.+?)\s*$/i);
     if (!match) continue;
+    // Wie im Client: Anzahl 0 wird übersprungen, nicht zu 1.
+    if (Number.parseInt(match[1], 10) <= 0) continue;
     const parsed = parsePrintingSuffix(match[2]);
     if (!parsed.name) continue;
     rows.push({
@@ -359,9 +450,17 @@ exports.importExternalDeckUrl = onCall(
   {
     region: "europe-west1",
     timeoutSeconds: 30,
-    memory: "256MiB"
+    memory: "256MiB",
+    // App Check erst erzwingen, wenn der Client App Check initialisiert
+    // (ENFORCE_APP_CHECK=true in functions/.env).
+    enforceAppCheck: process.env.ENFORCE_APP_CHECK === "true"
   },
   async request => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Der URL-Import ist nur für angemeldete Nutzer verfügbar.");
+    }
+    await enforceRateLimit(request.auth.uid);
+
     const value = clean(request.data?.url);
     if (!value) throw new HttpsError("invalid-argument", "Deck-URL fehlt.");
 
