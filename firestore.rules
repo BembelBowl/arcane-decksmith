@@ -51,7 +51,7 @@ service cloud.firestore {
       let data = request.resource.data;
       return data.keys().size() <= 40
         && data.id == deckId
-        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.name is string && data.name.size() <= 200
         && data.format in ['commander', 'standard']
         && data.commanderIds is list && data.commanderIds.size() <= 2
         && data.cards is list && data.cards.size() <= 500
@@ -59,7 +59,7 @@ service cloud.firestore {
         && data.colors is list && data.colors.size() <= 6
         && data.createdAt is number
         && data.updatedAt is number
-        && optionalString(data, 'notes', 20000)
+        && optionalString(data, 'notes', 50000)
         && optionalList(data, 'sourceCards', 700);
     }
 
