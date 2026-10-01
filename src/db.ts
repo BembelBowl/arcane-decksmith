@@ -1,5 +1,5 @@
 import {
-  addDoc, collection, deleteDoc, doc, getDocs, setDoc, updateDoc, query, orderBy
+  collection, deleteDoc, doc, getDocs, setDoc, query, orderBy
 } from "firebase/firestore";
 import { db } from "./firebase";
 import type { CardRecord, DeckRecord } from "./types";

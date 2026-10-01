@@ -1,31 +1,3 @@
-function deckManaCurve(
-  deck: DeckRecord
-): Array<{label:string;count:number}> {
-  const counts=[0,0,0,0,0,0,0,0];
-
-  for(const card of deck.cards){
-    if(/\bLand\b/i.test(card.typeLine??"")){
-      continue;
-    }
-
-    const mv=Math.max(
-      0,
-      Math.floor(
-        Number.isFinite(card.manaValue)
-          ?card.manaValue
-          :0
-      )
-    );
-
-    counts[Math.min(mv,7)]+=card.count;
-  }
-
-  return counts.map((count,index)=>({
-    label:index===7?"7+":String(index),
-    count
-  }));
-}
-
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -49,7 +21,6 @@ import {
   displayOracleText,
   displayTypeLine,
   euroPriceFor,
-  getCard,
   getCards,
   getCardsBySetAndCollectorNumbers,
   getPrintings,
@@ -77,8 +48,7 @@ import {
 } from "./deckBuilder";
 import {
   deckText,
-  download,
-  toCsv
+  download
 } from "./importExport";
 import {
   generateAiDeckExplanation,
@@ -93,9 +63,7 @@ import type {
   CardRecord,
   DeckCard,
   DeckRecord,
-  Format,
-  GroupBy,
-  ViewMode
+  Format
 } from "./types";
 import "./styles.css";
 import AppHeader from "./components/AppHeader";
@@ -109,6 +77,10 @@ import CardScanner from "./components/CardScanner";
 import ExternalImportDialog from "./components/ExternalImportDialog";
 import { useAppNavigation } from "./navigation";
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 const COLORS = ["W", "U", "B", "R", "G"];
 
 const COLOR_NAMES: Record<string, string> = {
@@ -119,19 +91,6 @@ const COLOR_NAMES: Record<string, string> = {
   G: "Grün"
 };
 
-const COLOR_ORDER = ["W", "U", "B", "R", "G"];
-
-const TYPE_ORDER = [
-  "Land",
-  "Kreatur",
-  "Planeswalker",
-  "Spontanzauber",
-  "Hexerei",
-  "Verzauberung",
-  "Artefakt",
-  "Schlacht",
-  "Sonstiges"
-];
 
 const EUR_FORMATTER =
   new Intl.NumberFormat(
@@ -257,46 +216,6 @@ function finishCountsFor(
         nonfoil: card.count,
         foil: 0
       };
-}
-
-function priceForRecord(
-  card: CardRecord,
-  finish: CardFinish
-): number | undefined {
-  return finish === "foil"
-    ? card.priceEurFoil
-    : card.priceEur;
-}
-
-function highestOwnedUnitValue(
-  card: CardRecord
-): number | undefined {
-  const counts =
-    finishCountsFor(card);
-
-  const prices: number[] = [];
-
-  if (
-    counts.nonfoil > 0 &&
-    card.priceEur !== undefined
-  ) {
-    prices.push(
-      card.priceEur
-    );
-  }
-
-  if (
-    counts.foil > 0 &&
-    card.priceEurFoil !== undefined
-  ) {
-    prices.push(
-      card.priceEurFoil
-    );
-  }
-
-  return prices.length > 0
-    ? Math.max(...prices)
-    : undefined;
 }
 
 function collectionValueForCard(
@@ -558,282 +477,6 @@ function commanderBracketEstimate(
 }
 
 
-type LocalDeckAnalysis = {
-  total: number;
-  mainDeck: number;
-  lands: number;
-  creatures: number;
-  artifacts: number;
-  enchantments: number;
-  instants: number;
-  sorceries: number;
-  planeswalkers: number;
-  averageManaValue: number;
-  ramp: number;
-  cardAdvantage: number;
-  interaction: number;
-  protection: number;
-  boardwipes: number;
-  tutors: number;
-  recursion: number;
-  finishers: number;
-  warnings: string[];
-};
-
-function localDeckAnalysis(
-  deck: DeckRecord,
-  pool: CardRecord[]
-): LocalDeckAnalysis {
-  const stats =
-    deckStats(deck);
-
-  const typeCounts = {
-    creatures: 0,
-    artifacts: 0,
-    enchantments: 0,
-    instants: 0,
-    sorceries: 0,
-    planeswalkers: 0
-  };
-
-  const roleCounts:
-    Record<string, number> = {};
-
-  for (
-    const deckCard
-    of deck.cards
-  ) {
-    const source =
-      pool.find(
-        card =>
-          card.id ===
-          deckCard.id
-      );
-
-    const typeLine =
-      source?.typeLine ??
-      deckCard.typeLine ??
-      "";
-
-    if (/\bCreature\b/i.test(typeLine)) {
-      typeCounts.creatures += deckCard.count;
-    }
-    if (/\bArtifact\b/i.test(typeLine)) {
-      typeCounts.artifacts += deckCard.count;
-    }
-    if (/\bEnchantment\b/i.test(typeLine)) {
-      typeCounts.enchantments += deckCard.count;
-    }
-    if (/\bInstant\b/i.test(typeLine)) {
-      typeCounts.instants += deckCard.count;
-    }
-    if (/\bSorcery\b/i.test(typeLine)) {
-      typeCounts.sorceries += deckCard.count;
-    }
-    if (/\bPlaneswalker\b/i.test(typeLine)) {
-      typeCounts.planeswalkers += deckCard.count;
-    }
-
-    const role =
-      deckCard.role &&
-      deckCard.role !==
-        "Manuell"
-        ? deckCard.role
-        : source
-          ? roleOf(source)
-          : "Sonstiges";
-
-    roleCounts[role] =
-      (roleCounts[role] ?? 0) +
-      deckCard.count;
-  }
-
-  const byRole =
-    (names: string[]) =>
-      names.reduce(
-        (sum, name) =>
-          sum +
-          (roleCounts[name] ?? 0),
-        0
-      );
-
-  const analysis:
-    LocalDeckAnalysis = {
-      total: stats.total,
-      mainDeck:
-        deck.cards.reduce(
-          (sum, card) =>
-            sum + card.count,
-          0
-        ),
-      lands: stats.lands,
-      creatures:
-        typeCounts.creatures,
-      artifacts:
-        typeCounts.artifacts,
-      enchantments:
-        typeCounts.enchantments,
-      instants:
-        typeCounts.instants,
-      sorceries:
-        typeCounts.sorceries,
-      planeswalkers:
-        typeCounts.planeswalkers,
-      averageManaValue:
-        stats.averageManaValue,
-      ramp:
-        byRole(["Ramp"]),
-      cardAdvantage:
-        byRole([
-          "Card Advantage"
-        ]),
-      interaction:
-        byRole([
-          "Interaction"
-        ]),
-      protection:
-        byRole([
-          "Protection"
-        ]),
-      boardwipes:
-        byRole([
-          "Boardwipe"
-        ]),
-      tutors:
-        byRole([
-          "Tutor"
-        ]),
-      recursion:
-        byRole([
-          "Recursion"
-        ]),
-      finishers:
-        byRole([
-          "Finisher"
-        ]),
-      warnings: []
-    };
-
-  if (
-    deck.format ===
-    "commander"
-  ) {
-    if (analysis.total !== 100) {
-      analysis.warnings.push(
-        `Commander-Deckgröße: ${analysis.total}/100 Karten.`
-      );
-    }
-
-    if (analysis.lands < 34) {
-      analysis.warnings.push(
-        `Mit ${analysis.lands} Ländern ist die Manabasis für viele Commander-Decks eher knapp.`
-      );
-    } else if (
-      analysis.lands > 40
-    ) {
-      analysis.warnings.push(
-        `Mit ${analysis.lands} Ländern liegt die Manabasis über dem üblichen Bereich vieler Commander-Decks.`
-      );
-    }
-
-    if (analysis.ramp < 8) {
-      analysis.warnings.push(
-        `Nur ${analysis.ramp} Ramp-Karten erkannt. Als grobe Heuristik sind häufig etwa 8–12 sinnvoll.`
-      );
-    }
-
-    if (
-      analysis.cardAdvantage < 8
-    ) {
-      analysis.warnings.push(
-        `Nur ${analysis.cardAdvantage} Karten für Card Advantage erkannt.`
-      );
-    }
-
-    if (
-      analysis.interaction < 8
-    ) {
-      analysis.warnings.push(
-        `Nur ${analysis.interaction} Interaktionskarten erkannt.`
-      );
-    }
-
-    if (
-      analysis.boardwipes < 2
-    ) {
-      analysis.warnings.push(
-        `Nur ${analysis.boardwipes} Boardwipe-Karten erkannt.`
-      );
-    }
-
-    if (
-      analysis.averageManaValue >
-      3.6
-    ) {
-      analysis.warnings.push(
-        `Der durchschnittliche Mana Value von ${analysis.averageManaValue} ist relativ hoch.`
-      );
-    }
-  } else {
-    if (analysis.total < 60) {
-      analysis.warnings.push(
-        `Standard-Deckgröße: ${analysis.total}/60 Karten.`
-      );
-    }
-
-    const landRatio =
-      analysis.mainDeck > 0
-        ? analysis.lands /
-          analysis.mainDeck
-        : 0;
-
-    if (
-      analysis.mainDeck >= 50 &&
-      landRatio < 0.33
-    ) {
-      analysis.warnings.push(
-        `Der Länderanteil liegt bei nur ${Math.round(landRatio * 100)} %.`
-      );
-    }
-
-    if (
-      analysis.mainDeck >= 50 &&
-      landRatio > 0.47
-    ) {
-      analysis.warnings.push(
-        `Der Länderanteil liegt bei ${Math.round(landRatio * 100)} % und damit relativ hoch.`
-      );
-    }
-
-    if (
-      analysis.interaction < 4 &&
-      analysis.mainDeck >= 50
-    ) {
-      analysis.warnings.push(
-        `Nur ${analysis.interaction} Interaktionskarten erkannt.`
-      );
-    }
-
-    if (
-      analysis.averageManaValue >
-      3.5
-    ) {
-      analysis.warnings.push(
-        `Der durchschnittliche Mana Value von ${analysis.averageManaValue} ist für viele Standard-Decks relativ hoch.`
-      );
-    }
-  }
-
-  if (
-    analysis.warnings.length === 0
-  ) {
-    analysis.warnings.push(
-      "Die lokale Heuristik erkennt aktuell keine auffälligen Strukturprobleme."
-    );
-  }
-
-  return analysis;
-}
 
 function deckForAiAnalysis(
   deck: DeckRecord,
@@ -938,72 +581,6 @@ function collectorNumberCounts(
   return counts;
 }
 
-function colorGroupName(colors: string[]): string {
-  if (!colors.length) {
-    return "Farblos";
-  }
-
-  const ordered = COLOR_ORDER.filter(color =>
-    colors.includes(color)
-  );
-
-  return ordered
-    .map(color => COLOR_NAMES[color] ?? color)
-    .join(" / ");
-}
-
-function primaryTypeGroup(
-  typeLine: string | undefined
-): string {
-  const type = (typeLine ?? "").toLowerCase();
-
-  if (type.includes("land")) return "Land";
-  if (type.includes("creature")) return "Kreatur";
-  if (type.includes("planeswalker")) return "Planeswalker";
-  if (type.includes("instant")) return "Spontanzauber";
-  if (type.includes("sorcery")) return "Hexerei";
-  if (type.includes("enchantment")) return "Verzauberung";
-  if (type.includes("artifact")) return "Artefakt";
-  if (type.includes("battle")) return "Schlacht";
-
-  return "Sonstiges";
-}
-
-function compareGroupNames(
-  a: string,
-  b: string,
-  group: GroupBy
-): number {
-  if (group === "manaValue") {
-    const av = Number(a.replace("MV ", ""));
-    const bv = Number(b.replace("MV ", ""));
-
-    return av - bv;
-  }
-
-  if (group === "type") {
-    const ai = TYPE_ORDER.indexOf(a);
-    const bi = TYPE_ORDER.indexOf(b);
-
-    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-  }
-
-  if (group === "color") {
-    if (a === "Farblos" && b !== "Farblos") return -1;
-    if (b === "Farblos" && a !== "Farblos") return 1;
-
-    const ac = a.split(" / ").length;
-    const bc = b.split(" / ").length;
-
-    if (ac !== bc) return ac - bc;
-  }
-
-  return a.localeCompare(b, "de", {
-    numeric: true,
-    sensitivity: "base"
-  });
-}
-
 function App() {
   const [auth, setAuth] = useState<{
     user: User | null;
@@ -1070,8 +647,8 @@ function Auth({
 
     try {
       await login(email, pw);
-    } catch (e: any) {
-      setMsg(authMessage(e?.code ?? ""));
+    } catch (e: unknown) {
+      setMsg(authMessage((e as { code?: string } | null)?.code ?? ""));
     } finally {
       setBusy(false);
     }
@@ -1680,8 +1257,8 @@ function Search({
       setResults(
         await searchCards(q)
       );
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -1780,8 +1357,8 @@ function Search({
                 setResults(
                   await searchCards(s)
                 );
-              } catch (e: any) {
-                alert(e.message);
+              } catch (e: unknown) {
+                alert(errorMessage(e));
               } finally {
                 setBusy(false);
               }
@@ -2418,6 +1995,8 @@ function SearchCard({
     setPrintings([]);
     setShowPrintings(false);
     setPrintingError("");
+    // Bewusst nur bei Wechsel der Karten-ID zurücksetzen, nicht bei jeder neuen Objektreferenz.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id]);
 
   useEffect(() => {
@@ -2433,6 +2012,8 @@ function SearchCard({
           : finishes[0] ??
             "nonfoil"
     );
+    // Nur bei Wechsel des Printings neu abgleichen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCard.id]);
 
   const selectedFinishes =
@@ -2806,6 +2387,7 @@ function TuningSlider({
           )
         }
         aria-label={label}
+        aria-valuetext={valueText}
       />
 
       <div className="tuning-scale">

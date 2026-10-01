@@ -1139,7 +1139,7 @@ export async function resolveCardsFromDefaultBulkData(
         }
       };
 
-      const scanProgress = (_scannedRecords: number) => {
+      const scanProgress = () => {
         onProgress?.(
           Math.min(totalCopies, matchedCopies),
           totalCopies,
