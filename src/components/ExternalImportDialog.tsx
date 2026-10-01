@@ -1,13 +1,24 @@
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useDialogA11y } from "./useDialogA11y";
 import {
   getCardByFuzzyName,
   getCardsBySetAndCollectorNumbers,
   getPrintings,
+  getSets,
   imageFor,
   normalizeCard,
   resolveCardsFromDefaultBulkData,
-  type ScryfallCard
+  type ScryfallCard,
+  type ScryfallSet
 } from "../scryfall";
+import {
+  collectorNumberVariants,
+  decidePrinting,
+  normalizeCardName,
+  normalizeCollectorNumber,
+  normalizeSetToken,
+  rawCollectorNumber
+} from "../printingMatch";
 import { roleOf } from "../deckBuilder";
 import {
   parseExternalImport,
@@ -35,7 +46,7 @@ type ResolvedRow = {
 type UnresolvedRow = {
   index: number;
   row: ExternalImportCardRow;
-  reason: "not_found" | "network";
+  reason: "not_found" | "ambiguous" | "network";
 };
 
 type ResolveResult = {
@@ -47,8 +58,6 @@ type ImportSummaryRow = {
   name: string;
   count: number;
 };
-
-const DETAILED_PREVIEW_MAX_COPIES = 100;
 
 function summarizeRows(
   rows: Array<{ row: ExternalImportCardRow; card?: ScryfallCard }>
@@ -83,16 +92,6 @@ function importKey(set: string, collectorNumber: string): string {
   return `${set.trim().toLowerCase()}::${collectorNumber.trim().toLowerCase()}`;
 }
 
-function normalizeImportedCardName(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[’']/g, "'")
-    .replace(/\s*\/\/\s*/g, " // ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
 function cardNameLookupCandidates(value: string): string[] {
   const clean = value.replace(/\s+/g, " ").trim();
   if (!clean) return [];
@@ -112,8 +111,8 @@ function cardNameLookupCandidates(value: string): string[] {
 }
 
 function namesEqual(left: string, right: string): boolean {
-  const normalizedLeft = normalizeImportedCardName(left);
-  const normalizedRight = normalizeImportedCardName(right);
+  const normalizedLeft = normalizeCardName(left);
+  const normalizedRight = normalizeCardName(right);
   if (normalizedLeft === normalizedRight) return true;
 
   const leftFaces = normalizedLeft.split(" // ");
@@ -121,13 +120,73 @@ function namesEqual(left: string, right: string): boolean {
   return leftFaces.length > 0 && rightFaces.length > 0 && leftFaces[0] === rightFaces[0];
 }
 
+/**
+ * Bulk Data (hunderte MB) lohnt sich nur für echte Großimporte. Entscheidend ist
+ * die Anzahl eindeutiger Druckversions-Anfragen, nicht die Kopienanzahl: Ein
+ * Commander-Deck mit Sideboard (110 Karten, viele Standardländer) bleibt im
+ * API-Pfad. Echte Großimporte laufen weiterhin ausschließlich, atomar und
+ * deterministisch über Bulk Data.
+ */
+const BULK_THRESHOLD_UNIQUE_ROWS: Record<"collection" | "deck", number> = {
+  collection: 100,
+  deck: 150
+};
+
+function uniqueLookupCount(rows: ExternalImportCardRow[]): number {
+  return new Set(
+    rows.map(row =>
+      `${normalizeCardName(row.name)}|${(row.edition ?? "").trim().toLowerCase()}|${(row.collectorNumber ?? "").trim().toLowerCase()}`
+    )
+  ).size;
+}
+
+function usesBulkResolution(rows: ExternalImportCardRow[], mode: "collection" | "deck"): boolean {
+  return uniqueLookupCount(rows) > BULK_THRESHOLD_UNIQUE_ROWS[mode];
+}
+
+const SET_CODE_PATTERN = /^[a-z0-9]{2,6}$/i;
+
+/**
+ * Ersetzt Setnamen (z. B. "Innistrad: Crimson Vow") durch Setcodes. Genau eine
+ * Scryfall-Anfrage für die Setliste; bei Fehlern bleibt der Wert unverändert
+ * (der Bulk-Pfad erkennt Setnamen zusätzlich direkt).
+ */
+async function mapEditionNamesToCodes(rows: ExternalImportCardRow[]): Promise<ExternalImportCardRow[]> {
+  const needsMapping = rows.some(row => row.edition && !SET_CODE_PATTERN.test(row.edition.trim()));
+  if (!needsMapping) return rows;
+
+  let sets: ScryfallSet[];
+  try {
+    sets = await getSets();
+  } catch {
+    return rows;
+  }
+
+  const byName = new Map<string, string[]>();
+  for (const set of sets) {
+    const key = normalizeSetToken(set.name);
+    byName.set(key, [...(byName.get(key) ?? []), set.code]);
+  }
+
+  return rows.map(row => {
+    if (!row.edition || SET_CODE_PATTERN.test(row.edition.trim())) return row;
+    const codes = byName.get(normalizeSetToken(row.edition));
+    // Nur eindeutige Setnamen werden übersetzt.
+    return codes?.length === 1 ? { ...row, edition: codes[0] } : row;
+  });
+}
+
 async function resolveImportRows(
-  rows: ExternalImportCardRow[],
+  inputRows: ExternalImportCardRow[],
+  mode: "collection" | "deck",
   onProgress?: (processed: number, total: number, label: string) => void
 ): Promise<ResolveResult> {
-  const totalCopies = rows.reduce((sum, row) => sum + row.count, 0);
+  const totalCopies = inputRows.reduce((sum, row) => sum + row.count, 0);
+  // Für das Matching werden Setnamen auf Codes abgebildet; angezeigt und
+  // exportiert werden weiterhin die Originalzeilen.
+  const rows = await mapEditionNamesToCodes(inputRows);
 
-  if (totalCopies > DETAILED_PREVIEW_MAX_COPIES) {
+  if (usesBulkResolution(inputRows, mode)) {
     const bulkResult = await resolveCardsFromDefaultBulkData(
       rows.map((row, index) => ({
         index,
@@ -136,19 +195,23 @@ async function resolveImportRows(
         collectorNumber: row.collectorNumber,
         count: row.count
       })),
-      onProgress
+      onProgress,
+      mode
     );
 
-    const unresolvedSet = new Set(bulkResult.notFoundIndexes);
+    const notFoundSet = new Set(bulkResult.notFoundIndexes);
+    const ambiguousSet = new Set(bulkResult.ambiguousIndexes);
     const resolved: ResolvedRow[] = [];
     const unresolved: UnresolvedRow[] = [];
 
-    for (let index = 0; index < rows.length; index += 1) {
-      const row = rows[index];
+    for (let index = 0; index < inputRows.length; index += 1) {
+      const row = inputRows[index];
       const card = bulkResult.cardsByIndex.get(index);
       if (card) {
         resolved.push({ index, row, card });
-      } else if (unresolvedSet.has(index)) {
+      } else if (ambiguousSet.has(index)) {
+        unresolved.push({ index, row, reason: "ambiguous" });
+      } else if (notFoundSet.has(index)) {
         unresolved.push({ index, row, reason: "not_found" });
       } else {
         // Jeder Eingabedatensatz muss nach dem atomaren Bulk-Lauf exakt einer
@@ -162,9 +225,9 @@ async function resolveImportRows(
     const classifiedCopies = [...resolved, ...unresolved]
       .reduce((sum, item) => sum + item.row.count, 0);
 
-    if (classifiedRows !== rows.length || classifiedCopies !== totalCopies) {
+    if (classifiedRows !== inputRows.length || classifiedCopies !== totalCopies) {
       throw new Error(
-        `Importprüfung inkonsistent: erwartet ${rows.length} Zeilen / ${totalCopies} Karten, ` +
+        `Importprüfung inkonsistent: erwartet ${inputRows.length} Zeilen / ${totalCopies} Karten, ` +
         `klassifiziert ${classifiedRows} Zeilen / ${classifiedCopies} Karten.`
       );
     }
@@ -172,37 +235,39 @@ async function resolveImportRows(
     return { resolved, unresolved };
   }
 
-  const exactMap = new Map<string, ScryfallCard>();
-  const temporaryFailureKeys = new Set<string>();
-  const bySet = new Map<string, string[]>();
-
+  // --- API-Pfad für kleine Importe -------------------------------------------
+  // Stufe 1: Set + Collector Number (inkl. Schreibvarianten wie "A69"/"A-69",
+  // "069"/"69") gebündelt pro Set abfragen.
+  const bySet = new Map<string, Set<string>>();
   for (const row of rows) {
     if (!row.edition || !row.collectorNumber) continue;
     const set = row.edition.trim().toLowerCase();
-    const numbers = bySet.get(set) ?? [];
-    numbers.push(row.collectorNumber.trim());
+    const numbers = bySet.get(set) ?? new Set<string>();
+    for (const variant of collectorNumberVariants(row.collectorNumber)) numbers.add(variant);
     bySet.set(set, numbers);
   }
 
-  const uniqueBySet = Array.from(bySet, ([set, numbers]) => [
-    set,
-    Array.from(new Set(numbers))
-  ] as const);
-  const exactTotal = uniqueBySet.reduce((sum, [, numbers]) => sum + numbers.length, 0);
+  const exactRaw = new Map<string, ScryfallCard[]>();
+  const exactNormalized = new Map<string, ScryfallCard[]>();
+  const temporaryFailureSets = new Set<string>();
+  const addTo = (map: Map<string, ScryfallCard[]>, key: string, card: ScryfallCard) => {
+    const list = map.get(key) ?? [];
+    if (!list.some(item => item.id === card.id)) list.push(card);
+    map.set(key, list);
+  };
+
+  const exactTotal = [...bySet.values()].reduce((sum, numbers) => sum + numbers.size, 0);
   let exactProcessed = 0;
 
   onProgress?.(0, exactTotal || rows.length, exactTotal > 0
     ? "Druckversionen werden geprüft…"
     : "Kartennamen werden geprüft…");
 
-  // Set + Collector Number sind der schnelle und eindeutige Importpfad.
-  // Die Scryfall-Hilfsfunktion bündelt große Mengen in GET-Suchbatches,
-  // dedupliziert identische Druckversionen und meldet Batch-Fortschritt.
-  for (const [set, numbers] of uniqueBySet) {
+  for (const [set, numbers] of bySet) {
     const baseProcessed = exactProcessed;
     const result = await getCardsBySetAndCollectorNumbers(
       set,
-      numbers,
+      [...numbers],
       (setProcessed) => {
         onProgress?.(
           Math.min(exactTotal, baseProcessed + setProcessed),
@@ -213,13 +278,12 @@ async function resolveImportRows(
     );
 
     for (const card of result.cards) {
-      exactMap.set(importKey(card.set, card.collector_number), card);
+      addTo(exactRaw, importKey(card.set, rawCollectorNumber(card.collector_number)), card);
+      addTo(exactNormalized, importKey(card.set, normalizeCollectorNumber(card.collector_number)), card);
     }
-    for (const collectorNumber of result.temporaryFailures) {
-      temporaryFailureKeys.add(importKey(set, collectorNumber));
-    }
+    if (result.temporaryFailures.length > 0) temporaryFailureSets.add(set);
 
-    exactProcessed += numbers.length;
+    exactProcessed += numbers.size;
     onProgress?.(exactProcessed, exactTotal, "Druckversionen werden geprüft…");
   }
 
@@ -229,80 +293,109 @@ async function resolveImportRows(
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const exactKey = row.edition && row.collectorNumber
-      ? importKey(row.edition, row.collectorNumber)
-      : null;
-    const exact = exactKey ? exactMap.get(exactKey) ?? null : null;
+    const original = inputRows[index];
 
-    if (exact) {
-      resolvedByIndex.set(index, { index, row, card: exact });
-    } else if (exactKey && temporaryFailureKeys.has(exactKey)) {
-      // Netzwerkfehler werden nicht als "Karte nicht gefunden" gewertet.
-      // So bleibt die erkannte Importmenge nachvollziehbar und der Nutzer
-      // kann die Prüfung wiederholen, ohne bereits erkannte Karten zu verlieren.
-      unresolved.push({ index, row, reason: "network" });
-    } else {
-      fallbackIndexes.push(index);
+    if (row.edition && row.collectorNumber) {
+      const set = row.edition.trim().toLowerCase();
+      const decision = decidePrinting(
+        row.name,
+        {
+          exactRaw: exactRaw.get(importKey(set, rawCollectorNumber(row.collectorNumber))) ?? [],
+          exactNormalized: exactNormalized.get(importKey(set, normalizeCollectorNumber(row.collectorNumber))) ?? []
+        },
+        mode
+      );
+
+      if (decision.status === "resolved") {
+        resolvedByIndex.set(index, { index, row: original, card: decision.card });
+        continue;
+      }
+      if (decision.status === "ambiguous") {
+        unresolved.push({ index, row: original, reason: "ambiguous" });
+        continue;
+      }
+      if (temporaryFailureSets.has(set)) {
+        // Netzwerkfehler werden nicht als "Karte nicht gefunden" gewertet.
+        // So bleibt die erkannte Importmenge nachvollziehbar und der Nutzer
+        // kann die Prüfung wiederholen, ohne bereits erkannte Karten zu verlieren.
+        unresolved.push({ index, row: original, reason: "network" });
+        continue;
+      }
     }
+
+    fallbackIndexes.push(index);
   }
 
   if (fallbackIndexes.length > 0) {
-    onProgress?.(0, fallbackIndexes.length, "Nicht eindeutige Karten werden per Name geprüft…");
+    onProgress?.(0, fallbackIndexes.length, "Übrige Karten werden per Name geprüft…");
   }
 
+  // Stufe 2: Namensbasierte Fallbacks. Set + Collector Number bleiben
+  // autoritativ: Der Name liefert nur Kandidaten, entschieden wird über
+  // Name + Collector Number (setübergreifend), Set + Name oder nur Name –
+  // jeweils nur bei genau einem Treffer (Sammlung) bzw. deterministisch (Deck).
   for (let fallbackPosition = 0; fallbackPosition < fallbackIndexes.length; fallbackPosition += 1) {
     const index = fallbackIndexes[fallbackPosition];
     const row = rows[index];
-    let card: ScryfallCard | null = null;
-    let networkFailure = false;
+    const original = inputRows[index];
 
-    // DFC-/MDFC-sicherer Namens-Fallback. Besonders bei rebalanced
-    // Arena-Karten wie "A-Mischievous Catgeist // A-Catlike Curiosity"
-    // wird zuerst die Vorderseite probiert. Ein vorhandenes Set/Collector-Paar
-    // bleibt dabei immer autoritativ.
     try {
+      let fuzzy: ScryfallCard | null = null;
+      // DFC-/MDFC-sicher: Bei rebalanced Arena-Karten wie
+      // "A-Mischievous Catgeist // A-Catlike Curiosity" wird zuerst die
+      // Vorderseite probiert; nur passende Namen werden akzeptiert.
       for (const lookupName of cardNameLookupCandidates(row.name)) {
-        const fuzzy = await getCardByFuzzyName(lookupName);
-        if (!fuzzy) continue;
-
-        if (row.edition) {
-          const printings = await getPrintings(fuzzy);
-          const edition = row.edition.trim().toLowerCase();
-          const collectorNumber = row.collectorNumber?.trim().toLowerCase();
-          const matchingPrinting = printings.find(candidate =>
-            candidate.set.toLowerCase() === edition &&
-            (!collectorNumber ||
-              candidate.collector_number.trim().toLowerCase() === collectorNumber)
-          );
-
-          if (matchingPrinting) {
-            card = matchingPrinting;
-            break;
-          }
-
-          continue;
+        const candidate = await getCardByFuzzyName(lookupName);
+        if (candidate && namesEqual(candidate.name, row.name)) {
+          fuzzy = candidate;
+          break;
         }
+      }
 
-        card = fuzzy;
-        break;
+      if (!fuzzy) {
+        unresolved.push({ index, row: original, reason: "not_found" });
+      } else if (mode === "deck" && !row.edition && !row.collectorNumber) {
+        // Deckimport ohne Druckangabe: Das Deck braucht nur die Karte. Bewusst
+        // wird Scryfalls Standarddruck übernommen, ohne alle Printings zu laden.
+        resolvedByIndex.set(index, { index, row: original, card: fuzzy });
+      } else {
+        const printings = await getPrintings(fuzzy);
+        const edition = row.edition ? normalizeSetToken(row.edition) : "";
+        const inSet = edition
+          ? printings.filter(card =>
+              normalizeSetToken(card.set) === edition ||
+              normalizeSetToken(card.set_name ?? "") === edition
+            )
+          : [];
+        const collector = row.collectorNumber ? normalizeCollectorNumber(row.collectorNumber) : "";
+
+        const decision = decidePrinting(
+          row.name,
+          {
+            nameCollector: collector
+              ? printings.filter(card => normalizeCollectorNumber(card.collector_number) === collector)
+              : [],
+            setName: inSet,
+            name: edition || collector ? [] : printings
+          },
+          mode
+        );
+
+        if (decision.status === "resolved") {
+          resolvedByIndex.set(index, { index, row: original, card: decision.card });
+        } else {
+          unresolved.push({ index, row: original, reason: decision.status });
+        }
       }
     } catch (error) {
       console.warn(`Scryfall fallback lookup failed for ${row.name}`, error);
-      networkFailure = true;
-    }
-
-    if (networkFailure) {
-      unresolved.push({ index, row, reason: "network" });
-    } else if (!card || ((!row.edition || !row.collectorNumber) && !namesEqual(card.name, row.name))) {
-      unresolved.push({ index, row, reason: "not_found" });
-    } else {
-      resolvedByIndex.set(index, { index, row, card });
+      unresolved.push({ index, row: original, reason: "network" });
     }
 
     onProgress?.(
       fallbackPosition + 1,
       fallbackIndexes.length,
-      "Nicht eindeutige Karten werden per Name geprüft…"
+      "Übrige Karten werden per Name geprüft…"
     );
   }
 
@@ -461,8 +554,13 @@ function triggerDownload(content: string, mimeType: string, fileName: string): v
 }
 
 function unresolvedReasonLabel(reason: UnresolvedRow["reason"]): string {
-  return reason === "network" ? "Technisch nicht geprüft" : "Nicht eindeutig erkannt";
+  if (reason === "network") return "Technisch nicht geprüft";
+  if (reason === "ambiguous") return "Mehrere Druckversionen möglich";
+  return "Nicht erkannt";
 }
+
+/** Größenlimit für Importdateien (vor dem Einlesen geprüft). */
+const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
 
 function downloadUnresolvedCsv(rows: UnresolvedRow[], sourceLabel: string): void {
   const header = ["Count", "Name", "Edition", "Collector Number", "Finish", "Status"];
@@ -538,6 +636,12 @@ export default function ExternalImportDialog({
   const [resolveProgress, setResolveProgress] = useState({ processed: 0, total: 0, label: "Import wird vorbereitet…" });
   const [previewLimit, setPreviewLimit] = useState(90);
   const [error, setError] = useState("");
+  const [duplicateMode, setDuplicateMode] = useState<"add" | "skip">("add");
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useDialogA11y(dialogRef, () => {
+    if (!busy) onClose();
+  });
 
   const totalCopies = useMemo(
     () => parsed?.rows.reduce((sum, row) => sum + row.count, 0) ?? 0,
@@ -549,12 +653,11 @@ export default function ExternalImportDialog({
     [resolveResult, selectedRows]
   );
 
-  const selectedCopies = useMemo(
-    () => selectedResolved.reduce((sum, item) => sum + item.row.count, 0),
-    [selectedResolved]
-  );
 
-  const isLargeImport = totalCopies > DETAILED_PREVIEW_MAX_COPIES;
+  const isLargeImport = useMemo(
+    () => parsed ? usesBulkResolution(parsed.rows, mode) : false,
+    [parsed, mode]
+  );
 
   const resolvedCopies = useMemo(
     () => resolveResult?.resolved.reduce((sum, item) => sum + item.row.count, 0) ?? 0,
@@ -567,6 +670,38 @@ export default function ExternalImportDialog({
       .reduce((sum, item) => sum + item.row.count, 0) ?? 0,
     [resolveResult]
   );
+
+  const ambiguousCopies = useMemo(
+    () => resolveResult?.unresolved
+      .filter(item => item.reason === "ambiguous")
+      .reduce((sum, item) => sum + item.row.count, 0) ?? 0,
+    [resolveResult]
+  );
+
+  const ambiguousSummaryRows = useMemo(
+    () => summarizeRows(resolveResult?.unresolved.filter(item => item.reason === "ambiguous") ?? []),
+    [resolveResult]
+  );
+
+  const ownedIds = useMemo(() => new Set(pool.map(card => card.id)), [pool]);
+
+  const alreadyOwnedResolved = useMemo(
+    () => mode === "collection"
+      ? selectedResolved.filter(item => ownedIds.has(item.card.id))
+      : [],
+    [mode, ownedIds, selectedResolved]
+  );
+
+  const alreadyOwnedCopies = alreadyOwnedResolved.reduce((sum, item) => sum + item.row.count, 0);
+
+  const rowsToImport = useMemo(
+    () => duplicateMode === "skip"
+      ? selectedResolved.filter(item => !ownedIds.has(item.card.id))
+      : selectedResolved,
+    [duplicateMode, ownedIds, selectedResolved]
+  );
+
+  const importCopies = rowsToImport.reduce((sum, item) => sum + item.row.count, 0);
 
   const technicalFailureCopies = useMemo(
     () => resolveResult?.unresolved
@@ -586,9 +721,11 @@ export default function ExternalImportDialog({
   );
 
   const unresolvedDownloadRows = useMemo(
-    () => resolveResult?.unresolved.filter(item => item.reason === "not_found") ?? [],
+    () => resolveResult?.unresolved.filter(item => item.reason !== "network") ?? [],
     [resolveResult]
   );
+
+  const unresolvedDownloadCopies = unresolvedDownloadRows.reduce((sum, item) => sum + item.row.count, 0);
 
   const technicalFailureSummaryRows = useMemo(
     () => summarizeRows(resolveResult?.unresolved.filter(item => item.reason === "network") ?? []),
@@ -638,6 +775,7 @@ export default function ExternalImportDialog({
     setError("");
     setResolveProgress({ processed: 0, total: 0, label: "Import wird vorbereitet…" });
     setPreviewLimit(90);
+    setDuplicateMode("add");
   };
 
   const changeMethod = (next: ImportMethod) => {
@@ -650,6 +788,16 @@ export default function ExternalImportDialog({
     label: string,
     suggestedDeckName?: string
   ) => {
+    if (next.rows.length === 0) {
+      setParsed(next);
+      setResolveResult(null);
+      setBusy(false);
+      setError(
+        `Keine gültigen Kartenzeilen gefunden. ${next.skipped?.length ?? 0} Zeile(n) wurden wegen ungültiger Anzahl übersprungen.`
+      );
+      return;
+    }
+
     setBusy(true);
     setError("");
     const importCardCount = next.rows.reduce((sum, row) => sum + row.count, 0);
@@ -666,14 +814,14 @@ export default function ExternalImportDialog({
         window.requestAnimationFrame(() => resolve());
       });
 
-      const resolved = await resolveImportRows(next.rows, (processed, total, progressLabel) => {
+      const resolved = await resolveImportRows(next.rows, mode, (processed, total, progressLabel) => {
         setResolveProgress({ processed, total, label: progressLabel });
       });
 
       // Große Importe dürfen niemals in einen normalen API-/Netzwerk-Fallback
       // geraten. Bulk Data liefert entweder ein vollständig klassifiziertes
       // Ergebnis oder der gesamte Prüflauf schlägt fehl.
-      if (importCardCount > DETAILED_PREVIEW_MAX_COPIES && resolved.unresolved.some(item => item.reason === "network")) {
+      if (usesBulkResolution(next.rows, mode) && resolved.unresolved.some(item => item.reason === "network")) {
         throw new Error("Interner Importfehler: Ein großer Import hat unerwartet die normale Scryfall-API verwendet.");
       }
 
@@ -714,6 +862,12 @@ export default function ExternalImportDialog({
     setError("");
 
     try {
+      if (file.size > MAX_IMPORT_FILE_BYTES) {
+        throw new Error(
+          `Die Datei ist zu groß (${(file.size / 1024 / 1024).toFixed(1)} MB). ` +
+          `Erlaubt sind höchstens ${MAX_IMPORT_FILE_BYTES / 1024 / 1024} MB.`
+        );
+      }
       const content = await file.text();
       const result = parseExternalImport(file.name, content);
       setText(content);
@@ -754,7 +908,7 @@ export default function ExternalImportDialog({
   };
 
   const applyImport = async () => {
-    if (!parsed || selectedResolved.length === 0 || !confirmed || busy || hasTechnicalFailures) return;
+    if (!parsed || rowsToImport.length === 0 || !confirmed || busy || hasTechnicalFailures) return;
 
     setBusy(true);
     setError("");
@@ -762,7 +916,7 @@ export default function ExternalImportDialog({
     try {
       if (mode === "collection") {
         if (!onImportCollection) throw new Error("Sammlungsimport ist nicht konfiguriert.");
-        await onImportCollection(collectionCardsFromResolved(selectedResolved));
+        await onImportCollection(collectionCardsFromResolved(rowsToImport));
       } else {
         if (!onImportDeck) throw new Error("Deckimport ist nicht konfiguriert.");
         await onImportDeck(
@@ -785,8 +939,14 @@ export default function ExternalImportDialog({
   };
 
   return (
-    <div className="external-import-backdrop" role="dialog" aria-modal="true" aria-label="Importieren">
-      <div className="external-import-dialog panel">
+    <div className="external-import-backdrop">
+      <div
+        ref={dialogRef}
+        className="external-import-dialog panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={mode === "collection" ? "Karten importieren" : "Deck importieren"}
+      >
         <div className="external-import-head">
           <div>
             <h2>{mode === "collection" ? "Karten importieren" : "Deck importieren"}</h2>
@@ -920,8 +1080,49 @@ export default function ExternalImportDialog({
               <div><span>Quelle</span><strong>{parsed.provider}</strong></div>
               <div><span>Gesamt</span><strong>{totalCopies} Karten</strong></div>
               <div><span>Erkannt</span><strong>{resolvedCopies} Karten</strong></div>
+              <div><span>Nicht erkannt</span><strong>{unresolvedCopies} Karten</strong></div>
+              <div><span>Mehrdeutig</span><strong>{ambiguousCopies} Karten</strong></div>
               <div><span>Import</span><strong>{sourceLabel || "—"}</strong></div>
             </div>
+
+            {parsed.skipped && parsed.skipped.length > 0 && (
+              <div className="external-import-network-warning">
+                <strong>{parsed.skipped.length} Zeile(n) übersprungen (Anzahl 0 oder ungültig).</strong>
+                <span>
+                  {parsed.skipped.slice(0, 5).map(item => `Zeile ${item.line}: ${item.name} – ${item.reason}`).join(" · ")}
+                  {parsed.skipped.length > 5 ? ` · und ${parsed.skipped.length - 5} weitere` : ""}
+                </span>
+              </div>
+            )}
+
+            {mode === "collection" && alreadyOwnedResolved.length > 0 && (
+              <div className="external-import-network-warning external-import-duplicates">
+                <strong>
+                  {alreadyOwnedCopies} Karte(n) aus {alreadyOwnedResolved.length} Zeile(n) sind bereits in der Sammlung.
+                </strong>
+                <span>Bei einem erneuten Import derselben Datei würden die Anzahlen sonst doppelt gezählt.</span>
+                <div className="external-import-duplicate-options" role="radiogroup" aria-label="Umgang mit vorhandenen Karten">
+                  <label>
+                    <input
+                      type="radio"
+                      name="duplicate-mode"
+                      checked={duplicateMode === "add"}
+                      onChange={() => { setDuplicateMode("add"); setConfirmed(false); }}
+                    />
+                    <span>Trotzdem hinzufügen (Anzahl addieren)</span>
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="duplicate-mode"
+                      checked={duplicateMode === "skip"}
+                      onChange={() => { setDuplicateMode("skip"); setConfirmed(false); }}
+                    />
+                    <span>Vorhandene überspringen</span>
+                  </label>
+                </div>
+              </div>
+            )}
 
             <div className="external-import-preview-head">
               <div>
@@ -944,9 +1145,14 @@ export default function ExternalImportDialog({
                     <small>{resolvedSummaryRows.length} unterschiedliche Kartennamen</small>
                   </div>
                   <div className="external-import-large-total external-import-large-total-warning">
-                    <span>Nicht eindeutig erkannt</span>
+                    <span>Nicht erkannt</span>
                     <strong>{unresolvedCopies} Karten</strong>
                     <small>{unresolvedSummaryRows.length} unterschiedliche Kartennamen</small>
+                  </div>
+                  <div className="external-import-large-total external-import-large-total-warning">
+                    <span>Mehrdeutig</span>
+                    <strong>{ambiguousCopies} Karten</strong>
+                    <small>{ambiguousSummaryRows.length} unterschiedliche Kartennamen</small>
                   </div>
                   {hasTechnicalFailures && !isLargeImport && (
                     <div className="external-import-large-total external-import-large-total-network">
@@ -974,7 +1180,7 @@ export default function ExternalImportDialog({
 
                 <section className="external-import-summary-list-section external-import-summary-list-section-warning">
                   <div className="external-import-summary-list-head">
-                    <h4>Nicht eindeutig erkannt</h4>
+                    <h4>Nicht erkannt</h4>
                     <span>{unresolvedCopies} Karten</span>
                   </div>
                   {unresolvedSummaryRows.length > 0 ? (
@@ -995,6 +1201,26 @@ export default function ExternalImportDialog({
                     <div className="external-import-all-recognized">Alle Karten wurden eindeutig erkannt.</div>
                   )}
                 </section>
+
+                {ambiguousSummaryRows.length > 0 && (
+                  <section className="external-import-summary-list-section external-import-summary-list-section-warning">
+                    <div className="external-import-summary-list-head">
+                      <h4>Mehrere Druckversionen möglich</h4>
+                      <span>{ambiguousCopies} Karten</span>
+                    </div>
+                    <p className="external-import-summary-note">
+                      Für diese Zeilen passen mehrere Druckversionen. Sie werden nicht geraten und nicht übernommen. Bitte Set und Collector Number ergänzen.
+                    </p>
+                    <div className="external-import-summary-list" role="list">
+                      {ambiguousSummaryRows.map(item => (
+                        <div className="external-import-summary-row external-import-summary-row-warning" role="listitem" key={`ambiguous-${item.name}`}>
+                          <span>{item.name}</span>
+                          <strong>{item.count}×</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
                 {hasTechnicalFailures && (
                   <section className="external-import-summary-list-section external-import-summary-list-section-network">
@@ -1062,7 +1288,7 @@ export default function ExternalImportDialog({
                         <div className="external-import-card-image external-import-card-image-missing"><span>?</span></div>
                         <div className="external-import-card-copy">
                           <strong className="external-import-card-name">{row.name}</strong>
-                          <span className="external-import-missing">{item.reason === "network" ? "Technisch nicht geprüft" : "Nicht erkannt"}</span>
+                          <span className="external-import-missing">{unresolvedReasonLabel(item.reason)}</span>
                           <div className="external-import-imported-data">
                             <span><b>Anzahl:</b> {row.count}</span>
                             <span><b>Edition:</b> {row.edition?.toUpperCase() || "—"}</span>
@@ -1093,8 +1319,8 @@ export default function ExternalImportDialog({
             {unresolvedDownloadRows.length > 0 && (
               <div className="external-import-unresolved-export">
                 <div>
-                  <strong>Nicht erkannte Karten exportieren</strong>
-                  <span>{unresolvedCopies} Karte(n) aus {unresolvedDownloadRows.length} Importzeile(n)</span>
+                  <strong>Nicht übernommene Karten exportieren</strong>
+                  <span>{unresolvedDownloadCopies} Karte(n) aus {unresolvedDownloadRows.length} Importzeile(n) – nicht erkannt oder mehrdeutig</span>
                 </div>
                 <div className="external-import-unresolved-export-actions">
                   <button
@@ -1149,12 +1375,12 @@ export default function ExternalImportDialog({
             <button
               type="button"
               onClick={() => void applyImport()}
-              disabled={busy || !confirmed || selectedResolved.length === 0 || hasTechnicalFailures}
+              disabled={busy || !confirmed || rowsToImport.length === 0 || hasTechnicalFailures}
             >
               {busy
                 ? "Übernehme…"
                 : mode === "collection"
-                  ? `${selectedCopies} Karte(n) übernehmen`
+                  ? `${importCopies} Karte(n) übernehmen`
                   : "Deck übernehmen"}
             </button>
           )}

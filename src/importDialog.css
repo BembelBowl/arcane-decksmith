@@ -94,7 +94,7 @@
 
 .external-import-summary {
   display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
+  grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
   gap:10px;
   margin-top:18px;
 }
@@ -215,7 +215,7 @@
 
 .external-import-large-totals {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
 
@@ -426,4 +426,18 @@
 .precon-list-row:focus-visible {
   border-color: var(--border-gold, rgba(214, 173, 88, 0.34));
   background: var(--bg-hover, #182841);
+}
+
+.external-import-duplicate-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 6px;
+}
+
+.external-import-duplicate-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
 }
