@@ -29,12 +29,21 @@
     <link
       rel="icon"
       type="image/png"
-      href="./ad_logo.png"
+      sizes="32x32"
+      href="./ad_logo_32.png"
+    />
+
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="192x192"
+      href="./ad_logo_192.png"
     />
 
     <link
       rel="apple-touch-icon"
-      href="./ad_logo.png"
+      sizes="180x180"
+      href="./ad_logo_180.png"
     />
 
     <!-- Social Media / Link-Vorschau -->
@@ -53,10 +62,7 @@
       content="Verwalte deine Magic: The Gathering Sammlung, baue Commander- und Standard-Decks und analysiere deine Decks mit KI."
     />
 
-    <meta
-      property="og:image"
-      content="./ad_logo.png"
-    />
+    <!-- og:image braucht eine absolute URL und wird beim Build aus VITE_SITE_URL ergänzt (vite.config.ts). -->
 
     <meta
       property="og:site_name"

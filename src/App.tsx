@@ -1,6 +1,6 @@
-import { Suspense, lazy, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import type { User } from "firebase/auth";
-import { subscribeAuth, login, logout, authMessage } from "./auth";
+import { subscribeAuth, login, logout, register, resetPassword, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
 import {
   loadCollection,
@@ -590,22 +590,57 @@ function App() {
   );
 }
 
+type AuthMode = "login" | "register" | "reset";
+
 function Auth({
   onDemo
 }: {
   onDemo: (email: string) => void;
 }) {
+  const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
+  const [pwRepeat, setPwRepeat] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [info, setInfo] = useState("");
 
-  const submit = async () => {
+  const switchMode = (next: AuthMode) => {
+    setMode(next);
+    setMsg("");
+    setInfo("");
+  };
+
+  const canSubmit =
+    !busy &&
+    firebaseConfigured &&
+    Boolean(email) &&
+    (mode === "reset" || Boolean(pw)) &&
+    (mode !== "register" || Boolean(pwRepeat));
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+
     setBusy(true);
     setMsg("");
+    setInfo("");
 
     try {
-      await login(email, pw);
+      if (mode === "login") {
+        await login(email, pw);
+      } else if (mode === "register") {
+        if (pw !== pwRepeat) {
+          setMsg("Die Passwörter stimmen nicht überein.");
+          return;
+        }
+        await register(email, pw);
+      } else {
+        await resetPassword(email);
+        setInfo(
+          "Falls ein Konto mit dieser E-Mail-Adresse existiert, wurde eine E-Mail zum Zurücksetzen des Passworts gesendet."
+        );
+      }
     } catch (e: unknown) {
       setMsg(authMessage((e as { code?: string } | null)?.code ?? ""));
     } finally {
@@ -613,13 +648,22 @@ function Auth({
     }
   };
 
+  const title =
+    mode === "login"
+      ? "Anmelden"
+      : mode === "register"
+        ? "Konto erstellen"
+        : "Passwort zurücksetzen";
+
   return (
     <div className="auth-shell">
-      <div className="auth-card">
+      <form className="auth-card" onSubmit={submit} noValidate>
         <img
           className="brand-logo"
-          src="./ad_logo.png"
+          src="./ad_logo_192.png"
           alt="Arcane Decksmith Logo"
+          width={96}
+          height={96}
         />
 
         <h1>Arcane Decksmith</h1>
@@ -635,6 +679,8 @@ function Auth({
           </div>
         )}
 
+        <h2 className="auth-title">{title}</h2>
+
         <label>
           E-Mail
           <input
@@ -642,38 +688,84 @@ function Auth({
             onChange={e => setEmail(e.target.value)}
             type="email"
             autoComplete="email"
+            required
           />
         </label>
 
-        <label>
-          Passwort
-          <input
-            value={pw}
-            onChange={e => setPw(e.target.value)}
-            type="password"
-            autoComplete="current-password"
-          />
-        </label>
+        {mode !== "reset" && (
+          <label>
+            Passwort
+            <input
+              value={pw}
+              onChange={e => setPw(e.target.value)}
+              type="password"
+              autoComplete={mode === "register" ? "new-password" : "current-password"}
+              minLength={6}
+              required
+            />
+          </label>
+        )}
+
+        {mode === "register" && (
+          <label>
+            Passwort wiederholen
+            <input
+              value={pwRepeat}
+              onChange={e => setPwRepeat(e.target.value)}
+              type="password"
+              autoComplete="new-password"
+              minLength={6}
+              required
+            />
+          </label>
+        )}
 
         {msg && (
-          <div className="error">
+          <div className="error" role="alert">
             {msg}
           </div>
         )}
 
+        {info && (
+          <div className="notice" role="status">
+            {info}
+          </div>
+        )}
+
         <button
+          type="submit"
           className="primary full"
-          disabled={busy || !email || !pw}
-          onClick={submit}
+          disabled={!canSubmit}
         >
-          {busy ? "…" : "Anmelden"}
+          {busy ? "…" : title}
         </button>
+
+        {firebaseConfigured && (
+          <div className="auth-links">
+            {mode !== "login" && (
+              <button type="button" className="link-button" onClick={() => switchMode("login")}>
+                Zur Anmeldung
+              </button>
+            )}
+            {mode !== "register" && (
+              <button type="button" className="link-button" onClick={() => switchMode("register")}>
+                Neues Konto erstellen
+              </button>
+            )}
+            {mode !== "reset" && (
+              <button type="button" className="link-button" onClick={() => switchMode("reset")}>
+                Passwort vergessen?
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="divider">
           oder
         </div>
 
         <button
+          type="button"
           className="secondary full"
           onClick={() =>
             onDemo(email || "demo@example.com")
@@ -681,7 +773,12 @@ function Auth({
         >
           Lokalen Demo-Modus verwenden
         </button>
-      </div>
+
+        <p className="muted auth-demo-hint">
+          Demo-Daten werden nur in diesem Browser gespeichert. Ohne E-Mail-Adresse
+          teilen sich alle Demo-Nutzer dieses Browsers denselben Speicher.
+        </p>
+      </form>
     </div>
   );
 }

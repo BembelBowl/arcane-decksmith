@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useDialogA11y } from "./useDialogA11y";
 import {
   getCardByFuzzyName,
   getCardsBySetAndCollectorNumbers,
@@ -125,6 +126,8 @@ async function lookupFuzzyCard(name: string): Promise<ScryfallCard | null> {
 
 export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogA11y(dialogRef, onClose);
   const streamRef = useRef<MediaStream | null>(null);
   const workerRef = useRef<TesseractWorker | null>(null);
   const scanTimerRef = useRef<number | null>(null);
@@ -382,7 +385,7 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
   };
 
   return createPortal(
-    <div className="scanner-backdrop" role="dialog" aria-modal="true" aria-label="Kartenscanner">
+    <div ref={dialogRef} className="scanner-backdrop" role="dialog" aria-modal="true" aria-label="Kartenscanner">
       <div className="scanner-shell">
         <div className="scanner-camera">
           <video ref={videoRef} playsInline muted autoPlay />

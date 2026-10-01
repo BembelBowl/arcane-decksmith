@@ -24,3 +24,14 @@ export function subscribeToasts(listener: Listener): () => void {
     listeners.delete(listener);
   };
 }
+
+const lastNotified = new Map<string, number>();
+
+/** Wie showToast, aber höchstens einmal pro Zeitfenster je Schlüssel (für Hintergrundfehler). */
+export function notifyOnce(key: string, message: string, kind: ToastKind = "info", windowMs = 5 * 60 * 1000) {
+  const now = Date.now();
+  const last = lastNotified.get(key) ?? 0;
+  if (now - last < windowMs) return;
+  lastNotified.set(key, now);
+  showToast(message, kind);
+}

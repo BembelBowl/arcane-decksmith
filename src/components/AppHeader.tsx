@@ -21,7 +21,7 @@ export default function AppHeader({
         aria-label="Arcane Decksmith Startseite"
       >
         <img
-          src="./ad_logo.png"
+          src="./ad_logo_192.png"
           alt="Arcane Decksmith Logo"
         />
         Arcane Decksmith

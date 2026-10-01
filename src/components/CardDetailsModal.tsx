@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useDialogA11y } from "./useDialogA11y";
 import {
   displayOracleText,
   displayTypeLine,
@@ -172,6 +173,7 @@ export default function CardDetailsModal({
   onChange,
   onDelete
 }: CardDetailsModalProps) {
+  const dialogRef = useRef<HTMLElement>(null);
   const [details, setDetails] = useState<ScryfallCard | null>(null);
   const [printings, setPrintings] = useState<ScryfallCard[]>([]);
   const [loadingPrintings, setLoadingPrintings] = useState(false);
@@ -180,19 +182,13 @@ export default function CardDetailsModal({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-
     return () => {
       document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
     };
-  }, [onClose]);
+  }, []);
+
+  // Escape, Fokusfalle und Fokus-Rückgabe.
+  useDialogA11y(dialogRef, onClose);
 
   useEffect(() => {
     let active = true;
@@ -316,6 +312,7 @@ export default function CardDetailsModal({
       }}
     >
       <section
+        ref={dialogRef}
         className="card-modal"
         role="dialog"
         aria-modal="true"
