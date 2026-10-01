@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
-import ExternalImportDialog from "../components/ExternalImportDialog";
 import { getSets, type ScryfallSet } from "../scryfall";
 import { download, toCsv } from "../importExport";
 import type {
@@ -9,6 +8,8 @@ import type {
   GroupBy,
   ViewMode
 } from "../types";
+
+const ExternalImportDialog = lazy(() => import("../components/ExternalImportDialog"));
 
 const COLOR_NAMES: Record<string, string> = {
   W: "Weiß",
@@ -869,12 +870,14 @@ export default function CollectionPage({
       )}
 
       {importOpen && (
-        <ExternalImportDialog
-          mode="collection"
-          pool={cards}
-          onClose={() => setImportOpen(false)}
-          onImportCollection={onImportCards}
-        />
+        <Suspense fallback={<div className="loading">Import wird geladen…</div>}>
+          <ExternalImportDialog
+            mode="collection"
+            pool={cards}
+            onClose={() => setImportOpen(false)}
+            onImportCollection={onImportCards}
+          />
+        </Suspense>
       )}
 
       {selectedCard && (

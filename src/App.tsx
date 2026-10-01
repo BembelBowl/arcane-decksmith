@@ -1,6 +1,4 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Suspense, lazy, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { User } from "firebase/auth";
 import { subscribeAuth, login, logout, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
@@ -10,9 +8,25 @@ import {
   removeCard,
   removeDeck,
   saveCard,
+  saveCardsBatch,
   saveDeck,
+  firestoreClean,
+  PartialSaveError,
   uidFromEmail
 } from "./db";
+import {
+  PRICE_REFRESH_INTERVAL_MS,
+  cardMetadataChanged,
+  compactSourceCards,
+  finishCountsFor,
+  legacyFoilFlag,
+  mergeIntoCollection,
+  refreshedCardRecord,
+  upsertCards,
+  upsertDecks
+} from "./collectionState";
+import { showToast } from "./toast";
+import ToastHost from "./components/ToastHost";
 import {
   autocomplete,
   availableFinishes,
@@ -73,8 +87,11 @@ import CollectionPage from "./pages/CollectionPage";
 import DeckLibrary from "./components/DeckLibrary";
 import DeckBoard from "./components/DeckBoard";
 import CardDetailsModal from "./components/CardDetailsModal";
-import CardScanner from "./components/CardScanner";
-import ExternalImportDialog from "./components/ExternalImportDialog";
+// Selten genutzte, große Teile erst bei Bedarf laden (Code-Splitting).
+const CardScanner = lazy(() => import("./components/CardScanner"));
+const ExternalImportDialog = lazy(() => import("./components/ExternalImportDialog"));
+const PreconImportDialog = lazy(() => import("./components/PreconImportDialog"));
+const Markdown = lazy(() => import("./components/Markdown"));
 import { useAppNavigation } from "./navigation";
 
 function errorMessage(error: unknown): string {
@@ -170,54 +187,6 @@ function finishLabel(
     : "Non-Foil";
 }
 
-function finishCountsFor(
-  card: CardRecord
-): Record<CardFinish, number> {
-  const stored =
-    card.finishCounts;
-
-  if (stored) {
-    const nonfoil =
-      Math.max(
-        0,
-        Math.floor(
-          Number(
-            stored.nonfoil ?? 0
-          )
-        )
-      );
-
-    const foil =
-      Math.max(
-        0,
-        Math.floor(
-          Number(
-            stored.foil ?? 0
-          )
-        )
-      );
-
-    if (
-      nonfoil + foil > 0
-    ) {
-      return {
-        nonfoil,
-        foil
-      };
-    }
-  }
-
-  return card.foil
-    ? {
-        nonfoil: 0,
-        foil: card.count
-      }
-    : {
-        nonfoil: card.count,
-        foil: 0
-      };
-}
-
 function collectionValueForCard(
   card: CardRecord
 ): {
@@ -261,16 +230,6 @@ function collectionValueForCard(
     value,
     unpricedCopies
   };
-}
-
-function legacyFoilFlag(
-  counts:
-    Record<CardFinish, number>
-): boolean {
-  return (
-    counts.foil > 0 &&
-    counts.nonfoil === 0
-  );
 }
 
 
@@ -752,140 +711,101 @@ function Main({
   } = useAppNavigation();
 
   const [busy, setBusy] = useState(true);
-  const [toast, setToast] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [saveProgress, setSaveProgress] =
+    useState<{ saved: number; total: number } | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     void (async () => {
       setBusy(true);
+      setLoadError("");
 
       try {
-        const loadedCollection =
-          await loadCollection(uid);
+        const [loadedCollection, loadedDecks] =
+          await Promise.all([
+            loadCollection(uid),
+            loadDecks(uid)
+          ]);
 
-        const loadedDecks =
-          await loadDecks(uid);
+        if (cancelled) return;
 
         setCollection(loadedCollection);
         setDecks(loadedDecks);
 
-        if (
-          loadedCollection.length >
-          0
-        ) {
-          void (async () => {
-            try {
-              const freshCards =
-                await getCards(
-                  loadedCollection.map(
-                    card =>
-                      card.id
-                  )
-                );
-
-              const freshById =
-                new Map(
-                  freshCards.map(
-                    card => [
-                      card.id,
-                      card
-                    ] as const
-                  )
-                );
-
-              const refreshedCollection =
-  loadedCollection.map(
-    card => {
-      const fresh =
-        freshById.get(
-          card.id
-        );
-
-      if (!fresh) {
-        return card;
-      }
-
-      const counts =
-        finishCountsFor(
-          card
-        );
-
-      return {
-        ...card,
-        setName:
-          fresh.setName ??
-          card.setName,
-
-        finishCounts:
-          counts,
-
-        availableFinishes:
-          fresh.availableFinishes &&
-          fresh.availableFinishes.length > 0
-            ? fresh.availableFinishes
-            : card.availableFinishes,
-
-        ...(fresh.priceEur !==
-        undefined
-          ? {
-              priceEur:
-                fresh.priceEur
-            }
-          : {}),
-
-        ...(fresh.priceEurFoil !==
-        undefined
-          ? {
-              priceEurFoil:
-                fresh.priceEurFoil
-            }
-          : {}),
-
-        priceUpdatedAt:
-          fresh.priceUpdatedAt ??
-          Date.now(),
-
-        gameChanger:
-          fresh.gameChanger ??
-          card.gameChanger,
-
-        foil:
-          legacyFoilFlag(
-            counts
-          )
-      };
-    }
-  );
-
-setCollection(
-  refreshedCollection
-);
-
-for (
-  const card
-  of refreshedCollection
-) {
-  await saveCard(
-    uid,
-    card
-  );
-}
-            } catch {
-              // Die gespeicherten Daten bleiben nutzbar, falls Scryfall gerade nicht erreichbar ist.
-            }
-          })();
+        void refreshStalePrices(loadedCollection);
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(
+            `Daten konnten nicht geladen werden: ${errorMessage(error)}`
+          );
         }
       } finally {
-        setBusy(false);
+        if (!cancelled) setBusy(false);
       }
     })();
+
+    // Preise/Setnamen/Finishes höchstens einmal pro Tag aktualisieren und nur
+    // tatsächlich geänderte Karten gesammelt zurückschreiben.
+    async function refreshStalePrices(loadedCollection: CardRecord[]) {
+      const now = Date.now();
+      const stale = loadedCollection.filter(
+        card =>
+          !card.priceUpdatedAt ||
+          now - card.priceUpdatedAt > PRICE_REFRESH_INTERVAL_MS
+      );
+
+      if (stale.length === 0) return;
+
+      try {
+        const freshCards =
+          await getCards(stale.map(card => card.id));
+
+        if (cancelled) return;
+
+        const freshById =
+          new Map(freshCards.map(card => [card.id, card] as const));
+
+        const changed: CardRecord[] = [];
+
+        for (const card of stale) {
+          const fresh = freshById.get(card.id);
+          if (!fresh) continue;
+
+          const refreshed = refreshedCardRecord(card, fresh);
+          if (cardMetadataChanged(card, refreshed)) {
+            changed.push(refreshed);
+          }
+        }
+
+        if (changed.length === 0) return;
+
+        const saved = await saveCardsBatch(uid, changed);
+        if (!cancelled) {
+          setCollection(current => upsertCards(current, saved));
+        }
+      } catch (error) {
+        // Die gespeicherten Daten bleiben nutzbar, falls Scryfall/Firestore gerade nicht erreichbar ist.
+        console.warn("Preisaktualisierung fehlgeschlagen:", error);
+        if (!cancelled) {
+          showToast(
+            "Preise konnten nicht aktualisiert werden. Es werden die zuletzt gespeicherten Werte angezeigt.",
+            "info"
+          );
+        }
+      }
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [uid]);
 
   const persistCard =
     async (c: CardRecord) => {
       const cleanCard =
-        JSON.parse(
-          JSON.stringify(c)
-        ) as CardRecord;
+        firestoreClean(c);
 
       await saveCard(
         uid,
@@ -893,8 +813,52 @@ for (
       );
 
       setCollection(
-        await loadCollection(uid)
+        current => upsertCards(current, [cleanCard])
       );
+    };
+
+  /**
+   * Speichert viele Karten gesammelt (Firestore-Batches) und aktualisiert den
+   * State lokal. Bei Teilfehlern werden die bereits gespeicherten Karten
+   * übernommen und der Fehler weitergereicht.
+   */
+  const persistCards =
+    async (cards: CardRecord[]) => {
+      const cleanCards =
+        cards.map(card => firestoreClean(card));
+
+      setSaveProgress({ saved: 0, total: cleanCards.length });
+
+      try {
+        const saved =
+          await saveCardsBatch(
+            uid,
+            cleanCards,
+            (done, total) => setSaveProgress({ saved: done, total })
+          );
+
+        setCollection(
+          current => upsertCards(current, saved)
+        );
+      } catch (error) {
+        if (error instanceof PartialSaveError) {
+          setCollection(
+            current => upsertCards(current, error.saved)
+          );
+        }
+        throw error;
+      } finally {
+        setSaveProgress(null);
+      }
+    };
+
+  /** Addiert neue Karten (inkl. Foil-Aufteilung) auf den vorhandenen Bestand. */
+  const addCardsToCollection =
+    async (incomingCards: CardRecord[]) => {
+      const merged =
+        mergeIntoCollection(collection, incomingCards);
+
+      await persistCards(merged);
     };
 
   const persistDeck =
@@ -905,12 +869,11 @@ for (
         // Objekten. Durch die JSON-Rundreise werden nur serialisierbare Werte
         // gespeichert, ohne die Deckstruktur zu verändern.
         const cleanDeck =
-          JSON.parse(
-            JSON.stringify({
-              ...d,
-              updatedAt: Date.now()
-            })
-          ) as DeckRecord;
+          firestoreClean({
+            ...d,
+            sourceCards: compactSourceCards(d.sourceCards),
+            updatedAt: Date.now()
+          });
 
         await saveDeck(
           uid,
@@ -918,29 +881,20 @@ for (
         );
 
         setDecks(
-          await loadDecks(uid)
+          current => upsertDecks(current, cleanDeck)
         );
 
         navigate("decks");
-        setToast("Deck gespeichert.");
-
-        setTimeout(
-          () => setToast(""),
-          2200
-        );
+        showToast("Deck gespeichert.", "success");
       } catch (error) {
         console.error(
           "Deck konnte nicht gespeichert werden:",
           error
         );
 
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Unbekannter Fehler";
-
-        alert(
-          `Deck konnte nicht gespeichert werden: ${message}`
+        showToast(
+          `Deck konnte nicht gespeichert werden: ${errorMessage(error)}`,
+          "error"
         );
 
         throw error;
@@ -952,7 +906,7 @@ for (
       await removeCard(uid, id);
 
       setCollection(
-        await loadCollection(uid)
+        current => current.filter(card => card.id !== id)
       );
     };
 
@@ -961,7 +915,7 @@ for (
       await removeDeck(uid, id);
 
       setDecks(
-        await loadDecks(uid)
+        current => current.filter(deck => deck.id !== id)
       );
     };
 
@@ -981,9 +935,11 @@ for (
         }
       />
 
-      {toast && (
-        <div className="toast">
-          {toast}
+      <ToastHost />
+
+      {saveProgress && (
+        <div className="save-progress" role="status" aria-live="polite">
+          Speichere {saveProgress.saved}/{saveProgress.total} Karten…
         </div>
       )}
 
@@ -994,6 +950,15 @@ for (
               Daten werden geladen…
             </div>
           )
+          : loadError
+            ? (
+              <div className="panel" role="alert">
+                <p>{loadError}</p>
+                <button type="button" onClick={() => window.location.reload()}>
+                  Erneut versuchen
+                </button>
+              </div>
+            )
           : page === "home"
             ? (
               <HomePage
@@ -1016,40 +981,11 @@ for (
                 onChange={persistCard}
                 onDelete={delCard}
                 onImportCards={async importedCards => {
-                  const byId = new Map<string, CardRecord>(collection.map((card: CardRecord) => [card.id, card]));
-
-                  for (const incoming of importedCards) {
-                    const existing = byId.get(incoming.id);
-
-                    if (!existing) {
-                      await saveCard(uid, incoming);
-                      byId.set(incoming.id, incoming);
-                      continue;
-                    }
-
-                    const current = finishCountsFor(existing);
-                    const added = finishCountsFor(incoming);
-                    const nextCounts = {
-                      nonfoil: current.nonfoil + added.nonfoil,
-                      foil: current.foil + added.foil
-                    };
-
-                    const merged: CardRecord = {
-                      ...existing,
-                      ...incoming,
-                      count: existing.count + incoming.count,
-                      addedAt: existing.addedAt,
-                      updatedAt: Date.now(),
-                      finishCounts: nextCounts,
-                      foil: legacyFoilFlag(nextCounts)
-                    };
-
-                    await saveCard(uid, merged);
-                    byId.set(merged.id, merged);
-                  }
-
-                  setCollection(await loadCollection(uid));
-                  setToast(`${importedCards.reduce((sum, card) => sum + card.count, 0)} Karte(n) importiert.`);
+                  await addCardsToCollection(importedCards);
+                  showToast(
+                    `${importedCards.reduce((sum, card) => sum + card.count, 0)} Karte(n) importiert.`,
+                    "success"
+                  );
                 }}
               />
             )
@@ -1058,13 +994,11 @@ for (
 <Search
   cards={collection}
   onBulkApply={async next => {
-    for (const c of next) {
-      await saveCard(uid, c);
-    }
-
-    setCollection(
-      await loadCollection(uid)
-    );
+    await persistCards(next);
+    showToast(`${next.length} Druckversion(en) gespeichert.`, "success");
+  }}
+  onAddCards={async incoming => {
+    await addCardsToCollection(incoming);
   }}
   onAdd={async (
     c,
@@ -1140,8 +1074,9 @@ for (
           Date.now()
       });
 
-      setToast(
-        `${canonical.name}: ${finishLabel(finish)} hinzugefügt · Anzahl ${existing.count + 1}.`
+      showToast(
+        `${canonical.name}: ${finishLabel(finish)} hinzugefügt · Anzahl ${existing.count + 1}.`,
+        "success"
       );
     } else {
       const fresh =
@@ -1155,26 +1090,20 @@ for (
         fresh
       );
 
-      setToast(
-        `${canonical.name} (${finishLabel(finish)}) wurde zur Sammlung hinzugefügt.`
+      showToast(
+        `${canonical.name} (${finishLabel(finish)}) wurde zur Sammlung hinzugefügt.`,
+        "success"
       );
     }
-
-      setTimeout(
-        () =>
-          setToast(""),
-        2200
-      );
     } catch (error) {
       console.error(
         "Karte konnte nicht zur Sammlung hinzugefügt werden:",
         error
       );
 
-      alert(
-        error instanceof Error
-          ? `Karte konnte nicht hinzugefügt werden: ${error.message}`
-          : "Karte konnte nicht hinzugefügt werden."
+      showToast(
+        `Karte konnte nicht hinzugefügt werden: ${errorMessage(error)}`,
+        "error"
       );
     }
   }}
@@ -1211,12 +1140,16 @@ for (
 function Search({
   cards,
   onAdd,
+  onAddCards,
   onBulkApply
 }: {
   cards: CardRecord[];
   onAdd: (
     c: ScryfallCard,
     finish: CardFinish
+  ) => Promise<void>;
+  onAddCards: (
+    c: CardRecord[]
   ) => Promise<void>;
   onBulkApply: (
     c: CardRecord[]
@@ -1258,7 +1191,7 @@ function Search({
         await searchCards(q)
       );
     } catch (e: unknown) {
-      alert(errorMessage(e));
+      showToast(`Suche fehlgeschlagen: ${errorMessage(e)}`, "error");
     } finally {
       setBusy(false);
     }
@@ -1358,7 +1291,7 @@ function Search({
                   await searchCards(s)
                 );
               } catch (e: unknown) {
-                alert(errorMessage(e));
+                showToast(`Suche fehlgeschlagen: ${errorMessage(e)}`, "error");
               } finally {
                 setBusy(false);
               }
@@ -1374,6 +1307,7 @@ function Search({
       cards={cards}
       onBulkApply={onBulkApply}
       onAdd={onAdd}
+      onAddCards={onAddCards}
     />
 
     {busy
@@ -1423,7 +1357,8 @@ function isSmartphoneOrTablet(): boolean {
 function SearchCollectionTools({
   cards,
   onBulkApply,
-  onAdd
+  onAdd,
+  onAddCards
 }: {
   cards: CardRecord[];
   onBulkApply: (
@@ -1433,7 +1368,12 @@ function SearchCollectionTools({
     c: ScryfallCard,
     finish: CardFinish
   ) => Promise<void>;
+  onAddCards: (
+    c: CardRecord[]
+  ) => Promise<void>;
 }) {
+  const [preconOpen, setPreconOpen] =
+    useState(false);
   const [scannerOpen, setScannerOpen] =
     useState(false);
   const [scannerAvailable] =
@@ -1495,8 +1435,9 @@ function SearchCollectionTools({
         "Scryfall-Sets konnten nicht geladen werden:",
         error
       );
-      alert(
-        "Die Set-Liste konnte nicht von Scryfall geladen werden."
+      showToast(
+        "Die Set-Liste konnte nicht von Scryfall geladen werden.",
+        "error"
       );
     } finally {
       setBulkSetsBusy(false);
@@ -1720,8 +1661,9 @@ function SearchCollectionTools({
         "Bulk-Hinzufügen fehlgeschlagen:",
         error
       );
-      alert(
-        "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden."
+      showToast(
+        "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden.",
+        "error"
       );
     } finally {
       setBulkBusy(false);
@@ -1756,6 +1698,13 @@ function SearchCollectionTools({
           onClick={toggleBulkAdd}
         >
           Bulk hinzufügen
+        </button>
+        <button
+          className="secondary"
+          type="button"
+          onClick={() => setPreconOpen(true)}
+        >
+          Precon-Deck hinzufügen
         </button>
         {scannerAvailable && (
           <button
@@ -1926,12 +1875,30 @@ function SearchCollectionTools({
         </div>
       )}
 
-      {scannerAvailable && (
-        <CardScanner
-          open={scannerOpen}
-          onClose={() => setScannerOpen(false)}
-          onAdd={onAdd}
-        />
+      {scannerAvailable && scannerOpen && (
+        <Suspense fallback={<div className="loading">Scanner wird geladen…</div>}>
+          <CardScanner
+            open={scannerOpen}
+            onClose={() => setScannerOpen(false)}
+            onAdd={onAdd}
+          />
+        </Suspense>
+      )}
+
+      {preconOpen && (
+        <Suspense fallback={<div className="loading">Precon-Auswahl wird geladen…</div>}>
+          <PreconImportDialog
+            collection={cards}
+            onClose={() => setPreconOpen(false)}
+            onAddCards={async incoming => {
+              await onAddCards(incoming);
+              showToast(
+                `${incoming.reduce((sum, card) => sum + card.count, 0)} Karte(n) aus dem Precon-Deck hinzugefügt.`,
+                "success"
+              );
+            }}
+          />
+        </Suspense>
       )}
     </>
   );
@@ -3718,12 +3685,14 @@ function Decks({
           onImportDeck={() => setImportDeckOpen(true)}
         />
         {importDeckOpen && (
-          <ExternalImportDialog
-            mode="deck"
-            pool={pool}
-            onClose={() => setImportDeckOpen(false)}
-            onImportDeck={onSave}
-          />
+          <Suspense fallback={<div className="loading">Import wird geladen…</div>}>
+            <ExternalImportDialog
+              mode="deck"
+              pool={pool}
+              onClose={() => setImportDeckOpen(false)}
+              onImportDeck={onSave}
+            />
+          </Suspense>
         )}
       </>
     );
@@ -3913,7 +3882,9 @@ function Decks({
 
       {analysis && (
         <div className="ai-box analysis-box markdown-content deck-detail-analysis">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysis}</ReactMarkdown>
+          <Suspense fallback={<p className="muted">Analyse wird dargestellt…</p>}>
+            <Markdown>{analysis}</Markdown>
+          </Suspense>
         </div>
       )}
 
@@ -5298,13 +5269,9 @@ function DeckEditor({
 
       {analysisText && (
         <div className="ai-box analysis-box markdown-content">
-          <ReactMarkdown
-            remarkPlugins={[
-              remarkGfm
-            ]}
-          >
-            {analysisText}
-          </ReactMarkdown>
+          <Suspense fallback={<p className="muted">Analyse wird dargestellt…</p>}>
+            <Markdown>{analysisText}</Markdown>
+          </Suspense>
         </div>
       )}
     </section>

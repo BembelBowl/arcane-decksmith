@@ -409,3 +409,21 @@
     width: 100%;
   }
 }
+
+.precon-list {
+  max-height: min(52vh, 460px);
+}
+
+.precon-list-row {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.precon-list-row:hover:not(:disabled),
+.precon-list-row:focus-visible {
+  border-color: var(--border-gold, rgba(214, 173, 88, 0.34));
+  background: var(--bg-hover, #182841);
+}

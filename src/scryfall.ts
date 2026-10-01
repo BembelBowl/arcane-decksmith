@@ -1592,3 +1592,39 @@ export async function getCard(
 export function scryfallUrl(id: string) {
   return `https://scryfall.com/card/${id}`;
 }
+
+/**
+ * Lädt exakte Druckversionen über ihre Scryfall-IDs (Collection-Endpoint, 75 pro Anfrage).
+ * Nicht gefundene IDs werden zurückgemeldet und niemals durch Namenssuche ersetzt.
+ */
+export async function getScryfallCardsByIds(
+  ids: string[],
+  onProgress?: (processed: number, total: number) => void
+): Promise<{ cards: ScryfallCard[]; notFound: string[] }> {
+  const uniqueIds = Array.from(new Set(ids.map(id => id.trim().toLowerCase()).filter(Boolean)));
+  const cards: ScryfallCard[] = [];
+  const found = new Set<string>();
+
+  onProgress?.(0, uniqueIds.length);
+
+  for (let index = 0; index < uniqueIds.length; index += 75) {
+    const batch = uniqueIds.slice(index, index + 75);
+    const response = await postJson<CollectionResponse>(
+      `${API}/cards/collection`,
+      { identifiers: batch.map(id => ({ id })) }
+    );
+
+    for (const card of response.data) {
+      cards.push(card);
+      found.add(card.id.toLowerCase());
+      cache.set(card.id, normalizeCard(card));
+    }
+
+    onProgress?.(Math.min(uniqueIds.length, index + batch.length), uniqueIds.length);
+  }
+
+  return {
+    cards,
+    notFound: uniqueIds.filter(id => !found.has(id))
+  };
+}

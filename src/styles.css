@@ -1627,13 +1627,26 @@ h3 {
    TOAST
    ========================================================= */
 
-.toast {
+.toast-stack {
   position: fixed;
 
   top: 86px;
   right: 20px;
+  left: auto;
 
   z-index: 60;
+
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
 
   padding: 11px 15px;
 
@@ -1654,6 +1667,41 @@ h3 {
 
   box-shadow:
     0 12px 34px rgba(0, 0, 0, 0.38);
+}
+
+.toast span {
+  flex: 1;
+  white-space: pre-line;
+}
+
+.toast-info {
+  background: linear-gradient(135deg, #1d6876, #164e59);
+  border-color: var(--border-arcane);
+}
+
+.toast-error {
+  background: linear-gradient(135deg, #a61e1e, #7d1616);
+  border-color: rgba(255, 168, 168, 0.3);
+}
+
+.toast-close {
+  flex: none;
+  padding: 0 4px;
+  min-height: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .toast-stack {
+    right: 16px;
+    left: 16px;
+    max-width: none;
+  }
 }
 
 
@@ -5512,4 +5560,18 @@ footer {
   .scanner-result-actions > button {
     width: 100%;
   }
+}
+
+.save-progress {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 10px 16px;
+  background: var(--bg-panel-solid);
+  color: var(--text);
+  border: 1px solid var(--border-arcane);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.38);
 }
