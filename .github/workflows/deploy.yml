@@ -49,6 +49,7 @@ jobs:
         run: npm run build
         env:
           VITE_SITE_URL: ${{ steps.pages.outputs.base_url }}
+          VITE_IMPORT_PROXY_URL: ${{ vars.VITE_IMPORT_PROXY_URL }}
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}

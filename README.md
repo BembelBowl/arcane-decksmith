@@ -32,7 +32,7 @@ Der Quellcode des Workers liegt **nicht** in diesem Repository. Der Client sende
 | Variable | Pflicht | Zweck |
 | --- | --- | --- |
 | `VITE_FIREBASE_*` (6 Werte) | ja (sonst nur Demo-Modus) | Firebase Web-Konfiguration |
-| `VITE_IMPORT_PROXY_URL` | nein | Eigener HTTP-Proxy für den URL-Import (`GET ?url=…`, liefert JSON). Ohne Angabe wird die Firebase Callable Function `importExternalDeckUrl` genutzt. |
+| `VITE_IMPORT_PROXY_URL` | nein | Eigener HTTP-Proxy für den URL-Import (`GET ?url=…`, liefert JSON), z. B. der Cloudflare Worker aus `worker/`. Ohne Angabe wird die Firebase Callable Function `importExternalDeckUrl` genutzt. Im GitHub-Workflow kommt der Wert aus der Repository-Variable `VITE_IMPORT_PROXY_URL`. |
 | `VITE_AI_WORKER_URL` | nein | Basis-URL des KI-Workers |
 | `VITE_DECK_INTELLIGENCE_URL` | nein | URL des Deck-Intelligence-Endpunkts |
 | `VITE_SITE_URL` | nein | Öffentliche Basis-URL der Seite; damit wird `og:image` mit absoluter URL erzeugt (im GitHub-Workflow automatisch gesetzt). |
@@ -48,6 +48,18 @@ Der Quellcode des Workers liegt **nicht** in diesem Repository. Der Client sende
   - App Check kann mit `ENFORCE_APP_CHECK=true` in `functions/.env` erzwungen werden, sobald der Client App Check initialisiert.
   - Moxfield blockiert automatisierte Abrufe gelegentlich; dann hilft der CSV/TXT-Export aus Moxfield.
 - Ohne Cloud Function funktionieren CSV/TXT-Import und alle anderen Funktionen weiterhin.
+
+### URL-Import kostenlos über Cloudflare Worker (ohne Blaze-Plan)
+
+Alternativ zur Cloud Function kann der Link-Import über einen Cloudflare Worker im kostenlosen Tarif laufen (`worker/import-proxy.js`, gleiche Parser-Logik und Sicherheitsregeln: nur Moxfield/Archidekt/Deckstats, HTTPS, Host-Prüfung nach Weiterleitungen, 5-MB-Limit).
+
+1. Cloudflare Dashboard → **Workers & Pages → Create → Create Worker**, Namen vergeben (z. B. `arcane-decksmith-import`) und **Deploy** klicken.
+2. **Edit code**: Inhalt von `worker/import-proxy.js` einfügen und **Deploy** klicken.
+3. Worker → **Settings → Variables and secrets → Add**: Typ *Text*, Name `ALLOWED_ORIGINS`, Wert die Adresse der Seite, z. B. `https://bembelbowl.github.io` (ohne Pfad). Mehrere Adressen mit Komma trennen.
+4. GitHub → Repository **Settings → Secrets and variables → Actions → Variables → New repository variable**: `VITE_IMPORT_PROXY_URL` = Worker-Adresse (z. B. `https://arcane-decksmith-import.<konto>.workers.dev`).
+5. **Actions → Deploy Arcane Decksmith → Run workflow**, damit die Seite mit der Adresse neu gebaut wird.
+
+Test im Browser: `https://<worker>.workers.dev/?url=https://archidekt.com/decks/<id>` liefert JSON mit den Karten. Moxfield blockiert Abrufe von Rechenzentren gelegentlich; dann hilft der CSV/TXT-Export.
 
 ## GitHub Pages
 
