@@ -158,3 +158,21 @@
   .market-offer-row label,
   .market-offer-actions { grid-column: 1 / -1; }
 }
+
+.market-profile-attention {
+  border-color: rgba(214, 173, 88, 0.6);
+  box-shadow: 0 0 0 1px rgba(214, 173, 88, 0.18);
+}
+
+.market-notice {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(214, 173, 88, 0.1);
+  border: 1px solid rgba(214, 173, 88, 0.35);
+  color: var(--gold-bright, #f0cf7a);
+  font-size: 0.92rem;
+}
+
+.market-add-card .market-hint { margin: 2px 0 0; font-size: 0.8rem; }

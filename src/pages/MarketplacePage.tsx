@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CardFilterBar from "../components/CardFilterBar";
 import {
   activeFilterCount,
@@ -403,12 +403,15 @@ function parseCount(value: string): number {
 function AddCard({
   card,
   listing,
-  canOffer,
+  nameOk,
+  onNeedName,
   onOffer
 }: {
   card: CardRecord;
   listing: MarketListing | undefined;
-  canOffer: boolean;
+  nameOk: boolean;
+  /** Wird aufgerufen, wenn jemand ohne gültigen Anzeigenamen anbieten will. */
+  onNeedName: () => void;
   onOffer: (card: CardRecord, nonfoil: number, foil: number) => Promise<void>;
 }) {
   const owned = finishCountsFor(card);
@@ -438,6 +441,11 @@ function AddCard({
         : "Im Marketplace anbieten";
 
   const submit = async () => {
+    if (!nameOk) {
+      onNeedName();
+      return;
+    }
+
     setBusy(true);
     setError("");
     try {
@@ -494,12 +502,14 @@ function AddCard({
         <button
           className={removing ? "secondary full" : "primary full"}
           type="button"
-          disabled={busy || !canOffer || (listing ? unchanged : total === 0)}
-          title={!canOffer ? "Bitte zuerst einen gültigen Anzeigenamen eingeben." : undefined}
+          disabled={busy || (listing ? unchanged : total === 0)}
           onClick={() => void submit()}
         >
           {label}
         </button>
+        {!listing && total === 0 && (
+          <p className="market-hint">Trage mindestens 1 Exemplar ein, das du anbieten möchtest.</p>
+        )}
         {error && <p className="market-field-error" role="alert">{error}</p>}
       </div>
     </article>
@@ -517,9 +527,21 @@ function AddTab({
   const [sort, setSort] = useState("name");
   const [limit, setLimit] = useState(ADD_PAGE_SIZE);
   const [nameInput, setNameInput] = useState<string | null>(null);
+  const [nameAttention, setNameAttention] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   const name = nameInput ?? displayName;
   const nameCheck = validateDisplayName(name);
+
+  // Ohne gültigen Anzeigenamen führt der Klick auf "Anbieten" zum Namensfeld.
+  const needName = () => {
+    setNameAttention(true);
+    const input = nameRef.current;
+    if (input) {
+      input.scrollIntoView({ block: "center", behavior: "smooth" });
+      input.focus();
+    }
+  };
 
   const listingByCard = useMemo(
     () => new Map(myListings.map(listing => [listing.cardId, listing] as const)),
@@ -560,23 +582,24 @@ function AddTab({
 
   return (
     <>
-      <div className="panel market-profile">
+      <div className={nameCheck.ok ? "panel market-profile" : "panel market-profile market-profile-attention"}>
         <label className="market-name-field">
           <span>Dein Anzeigename (für andere Spieler sichtbar)</span>
           <input
+            ref={nameRef}
             value={name}
             maxLength={MAX_DISPLAY_NAME}
             onChange={event => setNameInput(event.target.value)}
             placeholder="z. B. Mox-Meister"
             autoComplete="nickname"
+            aria-invalid={!nameCheck.ok}
           />
         </label>
-        {name.length > 0 && !nameCheck.ok && (
-          <p className="market-field-error" role="alert">{nameCheck.error}</p>
-        )}
-        {name.length === 0 && (
-          <p className="muted market-hint">
-            Ohne Anzeigenamen kannst du nichts anbieten. Er wird mit deinem ersten Angebot gespeichert.
+        {!nameCheck.ok && (
+          <p className="market-notice" role={nameAttention ? "alert" : "status"}>
+            {name.length === 0
+              ? "Trage zuerst deinen Anzeigenamen ein. Er wird bei deinen Angeboten für andere Spieler angezeigt und mit deinem ersten Angebot gespeichert."
+              : nameCheck.error}
           </p>
         )}
       </div>
@@ -627,7 +650,8 @@ function AddTab({
                 key={card.id}
                 card={card}
                 listing={listingByCard.get(card.id)}
-                canOffer={nameCheck.ok}
+                nameOk={nameCheck.ok}
+                onNeedName={needName}
                 onOffer={offer}
               />
             ))}
