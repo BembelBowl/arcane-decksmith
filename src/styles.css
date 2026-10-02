@@ -5605,17 +5605,3 @@ footer {
   font-size: 0.82rem;
   text-align: center;
 }
-
-.collection-card-offer {
-  position: absolute;
-  top: 36px;
-  left: 8px;
-  z-index: 2;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(29, 104, 118, 0.92);
-  border: 1px solid var(--border-arcane, rgba(85, 215, 229, 0.28));
-  color: #fff;
-  font-size: 0.78rem;
-  pointer-events: none;
-}

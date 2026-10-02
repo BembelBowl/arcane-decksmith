@@ -1,7 +1,11 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
-import OfferToMarketDialog from "../components/OfferToMarketDialog";
-import { offeredByCardId, type MarketListing, type OfferInput } from "../marketplace";
+import {
+  TYPE_ORDER,
+  cardMatchesColorFilter,
+  primaryTypeGroup,
+  toggleSetValue
+} from "../cardFilters";
 import { getSets, type ScryfallSet } from "../scryfall";
 import { download, toCsv } from "../importExport";
 import type {
@@ -22,18 +26,6 @@ const COLOR_NAMES: Record<string, string> = {
 };
 
 const COLOR_ORDER = ["W", "U", "B", "R", "G"];
-
-const TYPE_ORDER = [
-  "Land",
-  "Kreatur",
-  "Planeswalker",
-  "Spontanzauber",
-  "Hexerei",
-  "Verzauberung",
-  "Artefakt",
-  "Schlacht",
-  "Sonstiges"
-];
 
 const EUR_FORMATTER = new Intl.NumberFormat("de-DE", {
   style: "currency",
@@ -116,21 +108,6 @@ function colorGroupName(colors: string[]): string {
   return ordered.map(color => COLOR_NAMES[color] ?? color).join(" / ");
 }
 
-function primaryTypeGroup(typeLine: string | undefined): string {
-  const type = (typeLine ?? "").toLowerCase();
-
-  if (type.includes("land")) return "Land";
-  if (type.includes("creature")) return "Kreatur";
-  if (type.includes("planeswalker")) return "Planeswalker";
-  if (type.includes("instant")) return "Spontanzauber";
-  if (type.includes("sorcery")) return "Hexerei";
-  if (type.includes("enchantment")) return "Verzauberung";
-  if (type.includes("artifact")) return "Artefakt";
-  if (type.includes("battle")) return "Schlacht";
-
-  return "Sonstiges";
-}
-
 function compareGroupNames(a: string, b: string, group: GroupBy): number {
   if (group === "manaValue") {
     const av = Number(a.replace("MV ", ""));
@@ -156,49 +133,18 @@ function compareGroupNames(a: string, b: string, group: GroupBy): number {
   return a.localeCompare(b, "de", { numeric: true, sensitivity: "base" });
 }
 
-function cardMatchesColorFilter(card: CardRecord, filters: Set<string>): boolean {
-  if (filters.size === 0) return true;
-
-  const colors = card.colors ?? [];
-
-  for (const filter of filters) {
-    if (filter === "C" && colors.length === 0) return true;
-    if (filter === "M" && colors.length > 1) return true;
-    if (COLOR_ORDER.includes(filter) && colors.includes(filter)) return true;
-  }
-
-  return false;
-}
-
-function toggleSetValue(
-  current: Set<string>,
-  value: string
-): Set<string> {
-  const next = new Set(current);
-  if (next.has(value)) next.delete(value);
-  else next.add(value);
-  return next;
-}
-
 type CollectionPageProps = {
   cards: CardRecord[];
   onChange: (card: CardRecord) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onImportCards: (cards: CardRecord[]) => Promise<void>;
-  /** Marketplace (nur mit Konto): Angebote, Anzeigename und Speichern. */
-  market?: {
-    listings: MarketListing[];
-    displayName: string;
-    onSave: (offers: OfferInput[], displayName: string) => Promise<void>;
-  };
 };
 
 export default function CollectionPage({
   cards,
   onChange,
   onDelete,
-  onImportCards,
-  market
+  onImportCards
 }: CollectionPageProps) {
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<GroupBy>("none");
@@ -208,7 +154,6 @@ export default function CollectionPage({
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
   const [importOpen, setImportOpen] = useState(false);
-  const [offerCardId, setOfferCardId] = useState<string | null>(null);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
@@ -230,13 +175,6 @@ export default function CollectionPage({
       active = false;
     };
   }, []);
-
-  const offered = useMemo(() => offeredByCardId(market?.listings ?? []), [market?.listings]);
-
-  const offerCard = useMemo(
-    () => cards.find(card => card.id === offerCardId) ?? null,
-    [cards, offerCardId]
-  );
 
   const selectedCard = useMemo(
     () => cards.find(card => card.id === selectedCardId) ?? null,
@@ -849,12 +787,6 @@ export default function CollectionPage({
 
                   <div className="collection-card-count">{card.count}×</div>
 
-                  {offered.has(card.id) && (
-                    <div className="collection-card-offer" title="Im Marketplace angeboten">
-                      Tausch: {offered.get(card.id)}×
-                    </div>
-                  )}
-
                   {card.imageUri ? (
                     <img src={card.imageUri} alt={card.name} loading="lazy" />
                   ) : (
@@ -903,34 +835,12 @@ export default function CollectionPage({
         </Suspense>
       )}
 
-      {offerCard && market && (
-        <OfferToMarketDialog
-          cards={[offerCard]}
-          listings={market.listings}
-          displayName={market.displayName}
-          onClose={() => setOfferCardId(null)}
-          onSave={market.onSave}
-        />
-      )}
-
       {selectedCard && (
         <CardDetailsModal
           card={selectedCard}
           onChange={onChange}
           onDelete={onDelete}
           onClose={() => setSelectedCardId(null)}
-          market={
-            market
-              ? {
-                  offeredCount: offered.get(selectedCard.id) ?? 0,
-                  // Das Pop-up schließt sich, damit nur ein Dialog offen ist.
-                  onOffer: () => {
-                    setOfferCardId(selectedCard.id);
-                    setSelectedCardId(null);
-                  }
-                }
-              : undefined
-          }
         />
       )}
     </section>

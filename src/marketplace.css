@@ -1,4 +1,54 @@
-.market-tabs { margin: 12px 0 16px; }
+.market-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 14px 0 18px;
+  padding: 5px;
+  border: 1px solid var(--border, rgba(118, 143, 173, 0.22));
+  border-radius: 12px;
+  background: rgba(8, 14, 27, 0.6);
+}
+
+/* Tabs im Stil der Hauptnavigation (.nav): abgerundet, Gold für den aktiven Tab. */
+.market-tab {
+  position: relative;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #9ba9b9;
+  font-weight: 700;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.market-tab:hover {
+  background: rgba(85, 215, 229, 0.06);
+  color: var(--arcane-bright, #8debf3);
+}
+
+.market-tab.active {
+  background: linear-gradient(180deg, rgba(214, 173, 88, 0.16), rgba(214, 173, 88, 0.07));
+  color: var(--gold-bright, #f0cf7a);
+  box-shadow: inset 0 0 0 1px rgba(214, 173, 88, 0.22);
+}
+
+.market-tab:focus-visible {
+  outline: 2px solid var(--arcane, #55d7e5);
+  outline-offset: 2px;
+}
+
+.market-error { margin-bottom: 14px; border-color: rgba(255, 135, 135, 0.4); }
+.market-error p { margin: 6px 0 10px; }
+
+.market-add-amounts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.market-add-amounts label { display: grid; gap: 2px; font-size: 0.8rem; }
+.market-add-amounts input { width: 100%; }
 
 .market-searchbar { margin-top: 4px; }
 
@@ -108,11 +158,3 @@
   .market-offer-row label,
   .market-offer-actions { grid-column: 1 / -1; }
 }
-
-.card-modal-market {
-  display: grid;
-  gap: 4px;
-  margin-top: 12px;
-}
-
-.card-modal-offer { width: 100%; }
