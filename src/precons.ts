@@ -4,7 +4,8 @@ import {
   normalizeCard,
   type ScryfallCard
 } from "./scryfall";
-import type { CardRecord } from "./types";
+import { roleOf } from "./deckBuilder";
+import type { CardRecord, DeckCard, DeckRecord } from "./types";
 
 /**
  * Vorkonstruierte Decks (Precons) stammen aus MTGJSON. Jede Karte trägt dort
@@ -281,4 +282,78 @@ export function preconCollectionCards(
   }
 
   return [...byId.values()];
+}
+
+/**
+ * Erzeugt aus einem aufgelösten Precon ein Deck für die Deckliste.
+ * Commander stehen in `commanderIds`, Zusatzkarten im Sideboard. `owned` ist der
+ * Bestand der Sammlung (vor dem Import), damit "verfügbar" korrekt angezeigt wird.
+ */
+export function preconDeckRecord(
+  deck: PreconDeck,
+  rows: ResolvedPreconRow[],
+  owned: CardRecord[] = [],
+  addedToCollection = false,
+  now = Date.now()
+): DeckRecord {
+  const sourceCards = preconCollectionCards(rows, now);
+  const sourceById = new Map(sourceCards.map(card => [card.id, card] as const));
+  const ownedById = new Map(owned.map(card => [card.id, card] as const));
+
+  const commanderIds: string[] = [];
+  const sideboardIds = new Set<string>();
+  const byId = new Map<string, DeckCard>();
+
+  for (const { row, card } of rows) {
+    const source = sourceById.get(card.id)!;
+    const current = byId.get(card.id);
+    const nonfoil = (current?.finishCounts?.nonfoil ?? 0) + (row.foil ? 0 : row.count);
+    const foil = (current?.finishCounts?.foil ?? 0) + (row.foil ? row.count : 0);
+
+    byId.set(card.id, {
+      id: card.id,
+      name: card.name,
+      count: nonfoil + foil,
+      manaValue: source.manaValue,
+      typeLine: source.typeLine,
+      role: roleOf(source),
+      reason: `Importiert aus Precon ${deck.name}`,
+      available: (ownedById.get(card.id)?.count ?? 0) + (addedToCollection ? source.count : 0),
+      set: card.set,
+      setName: card.set_name,
+      collectorNumber: card.collector_number,
+      foil: foil > 0 && nonfoil === 0,
+      finishCounts: { nonfoil, foil }
+    });
+
+    if (row.section === "commander") {
+      if (!commanderIds.includes(card.id)) commanderIds.push(card.id);
+    } else if (row.section === "sideboard") {
+      sideboardIds.add(card.id);
+    }
+  }
+
+  const commanders = commanderIds.slice(0, 2);
+  const commanderSet = new Set(commanders);
+  const all = [...byId.values()];
+  const format = commanders.length > 0 ? "commander" : "standard";
+
+  const colorSource = commanders.length > 0
+    ? sourceCards.filter(card => commanderSet.has(card.id))
+    : sourceCards;
+
+  return {
+    id: crypto.randomUUID(),
+    name: deck.name.trim() || "Precon-Deck",
+    format,
+    commanderIds: commanders,
+    cards: all.filter(card => !sideboardIds.has(card.id) && !commanderSet.has(card.id)),
+    sideboard: all.filter(card => sideboardIds.has(card.id) && !commanderSet.has(card.id)),
+    colors: Array.from(new Set(colorSource.flatMap(card => card.colorIdentity ?? []))),
+    createdAt: now,
+    updatedAt: now,
+    notes: `Importiert aus dem Precon-Deck „${deck.name}“ (${deck.code}, ${deck.releaseDate}).`,
+    sourceCards,
+    importSource: `Precon ${deck.code}`
+  };
 }

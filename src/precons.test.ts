@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePreconDeck, parsePreconDeckList, preconCollectionCards } from "./precons";
+import { parsePreconDeck, parsePreconDeckList, preconCollectionCards, preconDeckRecord } from "./precons";
 import type { ScryfallCard } from "./scryfall";
 
 const summary = { fileName: "Test_C21", name: "Test", code: "C21", type: "Commander Deck", releaseDate: "2021-04-23" };
@@ -47,5 +47,42 @@ describe("precons", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0].finishCounts).toEqual({ nonfoil: 1, foil: 1 });
     expect(cards[0].count).toBe(2);
+  });
+
+  it("legt aus einem Commander-Precon ein Deck für die Deckliste an", () => {
+    const scry = (id: string, name: string, type: string, ci: string[] = []) => ({
+      id, oracle_id: id, name, set: "c21", set_name: "Commander 2021", collector_number: id, lang: "en",
+      cmc: 2, colors: ci, color_identity: ci, type_line: type, finishes: ["nonfoil", "foil"], prices: {}
+    }) as unknown as ScryfallCard;
+    const commander = scry("1", "Osgir", "Legendary Creature — Giant", ["R", "W"]);
+    const ring = scry("2", "Sol Ring", "Artifact");
+    const extra = scry("3", "Extra", "Instant", ["R"]);
+
+    const rows = [
+      { row: { name: "Osgir", count: 1, foil: true, section: "commander" as const }, card: commander },
+      { row: { name: "Sol Ring", count: 1, foil: false, section: "main" as const }, card: ring },
+      { row: { name: "Sol Ring", count: 1, foil: true, section: "main" as const }, card: ring },
+      { row: { name: "Extra", count: 2, foil: false, section: "sideboard" as const }, card: extra }
+    ];
+    const deck = { ...summary, name: "Lorehold Legacies", rows: [] };
+    const owned = [{ ...preconCollectionCards([rows[1]])[0], count: 3 }];
+
+    const record = preconDeckRecord(deck, rows, owned, true, 42);
+
+    expect(record.format).toBe("commander");
+    expect(record.name).toBe("Lorehold Legacies");
+    expect(record.commanderIds).toEqual(["1"]);
+    expect(record.cards.map(card => card.name)).toEqual(["Sol Ring"]);
+    expect(record.cards[0].count).toBe(2);
+    expect(record.cards[0].finishCounts).toEqual({ nonfoil: 1, foil: 1 });
+    expect(record.cards[0].available).toBe(5);
+    expect(record.sideboard.map(card => card.name)).toEqual(["Extra"]);
+    expect(record.colors.sort()).toEqual(["R", "W"]);
+    expect(record.sourceCards).toHaveLength(3);
+    expect(record.createdAt).toBe(42);
+    expect(record.importSource).toBe("Precon C21");
+
+    const withoutCollection = preconDeckRecord(deck, rows, [], false);
+    expect(withoutCollection.cards[0].available).toBe(0);
   });
 });

@@ -3,12 +3,13 @@ import {
   loadPreconDeck,
   loadPreconDeckList,
   preconCollectionCards,
+  preconDeckRecord,
   resolvePreconDeck,
   type PreconDeck,
   type PreconDeckSummary,
   type PreconResolution
 } from "../precons";
-import type { CardRecord } from "../types";
+import type { CardRecord, DeckRecord } from "../types";
 import { useDialogA11y } from "./useDialogA11y";
 import "../importDialog.css";
 
@@ -16,6 +17,7 @@ type PreconImportDialogProps = {
   collection: CardRecord[];
   onClose: () => void;
   onAddCards: (cards: CardRecord[]) => Promise<void>;
+  onSaveDeck: (deck: DeckRecord) => Promise<void>;
 };
 
 const MAX_LIST_RESULTS = 60;
@@ -29,7 +31,8 @@ function sectionLabel(section: string): string {
 export default function PreconImportDialog({
   collection,
   onClose,
-  onAddCards
+  onAddCards,
+  onSaveDeck
 }: PreconImportDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const [decks, setDecks] = useState<PreconDeckSummary[]>([]);
@@ -41,6 +44,11 @@ export default function PreconImportDialog({
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ processed: 0, total: 0 });
   const [confirmed, setConfirmed] = useState(false);
+  const [addToCollection, setAddToCollection] = useState(true);
+  const [createDeck, setCreateDeck] = useState(true);
+  // Bei einem Wiederholungsversuch (z. B. Deck-Speichern schlug fehl) dürfen die
+  // Karten nicht ein zweites Mal zur Sammlung addiert werden.
+  const [collectionDone, setCollectionDone] = useState(false);
   const [error, setError] = useState("");
 
   useDialogA11y(dialogRef, () => {
@@ -113,6 +121,7 @@ export default function PreconImportDialog({
     setDeck(null);
     setResolution(null);
     setConfirmed(false);
+    setCollectionDone(false);
     setProgress({ processed: 0, total: 0 });
 
     try {
@@ -134,18 +143,36 @@ export default function PreconImportDialog({
     setDeck(null);
     setResolution(null);
     setConfirmed(false);
+    setCollectionDone(false);
     setError("");
   };
 
+  const nothingSelected = !addToCollection && !createDeck;
+
   const apply = async () => {
-    if (!resolution || !confirmed || busy || collectionCards.length === 0) return;
+    if (!deck || !resolution || !confirmed || busy || nothingSelected || collectionCards.length === 0) return;
     setBusy(true);
     setError("");
+    let collectionSaved = collectionDone;
     try {
-      await onAddCards(collectionCards);
+      if (addToCollection && !collectionSaved) {
+        await onAddCards(collectionCards);
+        collectionSaved = true;
+        setCollectionDone(true);
+      }
+      if (createDeck) {
+        await onSaveDeck(
+          preconDeckRecord(deck, resolution.resolved, collection, addToCollection)
+        );
+      }
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Karten konnten nicht gespeichert werden.");
+      const message = cause instanceof Error ? cause.message : "Speichern fehlgeschlagen.";
+      setError(
+        collectionSaved && createDeck
+          ? `${message} Die Karten sind bereits in der Sammlung und werden bei einem erneuten Versuch nicht doppelt hinzugefügt.`
+          : message
+      );
     } finally {
       setBusy(false);
     }
@@ -262,7 +289,7 @@ export default function PreconImportDialog({
               <div>
                 <h3>{deck.code} · {deck.type} · {deck.releaseDate}</h3>
                 <p className="muted">
-                  Die Anzahlen werden auf deinen Bestand addiert. Bereits vorhandene Druckversionen erhalten die zusätzlichen Exemplare.
+                  Wähle unten, ob die Karten zur Sammlung hinzugefügt und/oder als Deck angelegt werden. Bei der Sammlung werden die Anzahlen auf deinen Bestand addiert.
                 </p>
               </div>
               <button className="secondary" type="button" onClick={backToList} disabled={busy}>Anderes Deck</button>
@@ -310,6 +337,29 @@ export default function PreconImportDialog({
               )}
             </div>
 
+            <div className="external-import-duplicate-options precon-targets" role="group" aria-label="Was soll angelegt werden?">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={addToCollection}
+                  disabled={collectionDone}
+                  onChange={event => setAddToCollection(event.target.checked)}
+                />
+                <span>Karten zur Sammlung hinzufügen{collectionDone ? " (bereits erledigt)" : ""}</span>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={createDeck}
+                  onChange={event => setCreateDeck(event.target.checked)}
+                />
+                <span>Als Deck in der Deckliste anlegen</span>
+              </label>
+            </div>
+            {nothingSelected && (
+              <p className="muted external-import-help">Bitte mindestens eine Option auswählen.</p>
+            )}
+
             <label className="external-import-confirm">
               <input
                 type="checkbox"
@@ -319,7 +369,7 @@ export default function PreconImportDialog({
               <span>
                 {unresolvedCopies > 0
                   ? `Ich möchte die ${resolvedCopies} erkannten Karten übernehmen (${unresolvedCopies} fehlen).`
-                  : `Ich möchte alle ${resolvedCopies} Karten des Decks zur Sammlung hinzufügen.`}
+                  : `Ich möchte alle ${resolvedCopies} Karten des Decks übernehmen.`}
               </span>
             </label>
           </>
@@ -333,9 +383,15 @@ export default function PreconImportDialog({
             <button
               type="button"
               onClick={() => void apply()}
-              disabled={busy || !confirmed || collectionCards.length === 0}
+              disabled={busy || !confirmed || nothingSelected || collectionCards.length === 0}
             >
-              {busy ? "Speichere…" : `${resolvedCopies} Karte(n) hinzufügen`}
+              {busy
+                ? "Speichere…"
+                : createDeck && addToCollection
+                  ? "Zur Sammlung hinzufügen & Deck anlegen"
+                  : createDeck
+                    ? "Deck anlegen"
+                    : `${resolvedCopies} Karte(n) hinzufügen`}
             </button>
           )}
         </div>

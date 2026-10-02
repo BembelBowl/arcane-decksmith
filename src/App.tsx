@@ -1097,6 +1097,7 @@ function Main({
   onAddCards={async incoming => {
     await addCardsToCollection(incoming);
   }}
+  onSaveDeck={persistDeck}
   onAdd={async (
     c,
     finish
@@ -1238,6 +1239,7 @@ function Search({
   cards,
   onAdd,
   onAddCards,
+  onSaveDeck,
   onBulkApply
 }: {
   cards: CardRecord[];
@@ -1247,6 +1249,9 @@ function Search({
   ) => Promise<void>;
   onAddCards: (
     c: CardRecord[]
+  ) => Promise<void>;
+  onSaveDeck: (
+    deck: DeckRecord
   ) => Promise<void>;
   onBulkApply: (
     c: CardRecord[]
@@ -1405,6 +1410,7 @@ function Search({
       onBulkApply={onBulkApply}
       onAdd={onAdd}
       onAddCards={onAddCards}
+      onSaveDeck={onSaveDeck}
     />
 
     {busy
@@ -1455,7 +1461,8 @@ function SearchCollectionTools({
   cards,
   onBulkApply,
   onAdd,
-  onAddCards
+  onAddCards,
+  onSaveDeck
 }: {
   cards: CardRecord[];
   onBulkApply: (
@@ -1467,6 +1474,9 @@ function SearchCollectionTools({
   ) => Promise<void>;
   onAddCards: (
     c: CardRecord[]
+  ) => Promise<void>;
+  onSaveDeck: (
+    deck: DeckRecord
   ) => Promise<void>;
 }) {
   const [preconOpen, setPreconOpen] =
@@ -1987,6 +1997,7 @@ function SearchCollectionTools({
           <PreconImportDialog
             collection={cards}
             onClose={() => setPreconOpen(false)}
+            onSaveDeck={onSaveDeck}
             onAddCards={async incoming => {
               await onAddCards(incoming);
               showToast(
