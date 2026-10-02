@@ -15,7 +15,7 @@ React/TypeScript-Projekt (Vite) für GitHub Pages + Firebase Auth/Firestore + Sc
 
 ## Marketplace (Tauschangebote)
 
-In der Sammlung eine Karte anklicken → im Pop-up **Im Marketplace anbieten**: Anzahl je Finish (Non-Foil/Foil) festlegen, höchstens so viele, wie in der Sammlung sind. Unter **Marketplace** sehen angemeldete Spieler die Angebote anderer (Suche nach Namensanfang, „Weitere Angebote laden“) und verwalten unter „Meine Angebote“ ihre eigenen.
+Alles läuft über den Bereich **Marketplace**: Im Tab **Karten hinzufügen** durchsuchst und filterst du deine Sammlung (Name, Farbe, Typ, Set, Mana Value wie in der Sammlung), legst je Karte die Anzahl Non-Foil/Foil fest (höchstens so viele, wie in der Sammlung sind) und klickst **Im Marketplace anbieten**. Im Tab **Angebote anderer Spieler** sehen angemeldete Spieler die Angebote anderer (Suche nach Namensanfang, „Weitere Angebote laden“), unter **Meine Angebote** verwaltest du deine eigenen. Die Sammlung selbst enthält keine Marketplace-Funktionen.
 
 - Öffentlich für andere angemeldete Spieler sind nur Karte, Anzahl, Richtpreis und der selbst gewählte **Anzeigename**. E-Mail-Adressen werden nicht veröffentlicht; „@“ und Web-Adressen sind im Anzeigenamen nicht erlaubt.
 - Es gibt bewusst keinen Kontakt-Kanal in der App. Wie sich Spieler einigen, regeln sie außerhalb.

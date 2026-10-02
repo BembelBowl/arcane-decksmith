@@ -196,8 +196,3 @@ export function syncListingWithCard(
 
   return { action: "update", listing: { ...listing, offered, updatedAt: now } };
 }
-
-/** Anzahl angebotener Exemplare je Karten-ID (für Hinweise in der Sammlung). */
-export function offeredByCardId(listings: MarketListing[]): Map<string, number> {
-  return new Map(listings.map(listing => [listing.cardId, listingTotal(listing.offered)] as const));
-}

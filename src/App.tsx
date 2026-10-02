@@ -829,7 +829,8 @@ function Main({
   // damit ein Fehler dort (z. B. Regeln noch nicht veröffentlicht) die App nicht blockiert.
   const [myListings, setMyListings] = useState<MarketListing[]>([]);
   const [displayName, setDisplayName] = useState("");
-  const [marketReady, setMarketReady] = useState(false);
+  const [marketError, setMarketError] = useState("");
+  const [marketReloadKey, setMarketReloadKey] = useState(0);
   const myListingsRef = useRef<MarketListing[]>([]);
   const [saveProgress, setSaveProgress] =
     useState<{ saved: number; total: number } | null>(null);
@@ -854,7 +855,6 @@ function Main({
         setDecks(loadedDecks);
 
         void refreshStalePrices(loadedCollection);
-        void loadMarketState();
       } catch (error) {
         if (!cancelled) {
           setLoadError(
@@ -865,26 +865,6 @@ function Main({
         if (!cancelled) setBusy(false);
       }
     })();
-
-    async function loadMarketState() {
-      if (!marketplaceSupported) return;
-
-      try {
-        const [listings, name] = await Promise.all([
-          loadMyListings(uid),
-          loadDisplayName(uid)
-        ]);
-
-        if (cancelled) return;
-
-        myListingsRef.current = listings;
-        setMyListings(listings);
-        setDisplayName(name);
-        setMarketReady(true);
-      } catch (error) {
-        console.warn("Marketplace-Daten konnten nicht geladen werden:", error);
-      }
-    }
 
     // Preise/Setnamen/Finishes höchstens einmal pro Tag aktualisieren und nur
     // tatsächlich geänderte Karten gesammelt zurückschreiben.
@@ -941,6 +921,28 @@ function Main({
       cancelled = true;
     };
   }, [uid]);
+
+  useEffect(() => {
+    if (!marketplaceSupported) return;
+    let cancelled = false;
+
+    Promise.all([loadMyListings(uid), loadDisplayName(uid)])
+      .then(([listings, name]) => {
+        if (cancelled) return;
+        myListingsRef.current = listings;
+        setMyListings(listings);
+        setDisplayName(name);
+        setMarketError("");
+      })
+      .catch(error => {
+        console.warn("Marketplace-Daten konnten nicht geladen werden:", error);
+        if (!cancelled) setMarketError(errorMessage(error));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, marketReloadKey]);
 
   const applyMyListings = (next: MarketListing[]) => {
     const sorted = [...next].sort((a, b) => a.name.localeCompare(b.name, "de"));
@@ -1216,15 +1218,6 @@ function Main({
                     "success"
                   );
                 }}
-                market={
-                  marketReady && !demoMode
-                    ? {
-                        listings: myListings,
-                        displayName,
-                        onSave: saveOffers
-                      }
-                    : undefined
-                }
               />
             )
             : page === "search"
@@ -1364,6 +1357,8 @@ function Main({
                       collection={collection}
                       myListings={myListings}
                       displayName={displayName}
+                      loadError={marketError}
+                      onRetryLoad={() => setMarketReloadKey(key => key + 1)}
                       onSaveOffers={saveOffers}
                       onRemoveListing={removeMyListing}
                     />

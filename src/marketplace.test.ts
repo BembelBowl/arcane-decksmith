@@ -3,7 +3,6 @@ import {
   clampOffer,
   listingFromCard,
   marketListingId,
-  offeredByCardId,
   planOfferSave,
   syncListingWithCard,
   validateDisplayName
@@ -84,10 +83,5 @@ describe("Marketplace", () => {
 
     expect(syncListingWithCard(listing, card("1", { count: 0, finishCounts: { nonfoil: 0, foil: 0 }, foil: false })).action)
       .toBe("remove");
-  });
-
-  it("zählt angebotene Exemplare je Karte", () => {
-    const listing = listingFromCard(card("1"), { nonfoil: 2, foil: 1 }, "u1", "Mox");
-    expect(offeredByCardId([listing]).get("1")).toBe(3);
   });
 });
