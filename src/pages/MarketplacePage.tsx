@@ -341,7 +341,7 @@ function MineTab({
         <div className="panel collection-empty-state">
           <strong>Du bietest noch keine Karten an.</strong>
           <span className="muted">
-            Wähle in deiner Sammlung Karten aus und klicke auf „Zum Tausch anbieten“.
+            Öffne in deiner Sammlung eine Karte und klicke auf „Im Marketplace anbieten“.
           </span>
         </div>
       ) : (

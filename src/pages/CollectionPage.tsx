@@ -208,7 +208,7 @@ export default function CollectionPage({
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
   const [importOpen, setImportOpen] = useState(false);
-  const [offerOpen, setOfferOpen] = useState(false);
+  const [offerCardId, setOfferCardId] = useState<string | null>(null);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
@@ -233,9 +233,9 @@ export default function CollectionPage({
 
   const offered = useMemo(() => offeredByCardId(market?.listings ?? []), [market?.listings]);
 
-  const selectedCards = useMemo(
-    () => cards.filter(card => selected.has(card.id)),
-    [cards, selected]
+  const offerCard = useMemo(
+    () => cards.find(card => card.id === offerCardId) ?? null,
+    [cards, offerCardId]
   );
 
   const selectedCard = useMemo(
@@ -878,11 +878,6 @@ export default function CollectionPage({
       {selected.size > 0 && (
         <div className="bulkbar">
           {selected.size} ausgewählt
-          {market && (
-            <button type="button" onClick={() => setOfferOpen(true)}>
-              Zum Tausch anbieten
-            </button>
-          )}
           <button
             type="button"
             onClick={async () => {
@@ -908,16 +903,13 @@ export default function CollectionPage({
         </Suspense>
       )}
 
-      {offerOpen && market && (
+      {offerCard && market && (
         <OfferToMarketDialog
-          cards={selectedCards}
+          cards={[offerCard]}
           listings={market.listings}
           displayName={market.displayName}
-          onClose={() => setOfferOpen(false)}
-          onSave={async (offers, name) => {
-            await market.onSave(offers, name);
-            setSelected(new Set());
-          }}
+          onClose={() => setOfferCardId(null)}
+          onSave={market.onSave}
         />
       )}
 
@@ -927,6 +919,18 @@ export default function CollectionPage({
           onChange={onChange}
           onDelete={onDelete}
           onClose={() => setSelectedCardId(null)}
+          market={
+            market
+              ? {
+                  offeredCount: offered.get(selectedCard.id) ?? 0,
+                  // Das Pop-up schließt sich, damit nur ein Dialog offen ist.
+                  onOffer: () => {
+                    setOfferCardId(selectedCard.id);
+                    setSelectedCardId(null);
+                  }
+                }
+              : undefined
+          }
         />
       )}
     </section>
