@@ -5,20 +5,6 @@ export type ImportSection =
   | "commander"
   | "sideboard";
 
-export type ParsedListRow =
-  | {
-      kind: "card";
-      count: number;
-      name: string;
-      section: ImportSection;
-      set?: string;
-      collectorNumber?: string;
-    }
-  | {
-      kind: "format";
-      format: Format;
-    };
-
 function cleanCardName(value: string) {
   return value
     .replace(/\s+\[[^\]]+\]\s*$/g, "")
@@ -80,224 +66,67 @@ function formatFromLine(
 }
 
 /*
- * Erweiterter Parser für Decklisten.
- *
- * Erkennt unter anderem:
- *
- * Format: Commander
- *
- * Commander
- * 1 Cloud, Midgar Mercenary
- *
- * Deck
- * 1 Sol Ring
- * 1 Command Tower
- *
- * Sideboard
- * 1 Example Card
- */
-export function parseDeckList(
-  text: string
-): ParsedListRow[] {
-  const result: ParsedListRow[] = [];
-
-  let section: ImportSection = "main";
-
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
-
-    /*
-     * Leere Zeilen und Kommentarzeilen werden ignoriert.
-     */
-    if (
-      !line ||
-      line.startsWith("#") ||
-      line.startsWith("//")
-    ) {
-      continue;
-    }
-
-    /*
-     * Prüfen, ob eine neue Sektion beginnt.
-     */
-    const heading = sectionFromHeading(line);
-
-    if (heading) {
-      section = heading;
-      continue;
-    }
-
-    /*
-     * Explizite Formatangabe erkennen.
-     */
-    const format = formatFromLine(line);
-
-    if (format) {
-      result.push({
-        kind: "format",
-        format
-      });
-
-      continue;
-    }
-
-    /*
-     * Unterstützte Beispiele:
-     *
-     * 4 Lightning Bolt
-     * 4x Lightning Bolt
-     * Lightning Bolt
-     */
-    const match = line.match(
-      /^\s*(\d+)\s*x?\s+(.+?)\s*$/i
-    );
-
-    const count = match
-      ? Number(match[1])
-      : 1;
-
-    const rawName = match
-      ? match[2]
-      : line;
-
-    if (
-      !Number.isFinite(count) ||
-      count <= 0
-    ) {
-      continue;
-    }
-
-    /*
-     * Zusätzlich kann eine eindeutige Druckversion
-     * angegeben werden:
-     *
-     * 1 Lightning Bolt [2XM:117]
-     *
-     * Dabei ist:
-     * 2XM = Setcode
-     * 117 = Collector Number
-     */
-    const setCollector = rawName.match(
-      /^(.+?)\s+\[([a-z0-9]+):([^\]]+)\]\s*$/i
-    );
-
-    if (setCollector) {
-      result.push({
-        kind: "card",
-        count,
-        name: setCollector[1].trim(),
-        section,
-        set: setCollector[2].trim(),
-        collectorNumber:
-          setCollector[3].trim()
-      });
-
-      continue;
-    }
-
-    const name = cleanCardName(rawName);
-
-    if (name) {
-      result.push({
-        kind: "card",
-        count,
-        name,
-        section
-      });
-    }
-  }
-
-  return result;
-}
-
-/*
- * Kompatibilitätsfunktion für den bisherigen Code.
- *
- * Die bestehende App erwartet von parseList()
- * weiterhin nur:
- *
- * {
- *   count,
- *   name
- * }
- *
- * Dadurch können wir importExport.ts zuerst
- * austauschen, ohne App.tsx gleichzeitig ändern
- * zu müssen.
- */
-export function parseList(
-  text: string
-): Array<{
-  count: number;
-  name: string;
-}> {
-  return parseDeckList(text)
-    .filter(
-      (
-        row
-      ): row is Extract<
-        ParsedListRow,
-        { kind: "card" }
-      > =>
-        row.kind === "card"
-    )
-    .map(row => ({
-      count: row.count,
-      name: row.name
-    }));
-}
-
-/*
  * Sammlung als CSV exportieren.
+ *
+ * Pro Druckversion bis zu zwei Zeilen (Non-Foil / Foil) mit der jeweiligen
+ * Anzahl, damit die Foil-Aufteilung beim Re-Import erhalten bleibt. Die
+ * Spaltennamen werden von HEADER_ALIASES wiedererkannt (Roundtrip). Mit
+ * UTF-8-BOM, damit Excel Umlaute korrekt anzeigt.
  */
 export function toCsv(
   cards: CardRecord[]
 ) {
   const header = [
-    "name",
-    "count",
-    "set",
-    "collectorNumber",
-    "lang",
-    "foil",
-    "manaValue",
-    "colors",
-    "typeLine",
-    "condition",
-    "location"
-  ].join(",");
+    "Count",
+    "Name",
+    "Edition",
+    "Set Name",
+    "Collector Number",
+    "Language",
+    "Foil",
+    "Price EUR",
+    "Mana Value",
+    "Colors",
+    "Type",
+    "Condition",
+    "Location"
+  ];
 
-  const rows = cards.map(
-    card =>
-      [
+  const cell = (value: string | number | undefined) =>
+    `"${String(value ?? "").replaceAll('"', '""')}"`;
+
+  const rows: string[] = [];
+
+  for (const card of cards) {
+    const counts = card.finishCounts && card.finishCounts.nonfoil + card.finishCounts.foil > 0
+      ? card.finishCounts
+      : card.foil
+        ? { nonfoil: 0, foil: card.count }
+        : { nonfoil: card.count, foil: 0 };
+
+    for (const finish of ["nonfoil", "foil"] as const) {
+      const count = counts[finish];
+      if (count <= 0) continue;
+      const price = finish === "foil" ? card.priceEurFoil : card.priceEur;
+      rows.push([
+        count,
         card.name,
-        card.count,
         card.set,
+        card.setName,
         card.collectorNumber,
         card.lang,
-        card.foil,
+        finish === "foil" ? "foil" : "",
+        price !== undefined ? price.toFixed(2) : "",
         card.manaValue,
         card.colors.join("|"),
-        card.typeLine ?? "",
-        card.condition ?? "",
-        card.location ?? ""
-      ]
-        .map(
-          value =>
-            `"${String(
-              value
-            ).replaceAll(
-              '"',
-              '""'
-            )}"`
-        )
-        .join(",")
-  );
+        card.typeLine,
+        card.condition,
+        card.location
+      ].map(cell).join(","));
+    }
+  }
 
-  return [
-    header,
-    ...rows
-  ].join("\n");
+  return "\uFEFF" + [header.map(cell).join(","), ...rows].join("\r\n");
 }
 
 /*
@@ -436,10 +265,19 @@ export type ExternalImportCardRow = {
   section: ImportSection;
 };
 
+export type SkippedImportRow = {
+  /** 1-basierte Zeilennummer in der Quelle. */
+  line: number;
+  name: string;
+  reason: string;
+};
+
 export type ExternalImportResult = {
   provider: ExternalImportProvider;
   rows: ExternalImportCardRow[];
   format?: Format;
+  /** Zeilen, die bewusst nicht übernommen wurden (z. B. Anzahl 0). */
+  skipped?: SkippedImportRow[];
 };
 
 function normalizeHeader(value: string): string {
@@ -554,9 +392,15 @@ function headerIndex(headers: string[], aliases: readonly string[]): number {
   return headers.findIndex(header => normalizedAliases.has(normalizeHeader(header)));
 }
 
-function parsePositiveCount(value: string | undefined): number {
-  const parsed = Number.parseInt((value ?? "1").trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+/**
+ * Liest eine Anzahl. Ungültige, leere oder nicht positive Werte liefern null
+ * (die Zeile wird übersprungen und gemeldet) – sie werden nie still zu 1.
+ */
+export function parseImportCount(value: string | undefined): number | null {
+  const clean = (value ?? "").trim().replace(/x$/i, "");
+  if (!/^\d+$/.test(clean)) return null;
+  const parsed = Number.parseInt(clean, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function parseFoil(value: string | undefined): boolean {
@@ -606,16 +450,28 @@ function parseExternalCsv(text: string): ExternalImportResult | null {
   const sectionIndex = headerIndex(headers, HEADER_ALIASES.section);
 
   const rows: ExternalImportCardRow[] = [];
+  const skipped: SkippedImportRow[] = [];
 
-  for (const values of matrix.slice(1)) {
+  for (const [position, values] of matrix.slice(1).entries()) {
     const name = (values[nameIndex] ?? "").trim();
     if (!name) continue;
+
+    // Fehlende Count-Spalte → 1. Vorhandene, aber ungültige/0-Werte → überspringen.
+    const count = countIndex >= 0 ? parseImportCount(values[countIndex]) : 1;
+    if (count === null) {
+      skipped.push({
+        line: position + 2,
+        name,
+        reason: `Ungültige Anzahl „${(values[countIndex] ?? "").trim() || "leer"}“`
+      });
+      continue;
+    }
 
     const edition = editionIndex >= 0 ? (values[editionIndex] ?? "").trim() : "";
     const collectorNumber = collectorIndex >= 0 ? (values[collectorIndex] ?? "").trim() : "";
 
     rows.push({
-      count: countIndex >= 0 ? parsePositiveCount(values[countIndex]) : 1,
+      count,
       name,
       ...(edition ? { edition } : {}),
       ...(collectorNumber ? { collectorNumber } : {}),
@@ -624,17 +480,18 @@ function parseExternalCsv(text: string): ExternalImportResult | null {
     });
   }
 
-  return rows.length > 0
-    ? { provider: detectProvider(headers), rows }
+  return rows.length > 0 || skipped.length > 0
+    ? { provider: detectProvider(headers), rows, ...(skipped.length > 0 ? { skipped } : {}) }
     : null;
 }
 
 function parseExternalText(text: string): ExternalImportResult {
   const rows: ExternalImportCardRow[] = [];
+  const skipped: SkippedImportRow[] = [];
   let section: ImportSection = "main";
   let detectedFormat: Format | undefined;
 
-  for (const rawLine of text.split(/\r?\n/)) {
+  for (const [position, rawLine] of text.split(/\r?\n/).entries()) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#") || line.startsWith("//")) continue;
 
@@ -651,8 +508,12 @@ function parseExternalText(text: string): ExternalImportResult {
     }
 
     const quantity = line.match(/^\s*(\d+)\s*x?\s+(.+?)\s*$/i);
-    const count = quantity ? parsePositiveCount(quantity[1]) : 1;
+    const count = quantity ? parseImportCount(quantity[1]) : 1;
     let payload = quantity ? quantity[2].trim() : line;
+    if (count === null) {
+      skipped.push({ line: position + 1, name: payload, reason: `Ungültige Anzahl „${quantity?.[1] ?? ""}“` });
+      continue;
+    }
 
     let foil = false;
     if (/\s+(?:\*f\*|\[foil\]|\(foil\)|foil)\s*$/i.test(payload)) {
@@ -665,8 +526,9 @@ function parseExternalText(text: string): ExternalImportResult {
     let collectorNumber = "";
 
     const colonPrinting = payload.match(/^(.+?)\s+\[([a-z0-9]+):([^\]]+)\]\s*$/i);
-    const parenPrinting = payload.match(/^(.+?)\s+\(([a-z0-9]+)\)\s+([a-z0-9][a-z0-9-]*)\s*$/i);
-    const bracketPrinting = payload.match(/^(.+?)\s+\[([a-z0-9]+)\]\s+([a-z0-9][a-z0-9-]*)\s*$/i);
+    // Collector Numbers dürfen Sonderzeichen enthalten (z. B. "A-69", "123★", "7†").
+    const parenPrinting = payload.match(/^(.+?)\s+\(([a-z0-9]+)\)\s+([a-z0-9][^\s]*)\s*$/i);
+    const bracketPrinting = payload.match(/^(.+?)\s+\[([a-z0-9]+)\]\s+([a-z0-9][^\s]*)\s*$/i);
     const setOnly = payload.match(/^(.+?)\s+\(([a-z0-9]+)\)\s*$/i);
 
     if (colonPrinting) {
@@ -703,7 +565,8 @@ function parseExternalText(text: string): ExternalImportResult {
   return {
     provider: "Textliste",
     rows,
-    ...(detectedFormat ? { format: detectedFormat } : {})
+    ...(detectedFormat ? { format: detectedFormat } : {}),
+    ...(skipped.length > 0 ? { skipped } : {})
   };
 }
 
@@ -723,7 +586,7 @@ export function parseExternalImport(
   }
 
   const list = parseExternalText(trimmed);
-  if (list.rows.length === 0) {
+  if (list.rows.length === 0 && !list.skipped?.length) {
     throw new Error(
       "Keine Karten erkannt. Benötigt werden mindestens Name und Anzahl; für exakte Druckversionen zusätzlich Edition/Set und Collector Number."
     );

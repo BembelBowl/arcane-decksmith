@@ -2,6 +2,14 @@ import type {
   CardFinish,
   CardRecord
 } from "./types";
+import {
+  cardNameKeys,
+  decidePrinting,
+  normalizeCollectorNumber,
+  normalizeSetToken,
+  rawCollectorNumber,
+  type ImportMatchMode
+} from "./printingMatch";
 
 const API = "https://api.scryfall.com";
 
@@ -135,6 +143,8 @@ export interface BulkImportLookupIdentifier {
 export interface BulkImportLookupResult {
   cardsByIndex: Map<number, ScryfallCard>;
   notFoundIndexes: number[];
+  /** Zeilen mit mehreren möglichen Druckversionen (nur Sammlungsimport). */
+  ambiguousIndexes: number[];
 }
 
 const sleep = (ms: number) =>
@@ -674,66 +684,9 @@ function escapeScryfallSearchValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function normalizeBulkLookupName(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[’']/g, "'")
-    .replace(/\s*\/\/\s*/g, " // ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
 
-function bulkLookupNames(value: string): string[] {
-  const clean = value.replace(/\s+/g, " ").trim();
-  if (!clean) return [];
 
-  const faces = clean
-    .split(/\s*\/\/\s*/)
-    .map(face => face.trim())
-    .filter(Boolean);
 
-  return Array.from(
-    new Set(
-      [clean, faces[0], ...faces.slice(1)]
-        .filter(Boolean)
-        .map(normalizeBulkLookupName)
-    )
-  );
-}
-
-function bulkSetNameKey(setCode: string, name: string): string {
-  return `${setCode.trim().toLowerCase()}::${normalizeBulkLookupName(name)}`;
-}
-
-function preferBulkCard(current: ScryfallCard | undefined, candidate: ScryfallCard): ScryfallCard {
-  if (!current) return candidate;
-
-  const currentEnglish = current.lang === "en" ? 1 : 0;
-  const candidateEnglish = candidate.lang === "en" ? 1 : 0;
-  if (candidateEnglish !== currentEnglish) {
-    return candidateEnglish > currentEnglish ? candidate : current;
-  }
-
-  const releaseCompare = (candidate.released_at ?? "").localeCompare(current.released_at ?? "");
-  if (releaseCompare !== 0) {
-    return releaseCompare > 0 ? candidate : current;
-  }
-
-  const setCompare = candidate.set.localeCompare(current.set);
-  if (setCompare !== 0) return setCompare > 0 ? candidate : current;
-
-  const collectorCompare = candidate.collector_number.localeCompare(
-    current.collector_number,
-    undefined,
-    { numeric: true }
-  );
-  if (collectorCompare !== 0) return collectorCompare > 0 ? candidate : current;
-
-  // Letzter deterministischer Tie-Breaker. So hängt das Ergebnis bei mehrfach
-  // vorkommenden Objekten niemals von der Reihenfolge der Bulk-Datei ab.
-  return candidate.id.localeCompare(current.id) > 0 ? candidate : current;
-}
 
 async function getDefaultCardsBulkDescriptor(): Promise<ScryfallBulkDataDescriptor> {
   if (defaultCardsBulkDescriptorCache) return defaultCardsBulkDescriptorCache;
@@ -1010,7 +963,8 @@ function validateBulkScan(scannedRecords: number): void {
 
 export async function resolveCardsFromDefaultBulkData(
   identifiers: BulkImportLookupIdentifier[],
-  onProgress?: (processed: number, total: number, label: string) => void
+  onProgress?: (processed: number, total: number, label: string) => void,
+  mode: ImportMatchMode = "collection"
 ): Promise<BulkImportLookupResult> {
   const totalRows = identifiers.length;
   const copyCountByIndex = new Map(
@@ -1020,43 +974,53 @@ export async function resolveCardsFromDefaultBulkData(
     (sum, identifier) => sum + (copyCountByIndex.get(identifier.index) ?? 1),
     0
   );
-  if (totalRows === 0) return { cardsByIndex: new Map(), notFoundIndexes: [] };
+  if (totalRows === 0) return { cardsByIndex: new Map(), notFoundIndexes: [], ambiguousIndexes: [] };
 
   // Die Eingabe wird einmal deterministisch indexiert. Für Bulk-Importe wird
   // bewusst NICHT aus collectorCardCache vorgeladen: Ein alter oder nur
   // teilweise gefüllter Session-Cache darf das Ergebnis nicht beeinflussen.
-  const exactIndexes = new Map<string, number[]>();
-  const setNameIndexes = new Map<string, number[]>();
-  const nameIndexes = new Map<string, number[]>();
+  // Pro Schlüssel werden während des Laufs ALLE Kandidaten gesammelt; entschieden
+  // wird erst nach der vollständigen Validierung (siehe decidePrinting).
+  type RowKeys = {
+    exactRaw?: string;
+    exactNormalized?: string;
+    nameCollector: string[];
+    setName: string[];
+    name: string[];
+  };
+
+  const keysByIndex = new Map<number, RowKeys>();
+  const wanted = new Map<string, number[]>();
+  const want = (key: string, index: number) => {
+    const indexes = wanted.get(key) ?? [];
+    indexes.push(index);
+    wanted.set(key, indexes);
+  };
 
   for (const identifier of identifiers) {
-    const cleanSet = identifier.set?.trim().toLowerCase();
-    const cleanCollector = identifier.collectorNumber?.trim().toLowerCase();
+    const setToken = identifier.set ? normalizeSetToken(identifier.set) : "";
+    const collector = identifier.collectorNumber?.trim() ?? "";
+    const names = cardNameKeys(identifier.name);
+    const keys: RowKeys = { nameCollector: [], setName: [], name: [] };
 
-    if (cleanSet && cleanCollector) {
-      const key = collectorLookupKey(cleanSet, cleanCollector);
-      const indexes = exactIndexes.get(key) ?? [];
-      indexes.push(identifier.index);
-      exactIndexes.set(key, indexes);
-      continue;
+    if (setToken && collector) {
+      keys.exactRaw = `x|${setToken}|${rawCollectorNumber(collector)}`;
+      keys.exactNormalized = `n|${setToken}|${normalizeCollectorNumber(collector)}`;
+      want(keys.exactRaw, identifier.index);
+      want(keys.exactNormalized, identifier.index);
     }
+    if (collector) {
+      keys.nameCollector = names.map(name => `c|${name}|${normalizeCollectorNumber(collector)}`);
+    }
+    if (setToken) {
+      keys.setName = names.map(name => `s|${setToken}|${name}`);
+    }
+    keys.name = names.map(name => `m|${name}`);
 
-    const lookupNames = bulkLookupNames(identifier.name);
-    if (cleanSet && lookupNames.length > 0) {
-      for (const name of lookupNames) {
-        const key = bulkSetNameKey(cleanSet, name);
-        const indexes = setNameIndexes.get(key) ?? [];
-        indexes.push(identifier.index);
-        setNameIndexes.set(key, indexes);
-      }
-      continue;
+    for (const key of [...keys.nameCollector, ...keys.setName, ...keys.name]) {
+      want(key, identifier.index);
     }
-
-    for (const name of lookupNames) {
-      const indexes = nameIndexes.get(name) ?? [];
-      indexes.push(identifier.index);
-      nameIndexes.set(name, indexes);
-    }
+    keysByIndex.set(identifier.index, keys);
   }
 
   const descriptor = await getDefaultCardsBulkDescriptor();
@@ -1075,23 +1039,21 @@ export async function resolveCardsFromDefaultBulkData(
     // Jeder Versuch arbeitet ausschließlich in lokalen Maps. Erst wenn der
     // KOMPLETTE Bulk-Datensatz erfolgreich gelesen und validiert wurde, werden
     // Treffer veröffentlicht bzw. in globale Caches übernommen.
-    const bestByExact = new Map<string, ScryfallCard>();
-    const bestBySetName = new Map<string, ScryfallCard>();
-    const bestByName = new Map<string, ScryfallCard>();
+    const candidates = new Map<string, Map<string, ScryfallCard>>();
     let matchedCopies = 0;
     const matchedIndexes = new Set<number>();
 
-    const markMatched = (indexes: number[]) => {
-      for (const index of indexes) {
+    const collect = (key: string, card: ScryfallCard) => {
+      const targets = wanted.get(key);
+      if (!targets) return;
+      const bucket = candidates.get(key) ?? new Map<string, ScryfallCard>();
+      bucket.set(card.id, card);
+      candidates.set(key, bucket);
+      for (const index of targets) {
         if (matchedIndexes.has(index)) continue;
         matchedIndexes.add(index);
         matchedCopies += copyCountByIndex.get(index) ?? 1;
       }
-      onProgress?.(
-        Math.min(totalCopies, matchedCopies),
-        totalCopies,
-        "Scryfall Bulk Data wird durchsucht…"
-      );
     };
 
     try {
@@ -1113,33 +1075,26 @@ export async function resolveCardsFromDefaultBulkData(
       }
 
       const consume = (card: ScryfallCard) => {
-        const exactKey = collectorLookupKey(card.set, card.collector_number);
-        const exactTargets = exactIndexes.get(exactKey);
-        if (exactTargets) {
-          bestByExact.set(exactKey, preferBulkCard(bestByExact.get(exactKey), card));
-          markMatched(exactTargets);
-        }
+        const setTokens = Array.from(new Set([
+          normalizeSetToken(card.set),
+          ...(card.set_name ? [normalizeSetToken(card.set_name)] : [])
+        ]));
+        const raw = rawCollectorNumber(card.collector_number);
+        const normalized = normalizeCollectorNumber(card.collector_number);
+        const names = cardNameKeys(card.name);
 
-        const cardNames = bulkLookupNames(card.name);
-        for (const cardName of cardNames) {
-          const setNameKey = bulkSetNameKey(card.set, cardName);
-          const setNameTargets = setNameIndexes.get(setNameKey);
-          if (setNameTargets) {
-            bestBySetName.set(
-              setNameKey,
-              preferBulkCard(bestBySetName.get(setNameKey), card)
-            );
-            markMatched(setNameTargets);
-          }
-          const nameTargets = nameIndexes.get(cardName);
-          if (nameTargets) {
-            bestByName.set(cardName, preferBulkCard(bestByName.get(cardName), card));
-            markMatched(nameTargets);
-          }
+        for (const setToken of setTokens) {
+          collect(`x|${setToken}|${raw}`, card);
+          collect(`n|${setToken}|${normalized}`, card);
+          for (const name of names) collect(`s|${setToken}|${name}`, card);
+        }
+        for (const name of names) {
+          collect(`c|${name}|${normalized}`, card);
+          collect(`m|${name}`, card);
         }
       };
 
-      const scanProgress = (_scannedRecords: number) => {
+      const scanProgress = () => {
         onProgress?.(
           Math.min(totalCopies, matchedCopies),
           totalCopies,
@@ -1156,33 +1111,33 @@ export async function resolveCardsFromDefaultBulkData(
       validateBulkScan(scan.scannedRecords);
 
       // Erst NACH vollständiger Validierung wird das Ergebnis aufgebaut.
+      const cardsFor = (keys: string[] | string | undefined): ScryfallCard[] => {
+        const list = keys === undefined ? [] : Array.isArray(keys) ? keys : [keys];
+        return list.flatMap(key => [...(candidates.get(key)?.values() ?? [])]);
+      };
+
       const cardsByIndex = new Map<number, ScryfallCard>();
+      const notFoundIndexes: number[] = [];
+      const ambiguousIndexes: number[] = [];
 
-      for (const [key, indexes] of exactIndexes) {
-        const card = bestByExact.get(key);
-        if (!card) continue;
-        for (const index of indexes) cardsByIndex.set(index, card);
+      for (const identifier of identifiers) {
+        const keys = keysByIndex.get(identifier.index)!;
+        const decision = decidePrinting(
+          identifier.name,
+          {
+            exactRaw: cardsFor(keys.exactRaw),
+            exactNormalized: cardsFor(keys.exactNormalized),
+            nameCollector: cardsFor(keys.nameCollector),
+            setName: cardsFor(keys.setName),
+            name: cardsFor(keys.name)
+          },
+          mode
+        );
+
+        if (decision.status === "resolved") cardsByIndex.set(identifier.index, decision.card);
+        else if (decision.status === "ambiguous") ambiguousIndexes.push(identifier.index);
+        else notFoundIndexes.push(identifier.index);
       }
-
-      for (const [key, indexes] of setNameIndexes) {
-        const card = bestBySetName.get(key);
-        if (!card) continue;
-        for (const index of indexes) {
-          if (!cardsByIndex.has(index)) cardsByIndex.set(index, card);
-        }
-      }
-
-      for (const [name, indexes] of nameIndexes) {
-        const card = bestByName.get(name);
-        if (!card) continue;
-        for (const index of indexes) {
-          if (!cardsByIndex.has(index)) cardsByIndex.set(index, card);
-        }
-      }
-
-      const notFoundIndexes = identifiers
-        .map(identifier => identifier.index)
-        .filter(index => !cardsByIndex.has(index));
 
       // Atomarer Cache-Commit: unvollständige Versuche hinterlassen keinerlei
       // Treffer, die einen späteren Lauf beeinflussen könnten.
@@ -1198,7 +1153,7 @@ export async function resolveCardsFromDefaultBulkData(
         "Alle Karten wurden mit Scryfall Bulk Data geprüft."
       );
 
-      return { cardsByIndex, notFoundIndexes };
+      return { cardsByIndex, notFoundIndexes, ambiguousIndexes };
     } catch (error) {
       lastError = error;
       if (attempt < BULK_DOWNLOAD_ATTEMPTS) {
@@ -1591,4 +1546,40 @@ export async function getCard(
 
 export function scryfallUrl(id: string) {
   return `https://scryfall.com/card/${id}`;
+}
+
+/**
+ * Lädt exakte Druckversionen über ihre Scryfall-IDs (Collection-Endpoint, 75 pro Anfrage).
+ * Nicht gefundene IDs werden zurückgemeldet und niemals durch Namenssuche ersetzt.
+ */
+export async function getScryfallCardsByIds(
+  ids: string[],
+  onProgress?: (processed: number, total: number) => void
+): Promise<{ cards: ScryfallCard[]; notFound: string[] }> {
+  const uniqueIds = Array.from(new Set(ids.map(id => id.trim().toLowerCase()).filter(Boolean)));
+  const cards: ScryfallCard[] = [];
+  const found = new Set<string>();
+
+  onProgress?.(0, uniqueIds.length);
+
+  for (let index = 0; index < uniqueIds.length; index += 75) {
+    const batch = uniqueIds.slice(index, index + 75);
+    const response = await postJson<CollectionResponse>(
+      `${API}/cards/collection`,
+      { identifiers: batch.map(id => ({ id })) }
+    );
+
+    for (const card of response.data) {
+      cards.push(card);
+      found.add(card.id.toLowerCase());
+      cache.set(card.id, normalizeCard(card));
+    }
+
+    onProgress?.(Math.min(uniqueIds.length, index + batch.length), uniqueIds.length);
+  }
+
+  return {
+    cards,
+    notFound: uniqueIds.filter(id => !found.has(id))
+  };
 }

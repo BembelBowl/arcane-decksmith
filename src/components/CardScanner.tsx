@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useDialogA11y } from "./useDialogA11y";
 import {
   getCardByFuzzyName,
   getCardsBySetAndCollectorNumbers,
@@ -31,24 +32,12 @@ type CardScannerProps = {
   onAdd: (card: ScryfallCard, finish: CardFinish) => Promise<void>;
 };
 
-type TesseractResult = { data: { text: string; confidence?: number } };
 type TesseractWorker = {
-  recognize: (image: CanvasImageSource) => Promise<TesseractResult>;
-  setParameters?: (params: Record<string, string>) => Promise<void>;
-  terminate: () => Promise<void>;
-};
-type TesseractModule = {
-  createWorker: (
-    langs?: string | string[],
-    oem?: number,
-    options?: { logger?: (message: { status?: string; progress?: number }) => void }
-  ) => Promise<TesseractWorker>;
+  recognize: (image: CanvasImageSource) => Promise<{ data: { text: string; confidence?: number } }>;
+  setParameters?: (params: Record<string, string>) => Promise<unknown>;
+  terminate: () => Promise<unknown>;
 };
 
-type TesseractWindow = Window & { Tesseract?: TesseractModule };
-
-const TESSERACT_SCRIPT = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
-let tesseractModulePromise: Promise<TesseractModule> | null = null;
 let tesseractWorkerPromise: Promise<TesseractWorker> | null = null;
 const exactPrintingCache = new Map<string, Promise<ScryfallCard[]>>();
 const fuzzyCardCache = new Map<string, Promise<ScryfallCard | null>>();
@@ -64,71 +53,44 @@ function finishOptions(card: ScryfallCard): CardFinish[] {
   return result.length > 0 ? result : ["nonfoil"];
 }
 
-function getLoadedTesseract(): TesseractModule | null {
-  const api = (window as TesseractWindow).Tesseract;
-  return api && typeof api.createWorker === "function" ? api : null;
-}
-
-function loadTesseractModule(): Promise<TesseractModule> {
-  const loaded = getLoadedTesseract();
-  if (loaded) return Promise.resolve(loaded);
-  if (tesseractModulePromise) return tesseractModulePromise;
-
-  tesseractModulePromise = new Promise<TesseractModule>((resolve, reject) => {
-    const finish = () => {
-      const api = getLoadedTesseract();
-      if (api) {
-        resolve(api);
-      } else {
-        reject(new Error("Tesseract wurde geladen, stellt aber createWorker nicht bereit."));
-      }
-    };
-
-    const existing = document.querySelector<HTMLScriptElement>(
-      `script[src="${TESSERACT_SCRIPT}"]`
-    );
-
-    // Wenn ein früherer Ladevorgang ein Script-Element hinterlassen hat, aber
-    // keine globale Tesseract-API verfügbar ist, laden wir sauber neu.
-    existing?.remove();
-
-    const script = document.createElement("script");
-    script.src = TESSERACT_SCRIPT;
-    script.async = true;
-    script.crossOrigin = "anonymous";
-    script.addEventListener("load", finish, { once: true });
-    script.addEventListener(
-      "error",
-      () => reject(new Error("Texterkennung konnte nicht geladen werden.")),
-      { once: true }
-    );
-    document.head.appendChild(script);
-  }).catch(error => {
-    // Nach einem temporären Netzwerkfehler darf ein erneuter Scanner-Start
-    // einen neuen Ladeversuch unternehmen.
-    tesseractModulePromise = null;
-    throw error;
-  });
-
-  return tesseractModulePromise;
-}
-
+/**
+ * Tesseract kommt als npm-Abhängigkeit (versioniert über package-lock) und wird
+ * erst beim Öffnen des Scanners per dynamic import geladen. Das Worker-Script
+ * wird mitgebündelt und vom eigenen Origin ausgeliefert; WASM-Core und
+ * Sprachdaten lädt tesseract.js in der zur Paketversion passenden Version.
+ */
 async function loadTesseract(): Promise<TesseractWorker> {
   if (!tesseractWorkerPromise) {
-    tesseractWorkerPromise = loadTesseractModule()
-      .then(async tesseract => {
-        const worker = await tesseract.createWorker(["eng", "deu"], 1);
+    tesseractWorkerPromise = Promise.all([
+      import("tesseract.js"),
+      import("tesseract.js/dist/worker.min.js?url")
+    ])
+      .then(async ([tesseract, workerUrl]) => {
+        const worker = await tesseract.createWorker(["eng", "deu"], 1, {
+          workerPath: workerUrl.default
+        });
         // Sparse text eignet sich besser, wenn die ganze Kamerafläche gelesen wird.
-        await worker.setParameters?.({ tessedit_pageseg_mode: "11" });
-        return worker;
+        await worker.setParameters({ tessedit_pageseg_mode: tesseract.PSM.SPARSE_TEXT });
+        return worker as unknown as TesseractWorker;
       })
       .catch(error => {
         tesseractWorkerPromise = null;
-        throw error;
+        throw error instanceof Error
+          ? error
+          : new Error("Texterkennung konnte nicht geladen werden.");
       });
   }
 
   return tesseractWorkerPromise;
+}
+
+/** Beendet den Tesseract-Worker (gibt Speicher und WASM-Instanz frei). */
+function terminateTesseract(): void {
+  const pending = tesseractWorkerPromise;
+  tesseractWorkerPromise = null;
+  void pending
+    ?.then(worker => worker.terminate())
+    .catch(() => undefined);
 }
 
 async function lookupExactPrinting(
@@ -164,6 +126,8 @@ async function lookupFuzzyCard(name: string): Promise<ScryfallCard | null> {
 
 export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogA11y(dialogRef, onClose);
   const streamRef = useRef<MediaStream | null>(null);
   const workerRef = useRef<TesseractWorker | null>(null);
   const scanTimerRef = useRef<number | null>(null);
@@ -256,6 +220,7 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
       streamRef.current = null;
       workerRef.current = null;
       scanningRef.current = false;
+      terminateTesseract();
     };
   }, [open]);
 
@@ -420,7 +385,7 @@ export default function CardScanner({ open, onClose, onAdd }: CardScannerProps) 
   };
 
   return createPortal(
-    <div className="scanner-backdrop" role="dialog" aria-modal="true" aria-label="Kartenscanner">
+    <div ref={dialogRef} className="scanner-backdrop" role="dialog" aria-modal="true" aria-label="Kartenscanner">
       <div className="scanner-shell">
         <div className="scanner-camera">
           <video ref={videoRef} playsInline muted autoPlay />

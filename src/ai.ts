@@ -1,4 +1,5 @@
 import { auth } from "./firebase";
+import { notifyOnce } from "./toast";
 import { loadCollection } from "./db";
 import type {
   CardRecord,
@@ -10,8 +11,18 @@ import {
   getDeckAnalysisEvidence
 } from "./deckIntelligence";
 
+// Konfigurierbar über VITE_AI_WORKER_URL (Standard: bestehender Cloudflare Worker).
 const AI_WORKER_URL =
+  import.meta.env.VITE_AI_WORKER_URL?.trim() ||
   "https://arcane-decksmith-ai.arcane-decksmith-api.workers.dev";
+
+function scryfallUnavailable(): [] {
+  notifyOnce(
+    "ai-scryfall",
+    "Scryfall ist gerade nicht erreichbar – Kaufvorschläge und Kartenzusatzdaten fehlen in dieser Analyse."
+  );
+  return [];
+}
 
 const MAX_ANALYSIS_LENGTH = 10500;
 const EMPTY_RESPONSE_RETRIES = 1;
@@ -41,7 +52,7 @@ interface ScryfallSearchResponse {
   data?: ScryfallCandidateCard[];
 }
 
-interface PurchaseCandidate {
+export interface PurchaseCandidate {
   id: string;
   name: string;
   gameChanger: boolean;
@@ -149,14 +160,16 @@ async function searchScryfallCandidates(
         }
       );
   } catch {
+    return scryfallUnavailable();
+  }
+
+  // 404 bedeutet bei Scryfall "keine Treffer" und ist kein Fehler.
+  if (response.status === 404) {
     return [];
   }
 
-  if (
-    response.status === 404 ||
-    !response.ok
-  ) {
-    return [];
+  if (!response.ok) {
+    return scryfallUnavailable();
   }
 
   try {
@@ -171,7 +184,7 @@ async function searchScryfallCandidates(
       ? data.data
       : [];
   } catch {
-    return [];
+    return scryfallUnavailable();
   }
 }
 
@@ -1417,7 +1430,7 @@ function normalizedBudgetValue(
     : undefined;
 }
 
-function normalizedPurchaseBudget(
+export function normalizedPurchaseBudget(
   budget: PurchaseSuggestionBudget = {}
 ): PurchaseSuggestionBudget {
   return {
@@ -1446,7 +1459,7 @@ function parseCandidateEuroPrice(
     : undefined;
 }
 
-function candidateWithinPerCardBudget(
+export function candidateWithinPerCardBudget(
   priceEur: number | undefined,
   budget: PurchaseSuggestionBudget
 ): boolean {
@@ -1459,7 +1472,7 @@ function candidateWithinPerCardBudget(
   return priceEur !== undefined && priceEur <= max;
 }
 
-function takeWithinDeckBudget(
+export function takeWithinDeckBudget(
   candidates: PurchaseCandidate[],
   budget: PurchaseSuggestionBudget,
   limit = 3

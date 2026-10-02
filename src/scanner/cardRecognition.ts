@@ -77,60 +77,115 @@ export function extractCardNameCandidates(text: string): string[] {
     .slice(0, 4);
 }
 
+const RARITY_LETTERS = new Set(["C", "U", "R", "M", "L", "S", "T", "P", "D"]);
+
+function cleanCollectorNumber(value: string): string {
+  return value.replace(/^([A-Z]-?)?0+(?=\d)/, "$1").toLowerCase();
+}
+
+function isYear(value: string): boolean {
+  return /^(?:19|20)\d{2}$/.test(value);
+}
+
+/**
+ * Sucht die Collector Number nur in typischen Metadatenzeilen:
+ * "123/281 R", "0123/0281", "R 0123" oder "A-69/277".
+ * Jahreszahlen ("2021/…", "© 2021") werden nie als Nummer gewertet.
+ */
+function findCollectorNumber(line: string): { value: string; weak: boolean } | undefined {
+  const slash = line.match(/(?:^|\s)([A-Z]?-?\d{1,4}[A-Z]?)\s*\/\s*(\d{1,4})(?:\s+([A-Z]))?(?=\s|$)/);
+  if (slash) {
+    const digits = slash[1].replace(/[^0-9]/g, "");
+    if (!isYear(digits) && !isYear(slash[2])) {
+      // "4/7" kann auch Stärke/Widerstand sein: ohne Seltenheitsbuchstaben,
+      // führende Nullen oder dreistellige Gesamtzahl nur mit Set-Kontext werten.
+      const weak = !slash[3] && slash[2].length < 3 && !/^0/.test(digits) && !/[A-Z]/.test(slash[1]);
+      return { value: cleanCollectorNumber(slash[1]), weak };
+    }
+  }
+
+  // Neueres Format ohne Gesamtzahl: Seltenheitsbuchstabe + Nummer.
+  const rarity = line.match(/(?:^|\s)([A-Z])\s+([A-Z]?-?\d{3,4}[A-Z]?)(?=\s|$)/);
+  if (rarity && RARITY_LETTERS.has(rarity[1]) && !isYear(rarity[2])) {
+    return { value: cleanCollectorNumber(rarity[2]), weak: false };
+  }
+
+  return undefined;
+}
+
+type MetadataCandidate = ScannerMetadata & { weak: boolean; strongSet: boolean };
+
+/**
+ * Liest Set-Code, Collector Number und Sprache aus dem OCR-Text.
+ *
+ * Im Vollbild enthält der Regeltext häufig Wörter, die zufällig Set-Codes
+ * (ONE, ALL, WAR, ICE) oder Sprachcodes (IT, EN, DE, LA, ES) sind. Deshalb
+ * werden Set und Sprache nur aus der Metadatenzeile gelesen, also der Zeile
+ * mit der Collector Number oder der direkt benachbarten Zeile
+ * (z. B. "123/281 R" + "ONE • EN").
+ */
 export function parseScannerMetadata(
   rawText: string,
   sets: ScryfallSet[]
 ): ScannerMetadata {
-  const raw = normalizeOcrText(rawText).toUpperCase();
-  const tokens = raw.split(/\s+/).filter(Boolean);
+  const lines = rawText
+    .split(/\r?\n/)
+    .map(line => normalizeOcrText(line).toUpperCase())
+    .filter(Boolean);
+  const raw = lines.join(" ");
   const knownSets = new Set(sets.map(set => set.code.toUpperCase()));
+  const candidates: MetadataCandidate[] = [];
 
-  let setCode: string | undefined;
-  let setTokenIndex = -1;
-  for (let index = 0; index < tokens.length; index += 1) {
-    const clean = tokens[index].replace(/[^A-Z0-9]/g, "");
-    if (knownSets.has(clean)) {
-      setCode = clean.toLowerCase();
-      setTokenIndex = index;
-      break;
+  for (let index = 0; index < lines.length; index += 1) {
+    const found = findCollectorNumber(lines[index]);
+    if (!found) continue;
+
+    const metadataLines = [lines[index], lines[index + 1], lines[index - 1]]
+      .filter((line): line is string => Boolean(line));
+
+    let setCode: string | undefined;
+    let language: string | undefined;
+
+    for (const line of metadataLines) {
+      const tokens = line.split(/\s+/).map(token => token.replace(/[^A-Z0-9]/g, "")).filter(Boolean);
+      for (let position = 0; position < tokens.length; position += 1) {
+        const token = tokens[position];
+        if (!knownSets.has(token)) continue;
+        const next = tokens[position + 1];
+        // Bevorzugt "SET • SPRACHE"; sonst nur ein Set-Code in der Nummernzeile selbst.
+        if (next && LANGUAGE_CODES.has(next)) {
+          setCode = token.toLowerCase();
+          language = next.toLowerCase();
+          break;
+        }
+        if (line === lines[index] && !setCode) {
+          setCode = token.toLowerCase();
+        }
+      }
+      if (language) break;
     }
+
+    candidates.push({
+      raw,
+      collectorNumber: found.value,
+      setCode,
+      language,
+      weak: found.weak,
+      strongSet: Boolean(language)
+    });
   }
 
-  let collectorNumber: string | undefined;
+  const best =
+    candidates.find(candidate => candidate.strongSet) ??
+    candidates.find(candidate => !candidate.weak);
 
-  // Häufiges modernes Format: 123/281, 123, 123a, A-123 etc.
-  const slashMatch = raw.match(/\b([A-Z]?-?\d{1,4}[A-Z]?)\s*\/\s*\d{1,4}\b/);
-  if (slashMatch) {
-    collectorNumber = slashMatch[1].replace(/^0+(?=\d)/, "").toLowerCase();
-  }
-
-  if (!collectorNumber && setTokenIndex >= 0) {
-    // Im Vollbild können viele zufällige Zahlen vorkommen. Eine Zahl in direkter
-    // Nähe des erkannten Set-Codes ist deshalb der wesentlich bessere Kandidat.
-    const nearby = tokens
-      .slice(Math.max(0, setTokenIndex - 5), Math.min(tokens.length, setTokenIndex + 6))
-      .map(token => token.replace(/[^A-Z0-9-]/g, ""))
-      .filter(token => /^(?:[A-Z]-?)?\d{1,4}[A-Z]?$/.test(token));
-    collectorNumber = nearby[0]?.replace(/^0+(?=\d)/, "").toLowerCase();
-  }
-
-  if (!collectorNumber) {
-    const candidates = tokens
-      .map(token => token.replace(/[^A-Z0-9-]/g, ""))
-      .filter(token => /^(?:[A-Z]-?)?\d{1,4}[A-Z]?$/.test(token));
-    collectorNumber = candidates[0]?.replace(/^0+(?=\d)/, "").toLowerCase();
-  }
-
-  let language: string | undefined;
-  for (const token of tokens) {
-    const clean = token.replace(/[^A-Z]/g, "");
-    if (LANGUAGE_CODES.has(clean)) {
-      language = clean.toLowerCase();
-      break;
-    }
-  }
-
-  return { raw, setCode, collectorNumber, language };
+  if (!best) return { raw };
+  return {
+    raw,
+    collectorNumber: best.collectorNumber,
+    ...(best.setCode ? { setCode: best.setCode } : {}),
+    ...(best.language ? { language: best.language } : {})
+  };
 }
 
 function normalizeComparable(value: string | undefined): string {

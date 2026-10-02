@@ -1,6 +1,6 @@
 # Arcane Decksmith – MTG Sammlung & Deckbuilder
 
-Produktionsnahes, statisches React/TypeScript-Projekt für GitHub Pages + Firebase Auth/Firestore + Scryfall.
+React/TypeScript-Projekt (Vite) für GitHub Pages + Firebase Auth/Firestore + Scryfall.
 
 ## Wichtige Annahmen
 
@@ -8,37 +8,57 @@ Produktionsnahes, statisches React/TypeScript-Projekt für GitHub Pages + Fireba
 - Decks werden aus der Sammlung gebaut. Es werden keine fehlenden Karten automatisch aus Scryfall „herbeigezaubert“.
 - Commander wird automatisch nur als einzelner Commander gewählt. Partner-/Friends-Forever-/Doctor's-Companion-Kandidaten werden erkannt, ein Paar wird aber bewusst nicht automatisch kombiniert.
 - Standard-Decks werden nach Scryfalls `legalities.standard` gefiltert; die offizielle Mindestgröße ist 60 Karten, Sideboard maximal 15.
-- Commander wird als 99 + 1 modelliert.
+- Commander wird als 99 + 1 modelliert (`deckStats().total` zählt Hauptdeck + Commander).
 - Preise sind absichtlich nicht Teil des Deck-Scorings.
-- Die lokale generative KI ist optional: Transformers.js lädt beim ersten Aufruf ein kleines Modell in den Browser und cached es. Wenn das Gerät/Netzwerk dies nicht zulässt, bleibt der regelbasierte Erklärtext erhalten.
+- Importe raten keine Druckversionen: Set + Collector Number sind autoritativ. Passen mehrere Druckversionen, wird die Zeile beim Sammlungsimport als „mehrdeutig“ markiert und nicht übernommen. Große Importe (über 100 unterschiedliche Einträge) laufen ausschließlich, atomar und deterministisch über Scryfall Bulk Data.
+- Precon-Decks (Kartensuche → „Precon-Deck hinzufügen“) stammen aus [MTGJSON](https://mtgjson.com). Jede Karte wird über ihre Scryfall-ID bzw. Set + Collector Number exakt aufgelöst.
+
+## KI-Analyse und Deck-Intelligence
+
+Die KI-Erklärungen und Zusatzdaten (Turnier-, Combo- und Community-Signale) laufen über einen **Cloudflare Worker** (nicht im Browser). Die Standard-URL ist `https://arcane-decksmith-ai.arcane-decksmith-api.workers.dev`; sie lässt sich über `VITE_AI_WORKER_URL` bzw. `VITE_DECK_INTELLIGENCE_URL` überschreiben.
+
+Der Quellcode des Workers liegt **nicht** in diesem Repository. Der Client sendet das Firebase-ID-Token als `Authorization: Bearer …`; Tokenprüfung und Rate-Limits müssen im Worker umgesetzt sein. Ist der Worker nicht erreichbar, zeigt die App einen Hinweis und arbeitet nur mit den Sammlungsdaten weiter.
 
 ## Lokal starten
 
 1. Node.js 22 installieren.
-2. `npm install`
-3. `.env.example` nach `.env.local` kopieren.
-4. Firebase-Konfiguration eintragen.
-5. `npm run dev`
-6. Tests: `npm test`
-7. Build: `npm run build`
+2. `npm ci`
+3. `.env.example` nach `.env.local` kopieren und die Firebase-Konfiguration eintragen.
+4. `npm run dev`
+5. Prüfen: `npm run check`, `npm run lint`, `npm test`, `npm run build`
+
+### Umgebungsvariablen
+
+| Variable | Pflicht | Zweck |
+| --- | --- | --- |
+| `VITE_FIREBASE_*` (6 Werte) | ja (sonst nur Demo-Modus) | Firebase Web-Konfiguration |
+| `VITE_IMPORT_PROXY_URL` | nein | Eigener HTTP-Proxy für den URL-Import (`GET ?url=…`, liefert JSON). Ohne Angabe wird die Firebase Callable Function `importExternalDeckUrl` genutzt. |
+| `VITE_AI_WORKER_URL` | nein | Basis-URL des KI-Workers |
+| `VITE_DECK_INTELLIGENCE_URL` | nein | URL des Deck-Intelligence-Endpunkts |
+| `VITE_SITE_URL` | nein | Öffentliche Basis-URL der Seite; damit wird `og:image` mit absoluter URL erzeugt (im GitHub-Workflow automatisch gesetzt). |
 
 ## Firebase
 
-- Authentication: Email/Password aktivieren.
-- Firestore Database anlegen.
-- Inhalt von `firestore.rules` als Firestore Security Rules veröffentlichen.
-- Keine Cloud Functions, kein Storage erforderlich.
+- Authentication: E-Mail/Passwort aktivieren (Registrierung und „Passwort vergessen“ sind im Anmeldeformular enthalten).
+- Firestore Database anlegen und `firestore.rules` veröffentlichen (`firebase deploy --only firestore:rules`). Die Regeln beschränken den Zugriff auf den Besitzer und prüfen Feldtypen und Größen.
+- **URL-Import (Moxfield, Archidekt, Deckstats)** benötigt die Cloud Function in `functions/` und damit den **Blaze-Plan**:
+  - `cd functions && npm install && cd .. && firebase deploy --only functions`
+  - Runtime: Node.js 22, Region `europe-west1`.
+  - Nur angemeldete Nutzer, Rate-Limit 10 Aufrufe/Minute pro Nutzer (Collection `rateLimits`, nur Admin SDK), Antwortgröße max. 5 MB, Weiterleitungen nur auf erlaubte Hosts.
+  - App Check kann mit `ENFORCE_APP_CHECK=true` in `functions/.env` erzwungen werden, sobald der Client App Check initialisiert.
+  - Moxfield blockiert automatisierte Abrufe gelegentlich; dann hilft der CSV/TXT-Export aus Moxfield.
+- Ohne Cloud Function funktionieren CSV/TXT-Import und alle anderen Funktionen weiterhin.
 
 ## GitHub Pages
 
-Repository als öffentliches Repository anlegen, Dateien committen, Actions aktivieren und unter Settings → Pages → Build and deployment → Source „GitHub Actions“ wählen. Der Workflow baut `dist` und veröffentlicht es.
+Repository anlegen, Actions aktivieren und unter Settings → Pages → Build and deployment → Source „GitHub Actions“ wählen. Der Workflow installiert mit `npm ci`, führt Typecheck, Lint und Tests aus, baut `dist` und veröffentlicht es. Die Firebase-Werte kommen aus den Repository-Secrets `VITE_FIREBASE_*`.
 
-Bei einem Repository `BENUTZER.github.io/REPO` ist `base: "./"` bewusst gesetzt, damit die Anwendung auch unter einem Unterpfad funktioniert.
+`base: "./"` ist bewusst gesetzt, damit die Anwendung auch unter einem Unterpfad (`BENUTZER.github.io/REPO`) funktioniert.
 
 ## Firebase-Konfiguration und GitHub
 
-Die Firebase Web-Konfiguration ist kein Secret im klassischen Sinn; die eigentliche Absicherung erfolgt durch Firebase Authentication und Firestore Security Rules. Trotzdem sollten Firestore Rules und Auth-Domain korrekt eingerichtet werden.
+Die Firebase Web-Konfiguration ist kein Secret im klassischen Sinn; die eigentliche Absicherung erfolgt durch Firebase Authentication und Firestore Security Rules.
 
 ## Datenschutz
 
-Kartensuche und Bilder gehen direkt an Scryfall. Die Sammlung und Decks liegen bei angemeldeten Nutzern in Firestore. Der Demo-Modus speichert ausschließlich im Browser-LocalStorage.
+Kartensuche und Bilder gehen direkt an Scryfall, Precon-Listen an MTGJSON. Die Texterkennung des Scanners (Tesseract) läuft im Browser; WASM-Kern und Sprachdaten werden beim ersten Scannen geladen. Sammlung und Decks liegen bei angemeldeten Nutzern in Firestore. Der Demo-Modus speichert ausschließlich im Browser-LocalStorage.

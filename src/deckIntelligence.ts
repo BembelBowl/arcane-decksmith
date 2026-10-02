@@ -1,4 +1,5 @@
 import { auth } from "./firebase";
+import { notifyOnce } from "./toast";
 import type {
   CardRecord,
   DeckRecord,
@@ -8,8 +9,18 @@ import type {
   DeckBuildIntelligence
 } from "./deckBuilder";
 
+// Konfigurierbar über VITE_DECK_INTELLIGENCE_URL (Standard: bestehender Cloudflare Worker).
 const INTELLIGENCE_WORKER_URL =
+  import.meta.env.VITE_DECK_INTELLIGENCE_URL?.trim() ||
   "https://arcane-decksmith-ai.arcane-decksmith-api.workers.dev/deck-intelligence";
+
+function evidenceUnavailable(detail: string): DeckEvidence {
+  notifyOnce(
+    "deck-intelligence",
+    `Zusatzdaten (Turnier-, Combo- und Community-Daten) sind gerade nicht verfügbar – ${detail}. Ergebnisse basieren nur auf deiner Sammlung.`
+  );
+  return emptyEvidence();
+}
 
 const REQUEST_TIMEOUT_MS = 12000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -414,7 +425,7 @@ async function fetchEvidence(
     idToken =
       await user.getIdToken();
   } catch {
-    return emptyEvidence();
+    return evidenceUnavailable("Anmeldung konnte nicht bestätigt werden");
   }
 
   const controller =
@@ -453,7 +464,7 @@ async function fetchEvidence(
       );
 
     if (!response.ok) {
-      return emptyEvidence();
+      return evidenceUnavailable(`Dienst antwortete mit HTTP ${response.status}`);
     }
 
     const data =
@@ -477,8 +488,12 @@ async function fetchEvidence(
     );
 
     return value;
-  } catch {
-    return emptyEvidence();
+  } catch (error) {
+    return evidenceUnavailable(
+      error instanceof DOMException && error.name === "AbortError"
+        ? "Zeitüberschreitung"
+        : "Dienst nicht erreichbar"
+    );
   } finally {
     clearTimeout(timeout);
   }

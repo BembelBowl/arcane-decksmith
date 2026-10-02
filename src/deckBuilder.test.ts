@@ -18,7 +18,10 @@ describe("deck builder",()=>{
     ];
     const d=buildDeck(cards,{name:"x",format:"commander" as const,colors:[],commander:cards[0],targetManaValue:3});
     expect(d.commanderIds).toEqual(["cmd"]);
-    expect(deckStats(d).total).toBeLessThanOrEqual(99);
+    // total = Hauptdeck + Commander; das Hauptdeck selbst darf höchstens 99 Karten enthalten.
+    expect(d.cards.some(card=>card.id==="cmd")).toBe(false);
+    expect(d.cards.reduce((sum,card)=>sum+card.count,0)).toBeLessThanOrEqual(99);
+    expect(deckStats(d).total).toBeLessThanOrEqual(100);
   });
   it("gewichtet verifizierte Turniersignale ohne Deckregeln zu umgehen",()=>{
     const land=c("land","Wastes","Basic Land — Wastes","",30);
@@ -74,7 +77,9 @@ describe("deck builder",()=>{
       .reduce((sum,card)=>sum+card.count,0);
     expect(lands).toBe(38);
     expect(deck.targetManaValue).toBeCloseTo(3.4);
-    expect(deckStats(deck).total).toBe(99);
+    expect(deck.cards.some(card=>card.id==="cmd")).toBe(false);
+    expect(deck.cards.reduce((sum,card)=>sum+card.count,0)).toBe(99);
+    expect(deckStats(deck).total).toBe(100);
   });
   it("berechnet Mana Value",()=>{
     const d={cards:[c("a","A","Creature","")].map(x=>({...x,count:2,role:"Creature",reason:"x",available:2})),sideboard:[],commanderIds:[],format:"standard" as const,id:"x",name:"x",createdAt:1,updatedAt:1,colors:[]};

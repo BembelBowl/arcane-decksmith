@@ -1,36 +1,6 @@
-function deckManaCurve(
-  deck: DeckRecord
-): Array<{label:string;count:number}> {
-  const counts=[0,0,0,0,0,0,0,0];
-
-  for(const card of deck.cards){
-    if(/\bLand\b/i.test(card.typeLine??"")){
-      continue;
-    }
-
-    const mv=Math.max(
-      0,
-      Math.floor(
-        Number.isFinite(card.manaValue)
-          ?card.manaValue
-          :0
-      )
-    );
-
-    counts[Math.min(mv,7)]+=card.count;
-  }
-
-  return counts.map((count,index)=>({
-    label:index===7?"7+":String(index),
-    count
-  }));
-}
-
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Suspense, lazy, useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import type { User } from "firebase/auth";
-import { subscribeAuth, login, logout, authMessage } from "./auth";
+import { subscribeAuth, login, logout, register, resetPassword, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
 import {
   loadCollection,
@@ -38,9 +8,25 @@ import {
   removeCard,
   removeDeck,
   saveCard,
+  saveCardsBatch,
   saveDeck,
+  firestoreClean,
+  PartialSaveError,
   uidFromEmail
 } from "./db";
+import {
+  PRICE_REFRESH_INTERVAL_MS,
+  cardMetadataChanged,
+  compactSourceCards,
+  finishCountsFor,
+  legacyFoilFlag,
+  mergeIntoCollection,
+  refreshedCardRecord,
+  upsertCards,
+  upsertDecks
+} from "./collectionState";
+import { showToast } from "./toast";
+import ToastHost from "./components/ToastHost";
 import {
   autocomplete,
   availableFinishes,
@@ -49,7 +35,6 @@ import {
   displayOracleText,
   displayTypeLine,
   euroPriceFor,
-  getCard,
   getCards,
   getCardsBySetAndCollectorNumbers,
   getPrintings,
@@ -77,8 +62,7 @@ import {
 } from "./deckBuilder";
 import {
   deckText,
-  download,
-  toCsv
+  download
 } from "./importExport";
 import {
   generateAiDeckExplanation,
@@ -93,9 +77,7 @@ import type {
   CardRecord,
   DeckCard,
   DeckRecord,
-  Format,
-  GroupBy,
-  ViewMode
+  Format
 } from "./types";
 import "./styles.css";
 import AppHeader from "./components/AppHeader";
@@ -105,9 +87,16 @@ import CollectionPage from "./pages/CollectionPage";
 import DeckLibrary from "./components/DeckLibrary";
 import DeckBoard from "./components/DeckBoard";
 import CardDetailsModal from "./components/CardDetailsModal";
-import CardScanner from "./components/CardScanner";
-import ExternalImportDialog from "./components/ExternalImportDialog";
+// Selten genutzte, große Teile erst bei Bedarf laden (Code-Splitting).
+const CardScanner = lazy(() => import("./components/CardScanner"));
+const ExternalImportDialog = lazy(() => import("./components/ExternalImportDialog"));
+const PreconImportDialog = lazy(() => import("./components/PreconImportDialog"));
+const Markdown = lazy(() => import("./components/Markdown"));
 import { useAppNavigation } from "./navigation";
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 const COLORS = ["W", "U", "B", "R", "G"];
 
@@ -119,19 +108,6 @@ const COLOR_NAMES: Record<string, string> = {
   G: "Grün"
 };
 
-const COLOR_ORDER = ["W", "U", "B", "R", "G"];
-
-const TYPE_ORDER = [
-  "Land",
-  "Kreatur",
-  "Planeswalker",
-  "Spontanzauber",
-  "Hexerei",
-  "Verzauberung",
-  "Artefakt",
-  "Schlacht",
-  "Sonstiges"
-];
 
 const EUR_FORMATTER =
   new Intl.NumberFormat(
@@ -211,94 +187,6 @@ function finishLabel(
     : "Non-Foil";
 }
 
-function finishCountsFor(
-  card: CardRecord
-): Record<CardFinish, number> {
-  const stored =
-    card.finishCounts;
-
-  if (stored) {
-    const nonfoil =
-      Math.max(
-        0,
-        Math.floor(
-          Number(
-            stored.nonfoil ?? 0
-          )
-        )
-      );
-
-    const foil =
-      Math.max(
-        0,
-        Math.floor(
-          Number(
-            stored.foil ?? 0
-          )
-        )
-      );
-
-    if (
-      nonfoil + foil > 0
-    ) {
-      return {
-        nonfoil,
-        foil
-      };
-    }
-  }
-
-  return card.foil
-    ? {
-        nonfoil: 0,
-        foil: card.count
-      }
-    : {
-        nonfoil: card.count,
-        foil: 0
-      };
-}
-
-function priceForRecord(
-  card: CardRecord,
-  finish: CardFinish
-): number | undefined {
-  return finish === "foil"
-    ? card.priceEurFoil
-    : card.priceEur;
-}
-
-function highestOwnedUnitValue(
-  card: CardRecord
-): number | undefined {
-  const counts =
-    finishCountsFor(card);
-
-  const prices: number[] = [];
-
-  if (
-    counts.nonfoil > 0 &&
-    card.priceEur !== undefined
-  ) {
-    prices.push(
-      card.priceEur
-    );
-  }
-
-  if (
-    counts.foil > 0 &&
-    card.priceEurFoil !== undefined
-  ) {
-    prices.push(
-      card.priceEurFoil
-    );
-  }
-
-  return prices.length > 0
-    ? Math.max(...prices)
-    : undefined;
-}
-
 function collectionValueForCard(
   card: CardRecord
 ): {
@@ -342,16 +230,6 @@ function collectionValueForCard(
     value,
     unpricedCopies
   };
-}
-
-function legacyFoilFlag(
-  counts:
-    Record<CardFinish, number>
-): boolean {
-  return (
-    counts.foil > 0 &&
-    counts.nonfoil === 0
-  );
 }
 
 
@@ -558,282 +436,6 @@ function commanderBracketEstimate(
 }
 
 
-type LocalDeckAnalysis = {
-  total: number;
-  mainDeck: number;
-  lands: number;
-  creatures: number;
-  artifacts: number;
-  enchantments: number;
-  instants: number;
-  sorceries: number;
-  planeswalkers: number;
-  averageManaValue: number;
-  ramp: number;
-  cardAdvantage: number;
-  interaction: number;
-  protection: number;
-  boardwipes: number;
-  tutors: number;
-  recursion: number;
-  finishers: number;
-  warnings: string[];
-};
-
-function localDeckAnalysis(
-  deck: DeckRecord,
-  pool: CardRecord[]
-): LocalDeckAnalysis {
-  const stats =
-    deckStats(deck);
-
-  const typeCounts = {
-    creatures: 0,
-    artifacts: 0,
-    enchantments: 0,
-    instants: 0,
-    sorceries: 0,
-    planeswalkers: 0
-  };
-
-  const roleCounts:
-    Record<string, number> = {};
-
-  for (
-    const deckCard
-    of deck.cards
-  ) {
-    const source =
-      pool.find(
-        card =>
-          card.id ===
-          deckCard.id
-      );
-
-    const typeLine =
-      source?.typeLine ??
-      deckCard.typeLine ??
-      "";
-
-    if (/\bCreature\b/i.test(typeLine)) {
-      typeCounts.creatures += deckCard.count;
-    }
-    if (/\bArtifact\b/i.test(typeLine)) {
-      typeCounts.artifacts += deckCard.count;
-    }
-    if (/\bEnchantment\b/i.test(typeLine)) {
-      typeCounts.enchantments += deckCard.count;
-    }
-    if (/\bInstant\b/i.test(typeLine)) {
-      typeCounts.instants += deckCard.count;
-    }
-    if (/\bSorcery\b/i.test(typeLine)) {
-      typeCounts.sorceries += deckCard.count;
-    }
-    if (/\bPlaneswalker\b/i.test(typeLine)) {
-      typeCounts.planeswalkers += deckCard.count;
-    }
-
-    const role =
-      deckCard.role &&
-      deckCard.role !==
-        "Manuell"
-        ? deckCard.role
-        : source
-          ? roleOf(source)
-          : "Sonstiges";
-
-    roleCounts[role] =
-      (roleCounts[role] ?? 0) +
-      deckCard.count;
-  }
-
-  const byRole =
-    (names: string[]) =>
-      names.reduce(
-        (sum, name) =>
-          sum +
-          (roleCounts[name] ?? 0),
-        0
-      );
-
-  const analysis:
-    LocalDeckAnalysis = {
-      total: stats.total,
-      mainDeck:
-        deck.cards.reduce(
-          (sum, card) =>
-            sum + card.count,
-          0
-        ),
-      lands: stats.lands,
-      creatures:
-        typeCounts.creatures,
-      artifacts:
-        typeCounts.artifacts,
-      enchantments:
-        typeCounts.enchantments,
-      instants:
-        typeCounts.instants,
-      sorceries:
-        typeCounts.sorceries,
-      planeswalkers:
-        typeCounts.planeswalkers,
-      averageManaValue:
-        stats.averageManaValue,
-      ramp:
-        byRole(["Ramp"]),
-      cardAdvantage:
-        byRole([
-          "Card Advantage"
-        ]),
-      interaction:
-        byRole([
-          "Interaction"
-        ]),
-      protection:
-        byRole([
-          "Protection"
-        ]),
-      boardwipes:
-        byRole([
-          "Boardwipe"
-        ]),
-      tutors:
-        byRole([
-          "Tutor"
-        ]),
-      recursion:
-        byRole([
-          "Recursion"
-        ]),
-      finishers:
-        byRole([
-          "Finisher"
-        ]),
-      warnings: []
-    };
-
-  if (
-    deck.format ===
-    "commander"
-  ) {
-    if (analysis.total !== 100) {
-      analysis.warnings.push(
-        `Commander-Deckgröße: ${analysis.total}/100 Karten.`
-      );
-    }
-
-    if (analysis.lands < 34) {
-      analysis.warnings.push(
-        `Mit ${analysis.lands} Ländern ist die Manabasis für viele Commander-Decks eher knapp.`
-      );
-    } else if (
-      analysis.lands > 40
-    ) {
-      analysis.warnings.push(
-        `Mit ${analysis.lands} Ländern liegt die Manabasis über dem üblichen Bereich vieler Commander-Decks.`
-      );
-    }
-
-    if (analysis.ramp < 8) {
-      analysis.warnings.push(
-        `Nur ${analysis.ramp} Ramp-Karten erkannt. Als grobe Heuristik sind häufig etwa 8–12 sinnvoll.`
-      );
-    }
-
-    if (
-      analysis.cardAdvantage < 8
-    ) {
-      analysis.warnings.push(
-        `Nur ${analysis.cardAdvantage} Karten für Card Advantage erkannt.`
-      );
-    }
-
-    if (
-      analysis.interaction < 8
-    ) {
-      analysis.warnings.push(
-        `Nur ${analysis.interaction} Interaktionskarten erkannt.`
-      );
-    }
-
-    if (
-      analysis.boardwipes < 2
-    ) {
-      analysis.warnings.push(
-        `Nur ${analysis.boardwipes} Boardwipe-Karten erkannt.`
-      );
-    }
-
-    if (
-      analysis.averageManaValue >
-      3.6
-    ) {
-      analysis.warnings.push(
-        `Der durchschnittliche Mana Value von ${analysis.averageManaValue} ist relativ hoch.`
-      );
-    }
-  } else {
-    if (analysis.total < 60) {
-      analysis.warnings.push(
-        `Standard-Deckgröße: ${analysis.total}/60 Karten.`
-      );
-    }
-
-    const landRatio =
-      analysis.mainDeck > 0
-        ? analysis.lands /
-          analysis.mainDeck
-        : 0;
-
-    if (
-      analysis.mainDeck >= 50 &&
-      landRatio < 0.33
-    ) {
-      analysis.warnings.push(
-        `Der Länderanteil liegt bei nur ${Math.round(landRatio * 100)} %.`
-      );
-    }
-
-    if (
-      analysis.mainDeck >= 50 &&
-      landRatio > 0.47
-    ) {
-      analysis.warnings.push(
-        `Der Länderanteil liegt bei ${Math.round(landRatio * 100)} % und damit relativ hoch.`
-      );
-    }
-
-    if (
-      analysis.interaction < 4 &&
-      analysis.mainDeck >= 50
-    ) {
-      analysis.warnings.push(
-        `Nur ${analysis.interaction} Interaktionskarten erkannt.`
-      );
-    }
-
-    if (
-      analysis.averageManaValue >
-      3.5
-    ) {
-      analysis.warnings.push(
-        `Der durchschnittliche Mana Value von ${analysis.averageManaValue} ist für viele Standard-Decks relativ hoch.`
-      );
-    }
-  }
-
-  if (
-    analysis.warnings.length === 0
-  ) {
-    analysis.warnings.push(
-      "Die lokale Heuristik erkennt aktuell keine auffälligen Strukturprobleme."
-    );
-  }
-
-  return analysis;
-}
 
 function deckForAiAnalysis(
   deck: DeckRecord,
@@ -938,72 +540,6 @@ function collectorNumberCounts(
   return counts;
 }
 
-function colorGroupName(colors: string[]): string {
-  if (!colors.length) {
-    return "Farblos";
-  }
-
-  const ordered = COLOR_ORDER.filter(color =>
-    colors.includes(color)
-  );
-
-  return ordered
-    .map(color => COLOR_NAMES[color] ?? color)
-    .join(" / ");
-}
-
-function primaryTypeGroup(
-  typeLine: string | undefined
-): string {
-  const type = (typeLine ?? "").toLowerCase();
-
-  if (type.includes("land")) return "Land";
-  if (type.includes("creature")) return "Kreatur";
-  if (type.includes("planeswalker")) return "Planeswalker";
-  if (type.includes("instant")) return "Spontanzauber";
-  if (type.includes("sorcery")) return "Hexerei";
-  if (type.includes("enchantment")) return "Verzauberung";
-  if (type.includes("artifact")) return "Artefakt";
-  if (type.includes("battle")) return "Schlacht";
-
-  return "Sonstiges";
-}
-
-function compareGroupNames(
-  a: string,
-  b: string,
-  group: GroupBy
-): number {
-  if (group === "manaValue") {
-    const av = Number(a.replace("MV ", ""));
-    const bv = Number(b.replace("MV ", ""));
-
-    return av - bv;
-  }
-
-  if (group === "type") {
-    const ai = TYPE_ORDER.indexOf(a);
-    const bi = TYPE_ORDER.indexOf(b);
-
-    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-  }
-
-  if (group === "color") {
-    if (a === "Farblos" && b !== "Farblos") return -1;
-    if (b === "Farblos" && a !== "Farblos") return 1;
-
-    const ac = a.split(" / ").length;
-    const bc = b.split(" / ").length;
-
-    if (ac !== bc) return ac - bc;
-  }
-
-  return a.localeCompare(b, "de", {
-    numeric: true,
-    sensitivity: "base"
-  });
-}
-
 function App() {
   const [auth, setAuth] = useState<{
     user: User | null;
@@ -1054,36 +590,80 @@ function App() {
   );
 }
 
+type AuthMode = "login" | "register" | "reset";
+
 function Auth({
   onDemo
 }: {
   onDemo: (email: string) => void;
 }) {
+  const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
+  const [pwRepeat, setPwRepeat] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [info, setInfo] = useState("");
 
-  const submit = async () => {
+  const switchMode = (next: AuthMode) => {
+    setMode(next);
+    setMsg("");
+    setInfo("");
+  };
+
+  const canSubmit =
+    !busy &&
+    firebaseConfigured &&
+    Boolean(email) &&
+    (mode === "reset" || Boolean(pw)) &&
+    (mode !== "register" || Boolean(pwRepeat));
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+
     setBusy(true);
     setMsg("");
+    setInfo("");
 
     try {
-      await login(email, pw);
-    } catch (e: any) {
-      setMsg(authMessage(e?.code ?? ""));
+      if (mode === "login") {
+        await login(email, pw);
+      } else if (mode === "register") {
+        if (pw !== pwRepeat) {
+          setMsg("Die Passwörter stimmen nicht überein.");
+          return;
+        }
+        await register(email, pw);
+      } else {
+        await resetPassword(email);
+        setInfo(
+          "Falls ein Konto mit dieser E-Mail-Adresse existiert, wurde eine E-Mail zum Zurücksetzen des Passworts gesendet."
+        );
+      }
+    } catch (e: unknown) {
+      setMsg(authMessage((e as { code?: string } | null)?.code ?? ""));
     } finally {
       setBusy(false);
     }
   };
 
+  const title =
+    mode === "login"
+      ? "Anmelden"
+      : mode === "register"
+        ? "Konto erstellen"
+        : "Passwort zurücksetzen";
+
   return (
     <div className="auth-shell">
-      <div className="auth-card">
+      <form className="auth-card" onSubmit={submit} noValidate>
         <img
           className="brand-logo"
-          src="./ad_logo.png"
+          src="./ad_logo_192.png"
           alt="Arcane Decksmith Logo"
+          width={96}
+          height={96}
         />
 
         <h1>Arcane Decksmith</h1>
@@ -1099,6 +679,8 @@ function Auth({
           </div>
         )}
 
+        <h2 className="auth-title">{title}</h2>
+
         <label>
           E-Mail
           <input
@@ -1106,38 +688,84 @@ function Auth({
             onChange={e => setEmail(e.target.value)}
             type="email"
             autoComplete="email"
+            required
           />
         </label>
 
-        <label>
-          Passwort
-          <input
-            value={pw}
-            onChange={e => setPw(e.target.value)}
-            type="password"
-            autoComplete="current-password"
-          />
-        </label>
+        {mode !== "reset" && (
+          <label>
+            Passwort
+            <input
+              value={pw}
+              onChange={e => setPw(e.target.value)}
+              type="password"
+              autoComplete={mode === "register" ? "new-password" : "current-password"}
+              minLength={6}
+              required
+            />
+          </label>
+        )}
+
+        {mode === "register" && (
+          <label>
+            Passwort wiederholen
+            <input
+              value={pwRepeat}
+              onChange={e => setPwRepeat(e.target.value)}
+              type="password"
+              autoComplete="new-password"
+              minLength={6}
+              required
+            />
+          </label>
+        )}
 
         {msg && (
-          <div className="error">
+          <div className="error" role="alert">
             {msg}
           </div>
         )}
 
+        {info && (
+          <div className="notice" role="status">
+            {info}
+          </div>
+        )}
+
         <button
+          type="submit"
           className="primary full"
-          disabled={busy || !email || !pw}
-          onClick={submit}
+          disabled={!canSubmit}
         >
-          {busy ? "…" : "Anmelden"}
+          {busy ? "…" : title}
         </button>
+
+        {firebaseConfigured && (
+          <div className="auth-links">
+            {mode !== "login" && (
+              <button type="button" className="link-button" onClick={() => switchMode("login")}>
+                Zur Anmeldung
+              </button>
+            )}
+            {mode !== "register" && (
+              <button type="button" className="link-button" onClick={() => switchMode("register")}>
+                Neues Konto erstellen
+              </button>
+            )}
+            {mode !== "reset" && (
+              <button type="button" className="link-button" onClick={() => switchMode("reset")}>
+                Passwort vergessen?
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="divider">
           oder
         </div>
 
         <button
+          type="button"
           className="secondary full"
           onClick={() =>
             onDemo(email || "demo@example.com")
@@ -1145,7 +773,12 @@ function Auth({
         >
           Lokalen Demo-Modus verwenden
         </button>
-      </div>
+
+        <p className="muted auth-demo-hint">
+          Demo-Daten werden nur in diesem Browser gespeichert. Ohne E-Mail-Adresse
+          teilen sich alle Demo-Nutzer dieses Browsers denselben Speicher.
+        </p>
+      </form>
     </div>
   );
 }
@@ -1175,140 +808,101 @@ function Main({
   } = useAppNavigation();
 
   const [busy, setBusy] = useState(true);
-  const [toast, setToast] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [saveProgress, setSaveProgress] =
+    useState<{ saved: number; total: number } | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     void (async () => {
       setBusy(true);
+      setLoadError("");
 
       try {
-        const loadedCollection =
-          await loadCollection(uid);
+        const [loadedCollection, loadedDecks] =
+          await Promise.all([
+            loadCollection(uid),
+            loadDecks(uid)
+          ]);
 
-        const loadedDecks =
-          await loadDecks(uid);
+        if (cancelled) return;
 
         setCollection(loadedCollection);
         setDecks(loadedDecks);
 
-        if (
-          loadedCollection.length >
-          0
-        ) {
-          void (async () => {
-            try {
-              const freshCards =
-                await getCards(
-                  loadedCollection.map(
-                    card =>
-                      card.id
-                  )
-                );
-
-              const freshById =
-                new Map(
-                  freshCards.map(
-                    card => [
-                      card.id,
-                      card
-                    ] as const
-                  )
-                );
-
-              const refreshedCollection =
-  loadedCollection.map(
-    card => {
-      const fresh =
-        freshById.get(
-          card.id
-        );
-
-      if (!fresh) {
-        return card;
-      }
-
-      const counts =
-        finishCountsFor(
-          card
-        );
-
-      return {
-        ...card,
-        setName:
-          fresh.setName ??
-          card.setName,
-
-        finishCounts:
-          counts,
-
-        availableFinishes:
-          fresh.availableFinishes &&
-          fresh.availableFinishes.length > 0
-            ? fresh.availableFinishes
-            : card.availableFinishes,
-
-        ...(fresh.priceEur !==
-        undefined
-          ? {
-              priceEur:
-                fresh.priceEur
-            }
-          : {}),
-
-        ...(fresh.priceEurFoil !==
-        undefined
-          ? {
-              priceEurFoil:
-                fresh.priceEurFoil
-            }
-          : {}),
-
-        priceUpdatedAt:
-          fresh.priceUpdatedAt ??
-          Date.now(),
-
-        gameChanger:
-          fresh.gameChanger ??
-          card.gameChanger,
-
-        foil:
-          legacyFoilFlag(
-            counts
-          )
-      };
-    }
-  );
-
-setCollection(
-  refreshedCollection
-);
-
-for (
-  const card
-  of refreshedCollection
-) {
-  await saveCard(
-    uid,
-    card
-  );
-}
-            } catch {
-              // Die gespeicherten Daten bleiben nutzbar, falls Scryfall gerade nicht erreichbar ist.
-            }
-          })();
+        void refreshStalePrices(loadedCollection);
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(
+            `Daten konnten nicht geladen werden: ${errorMessage(error)}`
+          );
         }
       } finally {
-        setBusy(false);
+        if (!cancelled) setBusy(false);
       }
     })();
+
+    // Preise/Setnamen/Finishes höchstens einmal pro Tag aktualisieren und nur
+    // tatsächlich geänderte Karten gesammelt zurückschreiben.
+    async function refreshStalePrices(loadedCollection: CardRecord[]) {
+      const now = Date.now();
+      const stale = loadedCollection.filter(
+        card =>
+          !card.priceUpdatedAt ||
+          now - card.priceUpdatedAt > PRICE_REFRESH_INTERVAL_MS
+      );
+
+      if (stale.length === 0) return;
+
+      try {
+        const freshCards =
+          await getCards(stale.map(card => card.id));
+
+        if (cancelled) return;
+
+        const freshById =
+          new Map(freshCards.map(card => [card.id, card] as const));
+
+        const changed: CardRecord[] = [];
+
+        for (const card of stale) {
+          const fresh = freshById.get(card.id);
+          if (!fresh) continue;
+
+          const refreshed = refreshedCardRecord(card, fresh);
+          if (cardMetadataChanged(card, refreshed)) {
+            changed.push(refreshed);
+          }
+        }
+
+        if (changed.length === 0) return;
+
+        const saved = await saveCardsBatch(uid, changed);
+        if (!cancelled) {
+          setCollection(current => upsertCards(current, saved));
+        }
+      } catch (error) {
+        // Die gespeicherten Daten bleiben nutzbar, falls Scryfall/Firestore gerade nicht erreichbar ist.
+        console.warn("Preisaktualisierung fehlgeschlagen:", error);
+        if (!cancelled) {
+          showToast(
+            "Preise konnten nicht aktualisiert werden. Es werden die zuletzt gespeicherten Werte angezeigt.",
+            "info"
+          );
+        }
+      }
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [uid]);
 
   const persistCard =
     async (c: CardRecord) => {
       const cleanCard =
-        JSON.parse(
-          JSON.stringify(c)
-        ) as CardRecord;
+        firestoreClean(c);
 
       await saveCard(
         uid,
@@ -1316,8 +910,52 @@ for (
       );
 
       setCollection(
-        await loadCollection(uid)
+        current => upsertCards(current, [cleanCard])
       );
+    };
+
+  /**
+   * Speichert viele Karten gesammelt (Firestore-Batches) und aktualisiert den
+   * State lokal. Bei Teilfehlern werden die bereits gespeicherten Karten
+   * übernommen und der Fehler weitergereicht.
+   */
+  const persistCards =
+    async (cards: CardRecord[]) => {
+      const cleanCards =
+        cards.map(card => firestoreClean(card));
+
+      setSaveProgress({ saved: 0, total: cleanCards.length });
+
+      try {
+        const saved =
+          await saveCardsBatch(
+            uid,
+            cleanCards,
+            (done, total) => setSaveProgress({ saved: done, total })
+          );
+
+        setCollection(
+          current => upsertCards(current, saved)
+        );
+      } catch (error) {
+        if (error instanceof PartialSaveError) {
+          setCollection(
+            current => upsertCards(current, error.saved)
+          );
+        }
+        throw error;
+      } finally {
+        setSaveProgress(null);
+      }
+    };
+
+  /** Addiert neue Karten (inkl. Foil-Aufteilung) auf den vorhandenen Bestand. */
+  const addCardsToCollection =
+    async (incomingCards: CardRecord[]) => {
+      const merged =
+        mergeIntoCollection(collection, incomingCards);
+
+      await persistCards(merged);
     };
 
   const persistDeck =
@@ -1328,12 +966,11 @@ for (
         // Objekten. Durch die JSON-Rundreise werden nur serialisierbare Werte
         // gespeichert, ohne die Deckstruktur zu verändern.
         const cleanDeck =
-          JSON.parse(
-            JSON.stringify({
-              ...d,
-              updatedAt: Date.now()
-            })
-          ) as DeckRecord;
+          firestoreClean({
+            ...d,
+            sourceCards: compactSourceCards(d.sourceCards),
+            updatedAt: Date.now()
+          });
 
         await saveDeck(
           uid,
@@ -1341,29 +978,20 @@ for (
         );
 
         setDecks(
-          await loadDecks(uid)
+          current => upsertDecks(current, cleanDeck)
         );
 
         navigate("decks");
-        setToast("Deck gespeichert.");
-
-        setTimeout(
-          () => setToast(""),
-          2200
-        );
+        showToast("Deck gespeichert.", "success");
       } catch (error) {
         console.error(
           "Deck konnte nicht gespeichert werden:",
           error
         );
 
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Unbekannter Fehler";
-
-        alert(
-          `Deck konnte nicht gespeichert werden: ${message}`
+        showToast(
+          `Deck konnte nicht gespeichert werden: ${errorMessage(error)}`,
+          "error"
         );
 
         throw error;
@@ -1375,7 +1003,7 @@ for (
       await removeCard(uid, id);
 
       setCollection(
-        await loadCollection(uid)
+        current => current.filter(card => card.id !== id)
       );
     };
 
@@ -1384,7 +1012,7 @@ for (
       await removeDeck(uid, id);
 
       setDecks(
-        await loadDecks(uid)
+        current => current.filter(deck => deck.id !== id)
       );
     };
 
@@ -1404,9 +1032,11 @@ for (
         }
       />
 
-      {toast && (
-        <div className="toast">
-          {toast}
+      <ToastHost />
+
+      {saveProgress && (
+        <div className="save-progress" role="status" aria-live="polite">
+          Speichere {saveProgress.saved}/{saveProgress.total} Karten…
         </div>
       )}
 
@@ -1417,6 +1047,15 @@ for (
               Daten werden geladen…
             </div>
           )
+          : loadError
+            ? (
+              <div className="panel" role="alert">
+                <p>{loadError}</p>
+                <button type="button" onClick={() => window.location.reload()}>
+                  Erneut versuchen
+                </button>
+              </div>
+            )
           : page === "home"
             ? (
               <HomePage
@@ -1439,40 +1078,11 @@ for (
                 onChange={persistCard}
                 onDelete={delCard}
                 onImportCards={async importedCards => {
-                  const byId = new Map<string, CardRecord>(collection.map((card: CardRecord) => [card.id, card]));
-
-                  for (const incoming of importedCards) {
-                    const existing = byId.get(incoming.id);
-
-                    if (!existing) {
-                      await saveCard(uid, incoming);
-                      byId.set(incoming.id, incoming);
-                      continue;
-                    }
-
-                    const current = finishCountsFor(existing);
-                    const added = finishCountsFor(incoming);
-                    const nextCounts = {
-                      nonfoil: current.nonfoil + added.nonfoil,
-                      foil: current.foil + added.foil
-                    };
-
-                    const merged: CardRecord = {
-                      ...existing,
-                      ...incoming,
-                      count: existing.count + incoming.count,
-                      addedAt: existing.addedAt,
-                      updatedAt: Date.now(),
-                      finishCounts: nextCounts,
-                      foil: legacyFoilFlag(nextCounts)
-                    };
-
-                    await saveCard(uid, merged);
-                    byId.set(merged.id, merged);
-                  }
-
-                  setCollection(await loadCollection(uid));
-                  setToast(`${importedCards.reduce((sum, card) => sum + card.count, 0)} Karte(n) importiert.`);
+                  await addCardsToCollection(importedCards);
+                  showToast(
+                    `${importedCards.reduce((sum, card) => sum + card.count, 0)} Karte(n) importiert.`,
+                    "success"
+                  );
                 }}
               />
             )
@@ -1481,13 +1091,11 @@ for (
 <Search
   cards={collection}
   onBulkApply={async next => {
-    for (const c of next) {
-      await saveCard(uid, c);
-    }
-
-    setCollection(
-      await loadCollection(uid)
-    );
+    await persistCards(next);
+    showToast(`${next.length} Druckversion(en) gespeichert.`, "success");
+  }}
+  onAddCards={async incoming => {
+    await addCardsToCollection(incoming);
   }}
   onAdd={async (
     c,
@@ -1563,8 +1171,9 @@ for (
           Date.now()
       });
 
-      setToast(
-        `${canonical.name}: ${finishLabel(finish)} hinzugefügt · Anzahl ${existing.count + 1}.`
+      showToast(
+        `${canonical.name}: ${finishLabel(finish)} hinzugefügt · Anzahl ${existing.count + 1}.`,
+        "success"
       );
     } else {
       const fresh =
@@ -1578,26 +1187,20 @@ for (
         fresh
       );
 
-      setToast(
-        `${canonical.name} (${finishLabel(finish)}) wurde zur Sammlung hinzugefügt.`
+      showToast(
+        `${canonical.name} (${finishLabel(finish)}) wurde zur Sammlung hinzugefügt.`,
+        "success"
       );
     }
-
-      setTimeout(
-        () =>
-          setToast(""),
-        2200
-      );
     } catch (error) {
       console.error(
         "Karte konnte nicht zur Sammlung hinzugefügt werden:",
         error
       );
 
-      alert(
-        error instanceof Error
-          ? `Karte konnte nicht hinzugefügt werden: ${error.message}`
-          : "Karte konnte nicht hinzugefügt werden."
+      showToast(
+        `Karte konnte nicht hinzugefügt werden: ${errorMessage(error)}`,
+        "error"
       );
     }
   }}
@@ -1634,12 +1237,16 @@ for (
 function Search({
   cards,
   onAdd,
+  onAddCards,
   onBulkApply
 }: {
   cards: CardRecord[];
   onAdd: (
     c: ScryfallCard,
     finish: CardFinish
+  ) => Promise<void>;
+  onAddCards: (
+    c: CardRecord[]
   ) => Promise<void>;
   onBulkApply: (
     c: CardRecord[]
@@ -1680,8 +1287,8 @@ function Search({
       setResults(
         await searchCards(q)
       );
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      showToast(`Suche fehlgeschlagen: ${errorMessage(e)}`, "error");
     } finally {
       setBusy(false);
     }
@@ -1780,8 +1387,8 @@ function Search({
                 setResults(
                   await searchCards(s)
                 );
-              } catch (e: any) {
-                alert(e.message);
+              } catch (e: unknown) {
+                showToast(`Suche fehlgeschlagen: ${errorMessage(e)}`, "error");
               } finally {
                 setBusy(false);
               }
@@ -1797,6 +1404,7 @@ function Search({
       cards={cards}
       onBulkApply={onBulkApply}
       onAdd={onAdd}
+      onAddCards={onAddCards}
     />
 
     {busy
@@ -1846,7 +1454,8 @@ function isSmartphoneOrTablet(): boolean {
 function SearchCollectionTools({
   cards,
   onBulkApply,
-  onAdd
+  onAdd,
+  onAddCards
 }: {
   cards: CardRecord[];
   onBulkApply: (
@@ -1856,7 +1465,12 @@ function SearchCollectionTools({
     c: ScryfallCard,
     finish: CardFinish
   ) => Promise<void>;
+  onAddCards: (
+    c: CardRecord[]
+  ) => Promise<void>;
 }) {
+  const [preconOpen, setPreconOpen] =
+    useState(false);
   const [scannerOpen, setScannerOpen] =
     useState(false);
   const [scannerAvailable] =
@@ -1918,8 +1532,9 @@ function SearchCollectionTools({
         "Scryfall-Sets konnten nicht geladen werden:",
         error
       );
-      alert(
-        "Die Set-Liste konnte nicht von Scryfall geladen werden."
+      showToast(
+        "Die Set-Liste konnte nicht von Scryfall geladen werden.",
+        "error"
       );
     } finally {
       setBulkSetsBusy(false);
@@ -2143,8 +1758,9 @@ function SearchCollectionTools({
         "Bulk-Hinzufügen fehlgeschlagen:",
         error
       );
-      alert(
-        "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden."
+      showToast(
+        "Die Collector Numbers konnten nicht vollständig bei Scryfall geprüft werden.",
+        "error"
       );
     } finally {
       setBulkBusy(false);
@@ -2179,6 +1795,13 @@ function SearchCollectionTools({
           onClick={toggleBulkAdd}
         >
           Bulk hinzufügen
+        </button>
+        <button
+          className="secondary"
+          type="button"
+          onClick={() => setPreconOpen(true)}
+        >
+          Precon-Deck hinzufügen
         </button>
         {scannerAvailable && (
           <button
@@ -2349,12 +1972,30 @@ function SearchCollectionTools({
         </div>
       )}
 
-      {scannerAvailable && (
-        <CardScanner
-          open={scannerOpen}
-          onClose={() => setScannerOpen(false)}
-          onAdd={onAdd}
-        />
+      {scannerAvailable && scannerOpen && (
+        <Suspense fallback={<div className="loading">Scanner wird geladen…</div>}>
+          <CardScanner
+            open={scannerOpen}
+            onClose={() => setScannerOpen(false)}
+            onAdd={onAdd}
+          />
+        </Suspense>
+      )}
+
+      {preconOpen && (
+        <Suspense fallback={<div className="loading">Precon-Auswahl wird geladen…</div>}>
+          <PreconImportDialog
+            collection={cards}
+            onClose={() => setPreconOpen(false)}
+            onAddCards={async incoming => {
+              await onAddCards(incoming);
+              showToast(
+                `${incoming.reduce((sum, card) => sum + card.count, 0)} Karte(n) aus dem Precon-Deck hinzugefügt.`,
+                "success"
+              );
+            }}
+          />
+        </Suspense>
       )}
     </>
   );
@@ -2418,6 +2059,8 @@ function SearchCard({
     setPrintings([]);
     setShowPrintings(false);
     setPrintingError("");
+    // Bewusst nur bei Wechsel der Karten-ID zurücksetzen, nicht bei jeder neuen Objektreferenz.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id]);
 
   useEffect(() => {
@@ -2433,6 +2076,8 @@ function SearchCard({
           : finishes[0] ??
             "nonfoil"
     );
+    // Nur bei Wechsel des Printings neu abgleichen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCard.id]);
 
   const selectedFinishes =
@@ -2806,6 +2451,7 @@ function TuningSlider({
           )
         }
         aria-label={label}
+        aria-valuetext={valueText}
       />
 
       <div className="tuning-scale">
@@ -4136,12 +3782,14 @@ function Decks({
           onImportDeck={() => setImportDeckOpen(true)}
         />
         {importDeckOpen && (
-          <ExternalImportDialog
-            mode="deck"
-            pool={pool}
-            onClose={() => setImportDeckOpen(false)}
-            onImportDeck={onSave}
-          />
+          <Suspense fallback={<div className="loading">Import wird geladen…</div>}>
+            <ExternalImportDialog
+              mode="deck"
+              pool={pool}
+              onClose={() => setImportDeckOpen(false)}
+              onImportDeck={onSave}
+            />
+          </Suspense>
         )}
       </>
     );
@@ -4331,7 +3979,9 @@ function Decks({
 
       {analysis && (
         <div className="ai-box analysis-box markdown-content deck-detail-analysis">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysis}</ReactMarkdown>
+          <Suspense fallback={<p className="muted">Analyse wird dargestellt…</p>}>
+            <Markdown>{analysis}</Markdown>
+          </Suspense>
         </div>
       )}
 
@@ -5716,13 +5366,9 @@ function DeckEditor({
 
       {analysisText && (
         <div className="ai-box analysis-box markdown-content">
-          <ReactMarkdown
-            remarkPlugins={[
-              remarkGfm
-            ]}
-          >
-            {analysisText}
-          </ReactMarkdown>
+          <Suspense fallback={<p className="muted">Analyse wird dargestellt…</p>}>
+            <Markdown>{analysisText}</Markdown>
+          </Suspense>
         </div>
       )}
     </section>
