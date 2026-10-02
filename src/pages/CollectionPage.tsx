@@ -1,5 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import CardDetailsModal from "../components/CardDetailsModal";
+import OfferToMarketDialog from "../components/OfferToMarketDialog";
+import { offeredByCardId, type MarketListing, type OfferInput } from "../marketplace";
 import { getSets, type ScryfallSet } from "../scryfall";
 import { download, toCsv } from "../importExport";
 import type {
@@ -183,13 +185,20 @@ type CollectionPageProps = {
   onChange: (card: CardRecord) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onImportCards: (cards: CardRecord[]) => Promise<void>;
+  /** Marketplace (nur mit Konto): Angebote, Anzeigename und Speichern. */
+  market?: {
+    listings: MarketListing[];
+    displayName: string;
+    onSave: (offers: OfferInput[], displayName: string) => Promise<void>;
+  };
 };
 
 export default function CollectionPage({
   cards,
   onChange,
   onDelete,
-  onImportCards
+  onImportCards,
+  market
 }: CollectionPageProps) {
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<GroupBy>("none");
@@ -199,6 +208,7 @@ export default function CollectionPage({
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [setCatalog, setSetCatalog] = useState<ScryfallSet[]>([]);
   const [importOpen, setImportOpen] = useState(false);
+  const [offerOpen, setOfferOpen] = useState(false);
 
   const [colorFilters, setColorFilters] = useState<Set<string>>(new Set());
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
@@ -220,6 +230,13 @@ export default function CollectionPage({
       active = false;
     };
   }, []);
+
+  const offered = useMemo(() => offeredByCardId(market?.listings ?? []), [market?.listings]);
+
+  const selectedCards = useMemo(
+    () => cards.filter(card => selected.has(card.id)),
+    [cards, selected]
+  );
 
   const selectedCard = useMemo(
     () => cards.find(card => card.id === selectedCardId) ?? null,
@@ -832,6 +849,12 @@ export default function CollectionPage({
 
                   <div className="collection-card-count">{card.count}×</div>
 
+                  {offered.has(card.id) && (
+                    <div className="collection-card-offer" title="Im Marketplace angeboten">
+                      Tausch: {offered.get(card.id)}×
+                    </div>
+                  )}
+
                   {card.imageUri ? (
                     <img src={card.imageUri} alt={card.name} loading="lazy" />
                   ) : (
@@ -855,6 +878,11 @@ export default function CollectionPage({
       {selected.size > 0 && (
         <div className="bulkbar">
           {selected.size} ausgewählt
+          {market && (
+            <button type="button" onClick={() => setOfferOpen(true)}>
+              Zum Tausch anbieten
+            </button>
+          )}
           <button
             type="button"
             onClick={async () => {
@@ -878,6 +906,19 @@ export default function CollectionPage({
             onImportCollection={onImportCards}
           />
         </Suspense>
+      )}
+
+      {offerOpen && market && (
+        <OfferToMarketDialog
+          cards={selectedCards}
+          listings={market.listings}
+          displayName={market.displayName}
+          onClose={() => setOfferOpen(false)}
+          onSave={async (offers, name) => {
+            await market.onSave(offers, name);
+            setSelected(new Set());
+          }}
+        />
       )}
 
       {selectedCard && (

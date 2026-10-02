@@ -5,14 +5,16 @@ export type AppPage =
   | "collection"
   | "search"
   | "builder"
-  | "decks";
+  | "decks"
+  | "marketplace";
 
 export const APP_PAGE_HASHES: Record<AppPage, string> = {
   home: "#/",
   collection: "#/collection",
   search: "#/search",
   builder: "#/build",
-  decks: "#/decks"
+  decks: "#/decks",
+  marketplace: "#/marketplace"
 };
 
 export const APP_NAV_ITEMS: Array<{
@@ -23,7 +25,8 @@ export const APP_NAV_ITEMS: Array<{
   { page: "collection", label: "Sammlung" },
   { page: "search", label: "Kartensuche" },
   { page: "builder", label: "Deck bauen" },
-  { page: "decks", label: "Decks" }
+  { page: "decks", label: "Decks" },
+  { page: "marketplace", label: "Marketplace" }
 ];
 
 const PAGE_TITLES: Record<AppPage, string> = {
@@ -31,7 +34,8 @@ const PAGE_TITLES: Record<AppPage, string> = {
   collection: "Sammlung · Arcane Decksmith",
   search: "Kartensuche · Arcane Decksmith",
   builder: "Deck bauen · Arcane Decksmith",
-  decks: "Decks · Arcane Decksmith"
+  decks: "Decks · Arcane Decksmith",
+  marketplace: "Marketplace · Arcane Decksmith"
 };
 
 export type AppLocation = {

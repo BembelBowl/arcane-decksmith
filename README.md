@@ -13,6 +13,17 @@ React/TypeScript-Projekt (Vite) für GitHub Pages + Firebase Auth/Firestore + Sc
 - Importe raten keine Druckversionen: Set + Collector Number sind autoritativ. Passen mehrere Druckversionen, wird die Zeile beim Sammlungsimport als „mehrdeutig“ markiert und nicht übernommen. Große Importe (über 100 unterschiedliche Einträge) laufen ausschließlich, atomar und deterministisch über Scryfall Bulk Data.
 - Precon-Decks (Kartensuche → „Precon-Deck hinzufügen“) stammen aus [MTGJSON](https://mtgjson.com). Jede Karte wird über ihre Scryfall-ID bzw. Set + Collector Number exakt aufgelöst. Der Precon kann zur Sammlung hinzugefügt und/oder als Deck in der Deckliste angelegt werden (Commander werden als Commander übernommen, Zusatzkarten ins Sideboard).
 
+## Marketplace (Tauschangebote)
+
+In der Sammlung Karten auswählen → **Zum Tausch anbieten**: Anzahl je Finish (Non-Foil/Foil) festlegen, höchstens so viele, wie in der Sammlung sind. Unter **Marketplace** sehen angemeldete Spieler die Angebote anderer (Suche nach Namensanfang, „Weitere Angebote laden“) und verwalten unter „Meine Angebote“ ihre eigenen.
+
+- Öffentlich für andere angemeldete Spieler sind nur Karte, Anzahl, Richtpreis und der selbst gewählte **Anzeigename**. E-Mail-Adressen werden nicht veröffentlicht; „@“ und Web-Adressen sind im Anzeigenamen nicht erlaubt.
+- Es gibt bewusst keinen Kontakt-Kanal in der App. Wie sich Spieler einigen, regeln sie außerhalb.
+- Angebote liegen in der Firestore-Collection `marketListings` (Dokument-ID `<uid>_<cardId>`). Die Regeln in `firestore.rules` erlauben Lesen nur für angemeldete Nutzer, Schreiben nur für den Besitzer, prüfen Felder/Größen und erlauben nur Scryfall-Bild-URLs. Nach dem Update die Regeln neu veröffentlichen.
+- Sinkt der Bestand einer Karte oder wird sie gelöscht, wird das Angebot automatisch angepasst bzw. entfernt. Änderungen über den Massen-Import werden nicht automatisch abgeglichen.
+- Im lokalen Demo-Modus gibt es den Marketplace nicht (Angebote müssen für andere sichtbar sein).
+- Preise sind Richtwerte vom Zeitpunkt des Angebots (Scryfall, EUR).
+
 ## KI-Analyse und Deck-Intelligence
 
 Die KI-Erklärungen und Zusatzdaten (Turnier-, Combo- und Community-Signale) laufen über einen **Cloudflare Worker** (nicht im Browser). Die Standard-URL ist `https://arcane-decksmith-ai.arcane-decksmith-api.workers.dev`; sie lässt sich über `VITE_AI_WORKER_URL` bzw. `VITE_DECK_INTELLIGENCE_URL` überschreiben.

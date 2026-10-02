@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import type { User } from "firebase/auth";
 import { subscribeAuth, login, logout, register, resetPassword, authMessage } from "./auth";
 import { firebaseConfigured } from "./firebase";
@@ -25,6 +25,21 @@ import {
   upsertCards,
   upsertDecks
 } from "./collectionState";
+import {
+  loadDisplayName,
+  loadMyListings,
+  marketplaceSupported,
+  removeListings,
+  saveDisplayName,
+  saveListings
+} from "./marketDb";
+import {
+  planOfferSave,
+  syncListingWithCard,
+  type MarketListing,
+  type OfferInput
+} from "./marketplace";
+import MarketplacePage from "./pages/MarketplacePage";
 import { showToast } from "./toast";
 import ToastHost from "./components/ToastHost";
 import {
@@ -809,6 +824,13 @@ function Main({
 
   const [busy, setBusy] = useState(true);
   const [loadError, setLoadError] = useState("");
+
+  // Marketplace: eigene Angebote und Anzeigename. Werden getrennt vom Kern geladen,
+  // damit ein Fehler dort (z. B. Regeln noch nicht veröffentlicht) die App nicht blockiert.
+  const [myListings, setMyListings] = useState<MarketListing[]>([]);
+  const [displayName, setDisplayName] = useState("");
+  const [marketReady, setMarketReady] = useState(false);
+  const myListingsRef = useRef<MarketListing[]>([]);
   const [saveProgress, setSaveProgress] =
     useState<{ saved: number; total: number } | null>(null);
 
@@ -832,6 +854,7 @@ function Main({
         setDecks(loadedDecks);
 
         void refreshStalePrices(loadedCollection);
+        void loadMarketState();
       } catch (error) {
         if (!cancelled) {
           setLoadError(
@@ -842,6 +865,26 @@ function Main({
         if (!cancelled) setBusy(false);
       }
     })();
+
+    async function loadMarketState() {
+      if (!marketplaceSupported) return;
+
+      try {
+        const [listings, name] = await Promise.all([
+          loadMyListings(uid),
+          loadDisplayName(uid)
+        ]);
+
+        if (cancelled) return;
+
+        myListingsRef.current = listings;
+        setMyListings(listings);
+        setDisplayName(name);
+        setMarketReady(true);
+      } catch (error) {
+        console.warn("Marketplace-Daten konnten nicht geladen werden:", error);
+      }
+    }
 
     // Preise/Setnamen/Finishes höchstens einmal pro Tag aktualisieren und nur
     // tatsächlich geänderte Karten gesammelt zurückschreiben.
@@ -899,6 +942,91 @@ function Main({
     };
   }, [uid]);
 
+  const applyMyListings = (next: MarketListing[]) => {
+    const sorted = [...next].sort((a, b) => a.name.localeCompare(b.name, "de"));
+    myListingsRef.current = sorted;
+    setMyListings(sorted);
+  };
+
+  /** Hält ein Tausch-Angebot konsistent mit dem Bestand der Sammlung. */
+  const syncListing = async (
+    cardId: string,
+    card: CardRecord | undefined
+  ) => {
+    const listing = myListingsRef.current.find(item => item.cardId === cardId);
+    if (!listing) return;
+
+    const result = syncListingWithCard(listing, card);
+    if (result.action === "keep") return;
+
+    try {
+      if (result.action === "remove") {
+        await removeListings([listing.id]);
+        applyMyListings(myListingsRef.current.filter(item => item.id !== listing.id));
+        showToast(
+          `Das Tausch-Angebot für „${listing.name}“ wurde entfernt, weil kein Exemplar mehr in der Sammlung ist.`,
+          "info"
+        );
+      } else {
+        await saveListings([result.listing]);
+        applyMyListings(
+          myListingsRef.current.map(item => item.id === listing.id ? result.listing : item)
+        );
+        showToast(
+          `Das Tausch-Angebot für „${listing.name}“ wurde an deinen Bestand angepasst.`,
+          "info"
+        );
+      }
+    } catch (error) {
+      showToast(
+        `Das Marketplace-Angebot für „${listing.name}“ konnte nicht angepasst werden: ${errorMessage(error)}`,
+        "error"
+      );
+    }
+  };
+
+  const saveOffers = async (
+    offers: OfferInput[],
+    name: string
+  ) => {
+    const plan = planOfferSave(myListingsRef.current, offers, uid, name);
+
+    if (name !== displayName) {
+      await saveDisplayName(uid, name);
+      setDisplayName(name);
+    }
+
+    await saveListings(plan.toSave);
+    await removeListings(plan.toRemove);
+
+    const removed = new Set(plan.toRemove);
+    const byId = new Map(
+      myListingsRef.current
+        .filter(item => !removed.has(item.id))
+        .map(item => [item.id, item] as const)
+    );
+    for (const listing of plan.toSave) byId.set(listing.id, listing);
+    applyMyListings([...byId.values()]);
+
+    if (offers.length > 0) {
+      const offeredCards = offers.filter(offer =>
+        plan.toSave.some(listing => listing.cardId === offer.card.id)
+      ).length;
+      showToast(
+        offeredCards > 0
+          ? `${offeredCards} Karte(n) im Marketplace angeboten.`
+          : "Angebot(e) entfernt.",
+        "success"
+      );
+    }
+  };
+
+  const removeMyListing = async (listing: MarketListing) => {
+    await removeListings([listing.id]);
+    applyMyListings(myListingsRef.current.filter(item => item.id !== listing.id));
+    showToast(`Angebot für „${listing.name}“ entfernt.`, "success");
+  };
+
   const persistCard =
     async (c: CardRecord) => {
       const cleanCard =
@@ -912,6 +1040,8 @@ function Main({
       setCollection(
         current => upsertCards(current, [cleanCard])
       );
+
+      void syncListing(cleanCard.id, cleanCard);
     };
 
   /**
@@ -1005,6 +1135,8 @@ function Main({
       setCollection(
         current => current.filter(card => card.id !== id)
       );
+
+      void syncListing(id, undefined);
     };
 
   const delDeck =
@@ -1084,6 +1216,15 @@ function Main({
                     "success"
                   );
                 }}
+                market={
+                  marketReady && !demoMode
+                    ? {
+                        listings: myListings,
+                        displayName,
+                        onSave: saveOffers
+                      }
+                    : undefined
+                }
               />
             )
             : page === "search"
@@ -1215,6 +1356,18 @@ function Main({
                     onSave={persistDeck}
                   />
                 )
+                : page === "marketplace"
+                  ? (
+                    <MarketplacePage
+                      uid={uid}
+                      demoMode={demoMode}
+                      collection={collection}
+                      myListings={myListings}
+                      displayName={displayName}
+                      onSaveOffers={saveOffers}
+                      onRemoveListing={removeMyListing}
+                    />
+                  )
                 : (
                   <Decks
                     decks={decks}
