@@ -11,7 +11,7 @@ React/TypeScript-Projekt (Vite) für GitHub Pages + Firebase Auth/Firestore + Sc
 - Commander wird als 99 + 1 modelliert (`deckStats().total` zählt Hauptdeck + Commander).
 - Preise sind absichtlich nicht Teil des Deck-Scorings.
 - Importe raten keine Druckversionen: Set + Collector Number sind autoritativ. Passen mehrere Druckversionen, wird die Zeile beim Sammlungsimport als „mehrdeutig“ markiert und nicht übernommen. Große Importe (über 100 unterschiedliche Einträge) laufen ausschließlich, atomar und deterministisch über Scryfall Bulk Data.
-- Precon-Decks (Kartensuche → „Precon-Deck hinzufügen“) stammen aus [MTGJSON](https://mtgjson.com). Jede Karte wird über ihre Scryfall-ID bzw. Set + Collector Number exakt aufgelöst.
+- Precon-Decks (Kartensuche → „Precon-Deck hinzufügen“) stammen aus [MTGJSON](https://mtgjson.com). Jede Karte wird über ihre Scryfall-ID bzw. Set + Collector Number exakt aufgelöst. Der Precon kann zur Sammlung hinzugefügt und/oder als Deck in der Deckliste angelegt werden (Commander werden als Commander übernommen, Zusatzkarten ins Sideboard).
 
 ## KI-Analyse und Deck-Intelligence
 
