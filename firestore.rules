@@ -63,11 +63,43 @@ service cloud.firestore {
         && optionalList(data, 'sourceCards', 700);
     }
 
+    // Tauschangebot im Marketplace: öffentliche Angaben, ID = <ownerId>_<cardId>.
+    // Bilder dürfen nur von Scryfall stammen (kein fremdes Tracking über Bild-URLs).
+    function validListing(listingId) {
+      let data = request.resource.data;
+      return data.keys().size() <= 20
+        && data.ownerId == request.auth.uid
+        && data.cardId is string && data.cardId.size() > 0 && data.cardId.size() <= 80
+        && listingId == data.ownerId + '_' + data.cardId
+        && data.ownerName is string && data.ownerName.size() >= 2 && data.ownerName.size() <= 30
+        && !data.ownerName.matches('.*@.*')
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 300
+        && data.nameLower is string && data.nameLower.size() <= 300
+        && data.set is string && data.set.size() <= 20
+        && data.collectorNumber is string && data.collectorNumber.size() <= 20
+        && data.lang is string && data.lang.size() <= 10
+        && data.offered is map
+        && data.offered.nonfoil is int && data.offered.nonfoil >= 0 && data.offered.nonfoil <= 1000
+        && data.offered.foil is int && data.offered.foil >= 0 && data.offered.foil <= 1000
+        && data.offered.nonfoil + data.offered.foil > 0
+        && data.createdAt is number
+        && data.updatedAt is number
+        && optionalString(data, 'setName', 100)
+        && optionalString(data, 'typeLine', 300)
+        && (!('imageUri' in data) || (
+          data.imageUri is string
+          && data.imageUri.size() <= 500
+          && data.imageUri.matches('https://cards[.]scryfall[.]io/.*')))
+        && optionalNumber(data, 'priceEur')
+        && optionalNumber(data, 'priceEurFoil');
+    }
+
     match /users/{userId} {
       allow read, delete: if owner(userId);
       allow create, update: if owner(userId)
         && request.resource.data.keys().size() <= 10
-        && optionalString(request.resource.data, 'email', 320);
+        && optionalString(request.resource.data, 'email', 320)
+        && optionalString(request.resource.data, 'displayName', 40);
 
       match /collection/{cardId} {
         allow read, delete: if owner(userId);
@@ -78,6 +110,16 @@ service cloud.firestore {
         allow read, delete: if owner(userId);
         allow create, update: if owner(userId) && validDeck(deckId);
       }
+    }
+
+    // Marketplace: nur angemeldete Spieler lesen; jeder verwaltet nur eigene Angebote.
+    match /marketListings/{listingId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validListing(listingId);
+      allow update: if signedIn()
+        && resource.data.ownerId == request.auth.uid
+        && validListing(listingId);
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
     }
 
     // rateLimits/* wird nur von der Cloud Function (Admin SDK) geschrieben.

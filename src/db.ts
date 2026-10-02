@@ -7,7 +7,7 @@ import type { CardRecord, DeckRecord } from "./types";
 const key = (uid: string, suffix: string) => `arcane-decksmith:${uid}:${suffix}`;
 
 /** Firestore erlaubt maximal 500 Operationen pro Batch; etwas Puffer lassen. */
-const BATCH_SIZE = 450;
+export const BATCH_SIZE = 450;
 const BATCH_RETRIES = 3;
 
 function localGet<T>(k: string): T[] {
@@ -66,7 +66,7 @@ export async function saveCard(uid: string, card: CardRecord) {
 
 export type BatchProgress = (saved: number, total: number) => void;
 
-async function withRetry<T>(run: () => Promise<T>, retries = BATCH_RETRIES): Promise<T> {
+export async function withRetry<T>(run: () => Promise<T>, retries = BATCH_RETRIES): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     try {
