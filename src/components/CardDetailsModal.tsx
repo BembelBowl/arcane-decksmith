@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDialogA11y } from "./useDialogA11y";
+import "../marketplace.css";
 import {
   displayOracleText,
   displayTypeLine,
@@ -165,13 +166,19 @@ type CardDetailsModalProps = {
   onClose: () => void;
   onChange?: (card: CardRecord) => Promise<void>;
   onDelete?: (id: string) => Promise<void>;
+  /** Marketplace (nur mit Konto): öffnet den Angebots-Dialog für diese Karte. */
+  market?: {
+    offeredCount: number;
+    onOffer: () => void;
+  };
 };
 
 export default function CardDetailsModal({
   card,
   onClose,
   onChange,
-  onDelete
+  onDelete,
+  market
 }: CardDetailsModalProps) {
   const dialogRef = useRef<HTMLElement>(null);
   const [details, setDetails] = useState<ScryfallCard | null>(null);
@@ -445,6 +452,23 @@ export default function CardDetailsModal({
                 </div>
               ))}
             </div>
+
+            {market && (
+              <div className="card-modal-market">
+                <button
+                  type="button"
+                  className="card-modal-offer"
+                  onClick={market.onOffer}
+                >
+                  Im Marketplace anbieten
+                </button>
+                {market.offeredCount > 0 && (
+                  <small className="muted">
+                    Aktuell im Marketplace: {market.offeredCount}×
+                  </small>
+                )}
+              </div>
+            )}
 
             {onDelete && (
               <button

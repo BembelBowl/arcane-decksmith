@@ -108,3 +108,11 @@
   .market-offer-row label,
   .market-offer-actions { grid-column: 1 / -1; }
 }
+
+.card-modal-market {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.card-modal-offer { width: 100%; }
