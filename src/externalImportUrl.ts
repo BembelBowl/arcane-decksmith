@@ -31,9 +31,16 @@ export async function importExternalDeckUrl(url: string): Promise<ImportUrlRespo
   if (proxy) {
     const endpoint = new URL(proxy);
     endpoint.searchParams.set("url", value);
-    const response = await fetch(endpoint.toString(), {
-      headers: { Accept: "application/json" }
-    });
+    let response: Response;
+    try {
+      response = await fetch(endpoint.toString(), {
+        headers: { Accept: "application/json" }
+      });
+    } catch {
+      throw new Error(
+        "Der Import-Dienst ist nicht erreichbar. Bitte später erneut versuchen oder das Deck als CSV/TXT importieren."
+      );
+    }
     const payload = await response.json().catch(() => null) as ImportUrlResponse | { error?: string } | null;
     if (!response.ok) {
       throw new Error(payload && "error" in payload && payload.error
